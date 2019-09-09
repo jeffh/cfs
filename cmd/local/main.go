@@ -23,5 +23,5 @@ func main() {
 		TraceLog: logger,
 	}
 	err := srv.ListenAndServe("")
-	fmt.Println("Error: %s", err)
+	fmt.Printf("Error: %s", err)
 }
