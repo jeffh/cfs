@@ -52,6 +52,7 @@ type directoryHandle struct {
 	allFiles []Stat
 	qids     *QidPool
 	path     string
+	fetched  bool
 }
 
 func (h *directoryHandle) ReadAt(p []byte, offset int64) (int, error) {
@@ -61,23 +62,24 @@ func (h *directoryHandle) ReadAt(p []byte, offset int64) (int, error) {
 		h.offset = 0
 		h.index = 0
 		h.allFiles = h.allFiles[:0]
+		h.fetched = false
 	}
 	if h.offset != offset {
 		return 0, errSeekNotAllowed
 	}
-	if h.allFiles == nil {
+	if !h.fetched {
 		entries, err := h.fs.ListDir(h.path)
 		if err != nil {
 			return 0, err
 		}
-		{
-			for _, info := range entries {
-				subpath := filepath.Join(h.path, info.Name())
-				q := h.qids.Put(subpath, ModeFromOS(info.Mode()).QidType())
-				st := fileInfoToStat(q, info)
-				h.allFiles = append(h.allFiles, st)
-			}
+		h.allFiles = make([]Stat, len(entries))
+		for i, info := range entries {
+			subpath := filepath.Join(h.path, info.Name())
+			q := h.qids.Put(subpath, ModeFromOS(info.Mode()).QidType())
+			st := fileInfoToStat(q, info)
+			h.allFiles[i] = st
 		}
+		h.fetched = true
 	}
 	if h.index >= len(h.allFiles) {
 		return 0, io.EOF
@@ -103,6 +105,7 @@ func (h *directoryHandle) Close() error {
 	h.offset = 0
 	h.index = 0
 	h.allFiles = nil
+	h.fetched = false
 	return nil
 }
 
