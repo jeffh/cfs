@@ -6,11 +6,193 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"os"
 )
 
 var (
 	ErrBadFormat = errors.New("Unrecognized 9P protocol")
 )
+
+type transaction struct {
+	inMsg  []byte
+	outMsg []byte
+
+	handled    bool
+	disconnect bool
+}
+
+func newTransaction(maxMsgSize uint32) transaction {
+	return transaction{
+		inMsg:  make([]byte, int(maxMsgSize)),
+		outMsg: make([]byte, int(maxMsgSize)),
+	}
+}
+
+func (t *transaction) Disconnect() {
+	t.handled = true
+	t.disconnect = true
+}
+
+func (t *transaction) readRequest(rdr io.Reader) error {
+	// read size
+	_, err := readUpTo(rdr, t.inMsg[:4])
+	if err != nil {
+		return err
+	}
+
+	size := MsgBase(t.inMsg).Size()
+
+	if size > uint32(len(t.inMsg)) {
+		return fmt.Errorf("Message too large (%d > %d)", size, len(t.inMsg))
+	}
+
+	_, err = readUpTo(rdr, t.inMsg[4:size])
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (t *transaction) writeReply(wr io.Writer) error {
+	_, err := wr.Write(MsgBase(t.outMsg).Bytes())
+	return err
+}
+
+func (t *transaction) requestType() MsgType {
+	mb := MsgBase(t.inMsg)
+	return mb.Type()
+}
+
+func (t *transaction) Request() Message {
+	mb := MsgBase(t.inMsg)
+	fmt.Printf("recv: %s\n", mb.Type())
+	switch mb.Type() {
+	case msgTversion:
+		return Tversion(mb)
+	case msgTauth:
+		return Tauth(mb)
+	case msgTattach:
+		return Tattach(mb)
+	case msgTflush:
+		return Tflush(mb)
+	case msgTwalk:
+		return Twalk(mb)
+	case msgTopen:
+		return Topen(mb)
+	case msgTcreate:
+		return Tcreate(mb)
+	case msgTread:
+		return Tread(mb)
+	case msgTwrite:
+		return Twrite(mb)
+	case msgTclunk:
+		return Tclunk(mb)
+	case msgTremove:
+		return Tremove(mb)
+	case msgTstat:
+		return Tstat(mb)
+	case msgTwstat:
+		return Twstat(mb)
+	default:
+		return mb
+	}
+}
+
+func (t *transaction) Reply() Message {
+	mb := MsgBase(t.outMsg)
+	switch mb.Type() {
+	case msgRversion:
+		return Rversion(mb)
+	case msgRauth:
+		return Rauth(mb)
+	case msgRattach:
+		return Rattach(mb)
+	case msgRflush:
+		return Rflush(mb)
+	case msgRwalk:
+		return Rwalk(mb)
+	case msgRopen:
+		return Ropen(mb)
+	case msgRcreate:
+		return Rcreate(mb)
+	case msgRread:
+		return Rread(mb)
+	case msgRwrite:
+		return Rwrite(mb)
+	case msgRclunk:
+		return Rclunk(mb)
+	case msgRremove:
+		return Rremove(mb)
+	case msgRstat:
+		return Rstat(mb)
+	case msgRwstat:
+		return Rwstat(mb)
+	case msgRerror:
+		return Rerror(mb)
+	default:
+		return mb
+	}
+}
+
+func (t *transaction) reqTag() Tag {
+	return MsgBase(t.inMsg).Tag()
+}
+
+func (t *transaction) Rversion(msgSize uint32, version string) {
+	t.handled = true
+	Rversion(t.outMsg).fill(t.reqTag(), msgSize, version)
+	fmt.Printf("send: %s\n", MsgBase(t.outMsg).Type())
+}
+
+func (t *transaction) Rattach(q Qid) {
+	t.handled = true
+	Rattach(t.outMsg).fill(t.reqTag(), q)
+	fmt.Printf("send: %s\n", MsgBase(t.outMsg).Type())
+}
+
+func (t *transaction) Ropen(q Qid, iounit uint32) {
+	t.handled = true
+	Ropen(t.outMsg).fill(t.reqTag(), q, iounit)
+	fmt.Printf("send: %s\n", MsgBase(t.outMsg).Type())
+}
+
+func (t *transaction) Rwalk(wqids []Qid) {
+	t.handled = true
+	Rwalk(t.outMsg).fill(t.reqTag(), wqids)
+	fmt.Printf("send: %s\n", MsgBase(t.outMsg).Type())
+}
+
+func (t *transaction) Rstat(s Stat) {
+	t.handled = true
+	Rstat(t.outMsg).fill(t.reqTag(), s)
+	fmt.Printf("send: %s %#v\n", MsgBase(t.outMsg).Type(), MsgBase(t.outMsg).Bytes())
+}
+
+func (t *transaction) RreadBuffer() []byte {
+	return Rread(t.outMsg).Data()
+}
+
+func (t *transaction) Rread(data []byte) {
+	t.handled = true
+	Rread(t.outMsg).fill(t.reqTag(), data)
+	fmt.Printf("send: %s\n", MsgBase(t.outMsg).Type())
+}
+
+func (t *transaction) Rclunk() {
+	t.handled = true
+	Rclunk(t.outMsg).fill(t.reqTag())
+	fmt.Printf("send: %s\n", MsgBase(t.outMsg).Type())
+}
+
+func (t *transaction) Rerror(format string, values ...interface{}) {
+	t.handled = true
+	msg := fmt.Sprintf(format, values...)
+	Rerror(t.outMsg).fill(t.reqTag(), msg)
+	fmt.Printf("send: %s %s\n", MsgBase(t.outMsg).Type(), msg)
+}
+
+////////////////////////////////////////////////////////////////////////////////
 
 func readUpTo(r io.Reader, p []byte) (int, error) {
 	var err error
@@ -29,87 +211,207 @@ func readUpTo(r io.Reader, p []byte) (int, error) {
 	return n, err
 }
 
-func ReadMessage(r io.Reader) (Message, error) {
-	b := [4]byte{}
-	n, err := readUpTo(r, b[:])
-	if n != 4 {
-		return ErrBadFormat
-	}
-	if err != nil {
-		return err
-	}
-	size := MsgBase(b).Size()
-
-	msg := make(MsgBase, int(size))
-	copy(msg[:4], b)
-
-	n, err = readUpTo(r, msg[4:])
-	if n != size-4 {
-		return ErrBadFormat
-	}
-	return msg, err
-}
-
-func WriteMessage(w io.Writer, m Message) (int, error) {
-	return w.Write([]byte(m))
-}
-
 type Message interface {
-	Type() MsgType
+	Bytes() []byte
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
 const (
-	NO_TAG         Tag    = ^uint16(0)
-	NO_FID         Fid    = ^uint32(0)
+	NO_TAG         Tag    = ^Tag(0)
+	NO_FID         Fid    = ^Fid(0)
 	VERSION_9P2000 string = "9P2000"
+	VERSION_9P     string = "9P"
 
-	DEFAULT_MAX_MESSAGE_SIZE = 4096
-	MIN_MESSAGE_SIZE         = 128
+	DEFAULT_MAX_MESSAGE_SIZE = uint32(8192)
+	MIN_MESSAGE_SIZE         = uint32(128)
 )
 
 type MsgType byte
 
+// Based on
+// http://plan9.bell-labs.com/sources/plan9/sys/include/fcall.h
 const (
-	Tversion MsgType = 100
-	Rversion         = 101
-	Tauth            = 102
-	Rauth            = 103
-	Rerror           = 107
-	Tflush           = 108
-	Rflush           = 109
-	Twalk            = 110
-	Rwalk            = 111
-	Topen            = 112
-	Ropen            = 113
-	Tcreate          = 114
-	Rcreate          = 115
-	Tread            = 116
-	Rread            = 117
-	Twrite           = 118
-	Rwrite           = 119
-	Tclunk           = 120
-	Rclunk           = 121
-	Tremove          = 122
-	Rremove          = 123
-	Tstat            = 124
-	Rstat            = 125
-	Twstat           = 126
-	Rwstat           = 127
+	msgTversion MsgType = iota + 100 // size[4] Tversion tag[2] msize[4] version[s]
+	msgRversion                      // size[4] Rversion tag[2] msize[4] version[s]
+	msgTauth                         // size[4] Tauth tag[2] afid[4] uname[s] aname[s]
+	msgRauth                         // size[4] Rauth tag[2] aqid[13]
+	msgTattach                       // size[4] Tattach tag[2] fid[4] afid[4] uname[s] aname[s]
+	msgRattach                       // size[4] Rattach tag[2] qid[13]
+	msgTerror                        // illegal
+	msgRerror                        // size[4] Rerror tag[2] ename[s]
+	msgTflush                        // size[4] Tflush tag[2] oldtag[2]
+	msgRflush                        // size[4] Rflush tag[2]
+	msgTwalk                         // size[4] Twalk tag[2] fid[4] newfid[4] nwname[2] nwname*(wname[s])
+	msgRwalk                         // size[4] Rwalk tag[2] nwqid[2] nwqid*(wqid[13])
+	msgTopen                         // size[4] Topen tag[2] fid[4] mode[1]
+	msgRopen                         // size[4] Ropen tag[2] qid[13] iounit[4]
+	msgTcreate                       // size[4] Tcreate tag[2] fid[4] name[s] perm[4] mode[1]
+	msgRcreate                       // size[4] Rcreate tag[2] qid[13] iounit[4]
+	msgTread                         // size[4] Tread tag[2] fid[4] offset[8] count[4]
+	msgRread                         // size[4] Rread tag[2] count[4] data[count]
+	msgTwrite                        // size[4] Twrite tag[2] fid[4] offset[8] count[4] data[count]
+	msgRwrite                        // size[4] Rwrite tag[2] count[4]
+	msgTclunk                        // size[4] Tclunk tag[2] fid[4]
+	msgRclunk                        // size[4] Rclunk tag[2]
+	msgTremove                       // size[4] Tremove tag[2] fid[4]
+	msgRremove                       // size[4] Rremove tag[2]
+	msgTstat                         // size[4] Tstat tag[2] fid[4]
+	msgRstat                         // size[4] Rstat tag[2] stat[n]
+	msgTwstat                        // size[4] Twstat tag[2] fid[4] stat[n]
+	msgRwstat                        // size[4] Rwstat tag[2]
 )
 
-type Mode byte
+func (t MsgType) String() string {
+	switch t {
+	case msgTversion:
+		return "msgTversion"
+	case msgRversion:
+		return "msgRversion"
+	case msgTauth:
+		return "msgTauth"
+	case msgRauth:
+		return "msgRauth"
+	case msgTattach:
+		return "msgTattach"
+	case msgRattach:
+		return "msgRattach"
+	case msgTerror:
+		return "msgTerror"
+	case msgRerror:
+		return "msgRerror"
+	case msgTflush:
+		return "msgTflush"
+	case msgRflush:
+		return "msgRflush"
+	case msgTwalk:
+		return "msgTwalk"
+	case msgRwalk:
+		return "msgRwalk"
+	case msgTopen:
+		return "msgTopen"
+	case msgRopen:
+		return "msgRopen"
+	case msgTcreate:
+		return "msgTcreate"
+	case msgRcreate:
+		return "msgRcreate"
+	case msgTread:
+		return "msgTread"
+	case msgRread:
+		return "msgRread"
+	case msgTwrite:
+		return "msgTwrite"
+	case msgRwrite:
+		return "msgRwrite"
+	case msgTclunk:
+		return "msgTclunk"
+	case msgRclunk:
+		return "msgRclunk"
+	case msgTremove:
+		return "msgTremove"
+	case msgRremove:
+		return "msgRremove"
+	case msgTstat:
+		return "msgTstat"
+	case msgRstat:
+		return "msgRstat"
+	case msgTwstat:
+		return "msgTwstat"
+	case msgRwstat:
+		return "msgRwstat"
+	}
+	panic("unreachable")
+}
+
+type OpenMode byte
 
 const (
-	O_READ  Mode = 0
-	O_WRITE      = 1
-	O_RDWR       = 2
-	O_EXEC       = 3
-
-	O_TRUNC  = 0x10
-	O_RCLOSE = 0x40
+	OREAD   = 0
+	OWRITE  = 1
+	ORDWR   = 2
+	OEXEC   = 3 // execute, == read but check execute permission
+	OTRUNC  = 0x10
+	OCEXEC  = 0x20   // close on exec
+	ORCLOSE = 0x40   // remove on close
+	OEXCL   = 0x1000 // exclusive use (create only)
 )
+
+func (m OpenMode) ToOsFlags() int {
+	var flags int
+	if m&OREAD != 0 {
+		flags |= os.O_RDONLY
+	}
+	if m&OWRITE != 0 {
+		flags |= os.O_WRONLY
+	}
+	if m&ORDWR != 0 {
+		flags |= os.O_RDWR
+	}
+	if m&OTRUNC != 0 {
+		flags |= os.O_TRUNC
+	}
+	return flags
+}
+
+type Mode uint32
+
+const (
+	M_DIR    = 0x80000000 // mode bit for directories
+	M_APPEND = 0x40000000 // mode bit for append only files
+	M_EXCL   = 0x20000000 // mode bit for exclusive use files
+	M_MOUNT  = 0x10000000 // mode bit for mounted channel
+	M_AUTH   = 0x08000000 // mode bit for authentication file
+	M_TMP    = 0x04000000 // mode bit for non-backed-up file
+	M_READ   = 0x4        // mode bit for read permission
+	M_WRITE  = 0x2        // mode bit for write permission
+	M_EXEC   = 0x1        // mode bit for execute permission
+
+	// Mask for the type bits
+	M_TTYPE = M_DIR | M_APPEND | M_EXCL | M_MOUNT | M_TMP
+
+	// Mask for the permissions bits
+	M_PERM = M_READ | M_WRITE | M_EXEC
+)
+
+func (m Mode) ToOsMode() os.FileMode {
+	var mode os.FileMode
+	if m&M_DIR != 0 {
+		mode = os.ModeDir
+	}
+	if m&M_APPEND != 0 {
+		mode |= os.ModeAppend
+	}
+	if m&M_EXCL != 0 {
+		mode |= os.ModeExclusive
+	}
+	if m&M_TMP != 0 {
+		mode |= os.ModeTemporary
+	}
+	mode |= (os.FileMode(m) & os.ModePerm)
+	return mode
+}
+
+func (m Mode) QidType() QidType {
+	return QidType(m >> 24)
+}
+
+func ModeFromOS(mode os.FileMode) Mode {
+	var perm Mode
+	if mode&os.ModeDir != 0 {
+		perm |= M_DIR
+	}
+	if mode&os.ModeAppend != 0 {
+		perm |= M_APPEND
+	}
+	if mode&os.ModeExclusive != 0 {
+		perm |= M_EXCL
+	}
+	if mode&os.ModeTemporary != 0 {
+		perm |= M_TMP
+	}
+	return perm
+}
 
 var bo = binary.LittleEndian
 
@@ -119,43 +421,43 @@ type Tag uint16
 
 /////////////////////////////////////
 
-type MsgBase struct{ Raw []byte }
+type MsgBase []byte
 
-func (r MsgBase) Size() uint32     { return bo.Uint32(r.Raw[:4]) }
-func (r MsgBase) SetSize(v uint32) { bo.PutUint32(r.Raw[:4], v) }
-func (r MsgBase) ComputeSize()     { r.SetSize(uint32(len(r.Raw))) }
+func (r MsgBase) fill(mt MsgType, t Tag, size uint32) {
+	bo.PutUint32(r[:4], size)       // Size
+	r[4] = byte(mt)                 // MsgType
+	bo.PutUint16(r[5:7], uint16(t)) // Tag
+}
 
-func (r MsgBase) Type() MsgType     { return MsgType(r.Raw[4]) }
-func (r MsgBase) SetType(t MsgType) { r.Raw[4] = byte(t) }
-
-func (r MsgBase) Tag() Tag     { return Tag(bo.Uint16(r.Raw[5:7])) }
-func (r MsgBase) SetTag(v Tag) { bo.PutUint16(r.Raw[5:7], uint16(v)) }
+func (r MsgBase) Bytes() []byte { return r[:int(r.Size())] }
+func (r MsgBase) Size() uint32  { return bo.Uint32(r[:4]) }
+func (r MsgBase) Type() MsgType { return MsgType(r[4]) }
+func (r MsgBase) Tag() Tag      { return Tag(bo.Uint16(r[5:7])) }
 
 const msgOffset = 7
 
 /////////////////////////////////////
 type msgString []byte
 
-func (s msgString) Len() uint16       { return bo.Uint16(s[0:2]) }
-func (s msgString) SetLen(v uint16)   { bo.PutUint16(s[0:2], v) }
-func (s msgString) Bytes() []byte     { return s[2 : s.Len()+2] }
+const maxStringLen = math.MaxUint16
+
+func (s msgString) Len() uint16     { return bo.Uint16(s[0:2]) }
+func (s msgString) SetLen(v uint16) { bo.PutUint16(s[0:2], v) }
+func (s msgString) Bytes() []byte {
+	return s[2 : s.Len()+2]
+}
 func (s msgString) SetBytes(b []byte) { copy(s[2:s.Len()+2], b) }
 func (s msgString) SetBytesAndLen(b []byte) {
-	if len(b) > math.MaxUint16 {
-		panic(fmt.Errorf("invalid string size: %d", len(b)))
-	}
-	copy(s[2:s.Len()+2], b)
 	s.SetLen(uint16(len(b)))
+	copy(s[2:len(b)+2], b)
 }
-func (s msgString) String() string           { return string(s.Bytes()) }
-func (s msgString) SetString(v string)       { s.SetBytes([]byte(v)) }
-func (s msgString) SetStringAndLen(v string) { s.SetBytesAndLen([]byte(v)) }
-func (s msgString) NextOffset() int          { return int(s.Len()) + 2 }
-
-/////////////////////////////////////
-
-// shorthand for replys that are only acks
-type RepAck MsgBase
+func (s msgString) String() string     { return string(s.Bytes()) }
+func (s msgString) SetString(v string) { s.SetBytes([]byte(v)) }
+func (s msgString) SetStringAndLen(v string) int {
+	s.SetBytesAndLen([]byte(v))
+	return 2 + len((v))
+}
+func (s msgString) Nbytes() int { return int(s.Len()) + 2 }
 
 /////////////////////////////////////
 
@@ -176,26 +478,40 @@ const (
 	QT_DIR             = 0x80
 )
 
+const QidSize = 13
+
 type Qid []byte // always size 13
+
+func NewQid() Qid {
+	return Qid(make([]byte, QidSize))
+}
+
+func (q Qid) Fill(t QidType, version uint32, path uint64) Qid {
+	q[0] = byte(t)
+	bo.PutUint32(q[1:5], version)
+	bo.PutUint64(q[5:13], path)
+	return q
+}
 
 // qid.type[1] the type of the file (directory, etc.), represented as a bit vector corresponding to the high 8 bits of the file's mode word.
 // qid.vers[4] version number for given path
 // qid.path[8] the file server's unique identification for the file
 
-func (q Qid) Type() QidType     { return QidType(q[0]) }
-func (q Qid) SetType(t QidType) { q[0] = byte(t) }
+func (q Qid) Bytes() []byte   { return q[:QidSize] }
+func (q Qid) Type() QidType   { return QidType(q[0]) }
+func (q Qid) Version() uint32 { return bo.Uint32(q[1:5]) }
+func (q Qid) Path() uint64    { return bo.Uint64(q[5 : 5+8]) }
 
-func (q Qid) Version() uint32     { return bo.Uint32(q[1:5]) }
-func (q Qid) SetVersion(v uint32) { bo.PutUint32(q[1:5], v) }
-
-func (q Qid) Path() uint64     { return bo.Uint64(q[5 : 5+8]) }
-func (q Qid) SetPath(v uint64) { bo.PutUint64(q[5:5+8], v) }
+func (q Qid) String() string {
+	return fmt.Sprintf("Qid{ type: %v, version: %v, path: %v }", q.Type(), q.Version(), q.Path())
+}
 
 /////////////////////////////////////
 /*
 DESCRIPTION
 
 The stat transaction inquires about the file identified by fid. The reply will contain a machine-independent directory entry, stat, laid out as follows:
+
 
 	size[2] total byte count of the following data
 	type[2] for kernel use
@@ -211,347 +527,637 @@ The stat transaction inquires about the file identified by fid. The reply will c
 	uid[s] owner name
 	gid[s] group name
 	muid[s] name of the user who last modified the file
-
 */
 type Stat []byte
 
-func (s Stat) Size() uint16     { return bo.Uint16(s[0:2]) }
-func (s Stat) SetSize(v uint16) { bo.PutUint16(s[0:2], v) }
+const minStatSize = 2 + 2 + 4 + 13 + 4 + 4 + 4 + 8 + 4*2
+
+func statSize(name, uid, gid, muid string) int {
+	return minStatSize + len(name) + len(uid) + len(gid) + len(muid)
+}
+
+func (s Stat) fill(name, uid, gid, muid string) {
+	if len(name) > maxStringLen {
+		panic(fmt.Errorf("name is too large (%d > %d)", len(name), maxStringLen))
+	}
+	if len(uid) > maxStringLen {
+		panic(fmt.Errorf("uid is too large (%d > %d)", len(uid), maxStringLen))
+	}
+	if len(gid) > maxStringLen {
+		panic(fmt.Errorf("gid is too large (%d > %d)", len(gid), maxStringLen))
+	}
+	if len(muid) > maxStringLen {
+		panic(fmt.Errorf("muid is too large (%d > %d)", len(muid), maxStringLen))
+	}
+	size := statSize(name, uid, gid, muid)
+	if size > len(s) {
+		panic(fmt.Errorf("Stat is not large enough for size (%d >= %d)", size, len(s)))
+	}
+	s.SetSize(uint16(size - 2))
+	b := s[41:]
+	{
+		bo.PutUint16(b, uint16(len(name)))
+		b = b[2:]
+		b = b[copy(b, name):]
+	}
+	{
+		bo.PutUint16(b, uint16(len(uid)))
+		b = b[2:]
+		b = b[copy(b, uid):]
+	}
+	{
+		bo.PutUint16(b, uint16(len(gid)))
+		b = b[2:]
+		b = b[copy(b, gid):]
+	}
+	{
+		bo.PutUint16(b, uint16(len(muid)))
+		b = b[2:]
+		b = b[copy(b, muid):]
+	}
+	// s.name().SetStringAndLen(name)
+	// s.uid().SetStringAndLen(uid)
+	// s.gid().SetStringAndLen(gid)
+	// s.muid().SetStringAndLen(muid)
+}
+
+func NewStat(name, uid, gid, muid string) Stat {
+	// TODO: error if strings are too large
+	size := statSize(name, uid, gid, muid)
+	s := Stat(make([]byte, size))
+	s.fill(name, uid, gid, muid)
+	return s
+}
+
+func (s Stat) Nbytes() int   { return int(s.Size() + 2) }
+func (s Stat) Bytes() []byte { return s[:s.Size()+2] }
+
+func (s Stat) String() string {
+	return fmt.Sprintf(
+		"Stat{\n\tSize: %#v,\n\tQid: %#v,\n\tMode: %#v,\n\tAtime: %#v,\n\tMtime: %#v,\n\tLength: %#v,\n\tName: %#v,\n\tUid: %#v,\n\tGid: %#v,\n\tMuid: %#v,\n} => RAW: %#v",
+		s.Size(),
+		s.Qid(),
+		s.Mode(),
+		s.Mtime(),
+		s.Atime(),
+		s.Length(),
+		s.Name(),
+		s.Uid(),
+		s.Gid(),
+		s.Muid(),
+		s,
+	)
+}
+
+func (s Stat) Size() uint16     { return bo.Uint16(s[:2]) }
+func (s Stat) SetSize(v uint16) { bo.PutUint16(s[:2], v) }
 
 func (s Stat) Type() uint16     { return bo.Uint16(s[2:4]) }
 func (s Stat) SetType(v uint16) { bo.PutUint16(s[2:4], v) }
 
-func (s Stat) Dev() uint16     { return bo.Uint16(s[4:6]) }
-func (s Stat) SetDev(v uint16) { bo.PutUint16(s[4:6], v) }
+func (s Stat) Dev() uint32     { return bo.Uint32(s[4:8]) }
+func (s Stat) SetDev(v uint32) { bo.PutUint32(s[4:8], v) }
 
-func (s Stat) Qid() Qid     { return Qid(s[6 : 6+13]) }
-func (s Stat) SetQid(v Qid) { copy(s[6:6+13], v) }
+func (s Stat) Qid() Qid     { return Qid(s[8 : 8+QidSize]) }
+func (s Stat) SetQid(v Qid) { copy(s[8:8+QidSize], v.Bytes()) }
 
-func (s Stat) Mode() uint32     { return bo.Uint32(s[6+13 : 6+13+4]) }
-func (s Stat) SetMode(v uint32) { bo.PutUint32(s[6+13:6+13+4], v) }
+func (s Stat) Mode() Mode     { return Mode(bo.Uint32(s[8+QidSize : 8+QidSize+4])) }
+func (s Stat) SetMode(v Mode) { bo.PutUint32(s[8+QidSize:8+QidSize+4], uint32(v)) }
 
-func (s Stat) Atime() uint32     { return bo.Uint32(s[23 : 23+4]) }
-func (s Stat) SetAtime(v uint32) { bo.PutUint32(s[23:23+4], v) }
+func (s Stat) Atime() uint32     { return bo.Uint32(s[8+QidSize+4 : 8+QidSize+4+4]) }
+func (s Stat) SetAtime(v uint32) { bo.PutUint32(s[8+QidSize+4:8+QidSize+4+4], v) }
 
-func (s Stat) Mtime() uint32     { return bo.Uint32(s[27 : 27+4]) }
-func (s Stat) SetMtime(v uint32) { bo.PutUint32(s[27:27+4], v) }
+func (s Stat) Mtime() uint32     { return bo.Uint32(s[8+QidSize+4+4 : 8+QidSize+4+4+4]) }
+func (s Stat) SetMtime(v uint32) { bo.PutUint32(s[8+QidSize+4+4:8+QidSize+4+4+4], v) }
 
-func (s Stat) Length() uint64     { return bo.Uint64(s[31 : 31+8]) }
-func (s Stat) SetLength(v uint64) { bo.PutUint64(s[31:31+8], v) }
+func (s Stat) Length() uint64     { return bo.Uint64(s[8+QidSize+4+4+4 : 8+QidSize+4+4+4+8]) }
+func (s Stat) SetLength(v uint64) { bo.PutUint64(s[8+QidSize+4+4+4:8+QidSize+4+4+4+8], v) }
 
-func (s Stat) name() msgString       { return msgString(s[39:]) }
-func (s Stat) NameBytes() []byte     { return s.name().Bytes() }
-func (s Stat) Name() string          { return s.name().String() }
-func (s Stat) SetNameBytes(v []byte) { s.name().SetBytesAndLen(v) }
-func (s Stat) SetName(v string)      { s.name().SetStringAndLen(v) }
+func (s Stat) name() msgString   { return msgString(s[41:]) }
+func (s Stat) NameBytes() []byte { return s.name().Bytes() }
+func (s Stat) Name() string      { return s.name().String() }
 
-func (s Stat) uid() msgString       { return msgString(s[s.name().NextOffset():]) }
-func (s Stat) UidBytes() []byte     { return s.uid().Bytes() }
-func (s Stat) Uid() string          { return s.uid().String() }
-func (s Stat) SetUidBytes(v []byte) { s.uid().SetBytesAndLen(v) }
-func (s Stat) SetUid(v string)      { s.uid().SetStringAndLen(v) }
+func (s Stat) uid() msgString   { return msgString(s[41+s.name().Nbytes():]) }
+func (s Stat) UidBytes() []byte { return s.uid().Bytes() }
+func (s Stat) Uid() string      { return s.uid().String() }
 
-func (s Stat) gid() msgString       { return msgString(s[s.uid().NextOffset():]) }
-func (s Stat) GidBytes() []byte     { return s.gid().Bytes() }
-func (s Stat) Gid() string          { return s.gid().String() }
-func (s Stat) SetGidBytes(v []byte) { s.gid().SetBytesAndLen(v) }
-func (s Stat) SetGid(v string)      { s.gid().SetStringAndLen(v) }
+func (s Stat) gid() msgString   { return msgString(s[41+s.name().Nbytes()+s.uid().Nbytes():]) }
+func (s Stat) GidBytes() []byte { return s.gid().Bytes() }
+func (s Stat) Gid() string      { return s.gid().String() }
 
-func (s Stat) muid() msgString       { return msgString(s[s.gid().NextOffset():]) }
-func (s Stat) MuidBytes() []byte     { return s.muid().Bytes() }
-func (s Stat) Muid() string          { return s.muid().String() }
-func (s Stat) SetMuidBytes(v []byte) { s.muid().SetBytesAndLen(v) }
-func (s Stat) SetMuid(v string)      { s.muid().SetStringAndLen(v) }
-
-func fillMsgBase(m MsgBase, mt MsgType, t Tag) {
-	v.SetTag(t)
-	v.SetType(mt)
-	v.ComputeSize()
+func (s Stat) muid() msgString {
+	return msgString(s[41+s.name().Nbytes()+s.uid().Nbytes()+s.gid().Nbytes():])
 }
+func (s Stat) MuidBytes() []byte { return s.muid().Bytes() }
+func (s Stat) Muid() string      { return s.muid().String() }
 
 /////////////////////////////////////
 // size[4] Tversion tag[2] msize[4] version[s]
-type ReqVersion struct{ MsgBase }
+type Tversion []byte
 
-func MakeReqVersion(maxMessageSize uint32, version string) ReqVersion {
-	v := make(ReqVersion, msgOffset+4+2+len([]byte(version)))
-	fillMsgBase(v, Tversion, NO_TAG)
-	v.SetMsgSize(maxMessageSize)
-	v.SetVersion(version)
-	return v
+func (r Tversion) fill(t Tag, maxMessageSize uint32, version string) {
+	verSize := len(version)
+	size := uint32(msgOffset + 4 + 2 + verSize)
+	MsgBase(r).fill(msgTversion, t, size)
+	bo.PutUint32(r[msgOffset:msgOffset+4], maxMessageSize)
+	msgString(r[msgOffset+4:]).SetStringAndLen(version)
 }
 
-func (r ReqVersion) MsgSize() uint32     { return bo.Uint32(r.MsgBase.Raw[msgOffset : msgOffset+4]) }
-func (r ReqVersion) SetMsgSize(v uint32) { bo.PutUint32(r.MsgBase.Raw[msgOffset:msgOffset+4], v) }
+func (r Tversion) Bytes() []byte   { return MsgBase(r).Bytes() }
+func (r Tversion) Size() uint32    { return MsgBase(r).Size() }
+func (r Tversion) Tag() Tag        { return MsgBase(r).Tag() }
+func (r Tversion) MsgSize() uint32 { return bo.Uint32(r[msgOffset : msgOffset+4]) }
 
-func (r ReqVersion) version() msgString       { return msgString(r.MsgBase.Raw[msgOffset+4:]) }
-func (r ReqVersion) VersionBytes() []byte     { return r.version().Bytes() }
-func (r ReqVersion) Version() string          { return r.version().String() }
-func (r ReqVersion) SetVersionBytes(v []byte) { r.version().SetBytesAndLen(v) }
-func (r ReqVersion) SetVersion(v string)      { r.version().SetStringAndLen(v) }
+func (r Tversion) version() msgString   { return msgString(r[msgOffset+4:]) }
+func (r Tversion) VersionBytes() []byte { return r.version().Bytes() }
+func (r Tversion) Version() string      { return r.version().String() }
 
 /////////////////////////////////////
 // size[4] Rversion tag[2] msize[4] version[s]
-type RepVersion struct{ MsgBase }
+type Rversion []byte
 
-func MakeRepVersion(maxMessageSize uint32, version string) ReqVersion {
-	v := make(ReqVersion, msgOffset+4+2+len([]byte(version)))
-	fillMsgBase(v, Tversion, NO_TAG)
-	v.SetMsgSize(maxMessageSize)
-	v.SetVersion(version)
-	return v
+func (r Rversion) fill(t Tag, maxMessageSize uint32, version string) {
+	MsgBase(r).fill(msgRversion, t, uint32(msgOffset+4+2+len((version))))
+	bo.PutUint32(r[msgOffset:msgOffset+4], maxMessageSize)
+	msgString(r[msgOffset+4:]).SetStringAndLen(version)
 }
 
-func (r RepVersion) MsgSize() uint32     { return bo.Uint32(r.MsgBase.Raw[msgOffset : msgOffset+4]) }
-func (r RepVersion) SetMsgSize(v uint32) { bo.PutUint32(r.MsgBase.Raw[msgOffset:msgOffset+4], v) }
+func (r Rversion) Bytes() []byte   { return MsgBase(r).Bytes() }
+func (r Rversion) Size() uint32    { return MsgBase(r).Size() }
+func (r Rversion) Tag() Tag        { return MsgBase(r).Tag() }
+func (r Rversion) MsgSize() uint32 { return bo.Uint32(r[msgOffset : msgOffset+4]) }
 
-func (r RepVersion) version() msgString       { return msgString(r.MsgBase.Raw[msgOffset+4:]) }
-func (r RepVersion) VersionBytes() []byte     { return r.version().Bytes() }
-func (r RepVersion) Version() string          { return r.version().String() }
-func (r RepVersion) SetVersionBytes(v []byte) { r.version().SetBytesAndLen(v) }
-func (r RepVersion) SetVersion(v string)      { r.version().SetStringAndLen(v) }
+func (r Rversion) version() msgString   { return msgString(r[msgOffset+4:]) }
+func (r Rversion) VersionBytes() []byte { return r.version().Bytes() }
+func (r Rversion) Version() string      { return r.version().String() }
 
 /////////////////////////////////////
 //size[4] Tauth tag[2] afid[4] name[s] aname[s]
-type ReqAuth struct{ MsgBase }
+type Tauth []byte
 
-func (r ReqAuth) Afid() Fid     { return Fid(bo.Uint32(r.MsgBase.Raw[msgOffset : msgOffset+4])) }
-func (r ReqAuth) SetAfid(v Fid) { bo.PutUint32(r.MsgBase.Raw[msgOffset:msgOffset+4], uint32(v)) }
+func (r Tauth) fill(t Tag, afid Fid, name, aname string) {
+	MsgBase(r).fill(msgTauth, t, uint32(msgOffset+4+2*2+len((name))+len((aname))))
+	bo.PutUint32(r[msgOffset:msgOffset+4], uint32(afid))
+	next := msgString(r[msgOffset+4:]).SetStringAndLen(name)
+	msgString(r[next:]).SetStringAndLen(aname)
+}
 
-func (r ReqAuth) uname() msgString       { return msgString(r.MsgBase.Raw[msgOffset+4:]) }
-func (r ReqAuth) UnameBytes() []byte     { return r.uname().Bytes() }
-func (r ReqAuth) Uname() string          { return r.uname().String() }
-func (r ReqAuth) SetUnameBytes(v []byte) { r.uname().SetBytesAndLen(v) }
-func (r ReqAuth) SetUname(v string)      { r.uname().SetStringAndLen(v) }
+func (r Tauth) Bytes() []byte { return MsgBase(r).Bytes() }
+func (r Tauth) Size() uint32  { return MsgBase(r).Size() }
+func (r Tauth) Tag() Tag      { return MsgBase(r).Tag() }
+func (r Tauth) Afid() Fid     { return Fid(bo.Uint32(r[msgOffset : msgOffset+4])) }
 
-func (r ReqAuth) aname() msgString       { return msgString(r.MsgBase.Raw[r.uname().NextOffset():]) }
-func (r ReqAuth) AnameBytes() []byte     { return r.aname().Bytes() }
-func (r ReqAuth) Aname() string          { return r.aname().String() }
-func (r ReqAuth) SetAnameBytes(v []byte) { r.aname().SetBytesAndLen(v) }
-func (r ReqAuth) SetAname(v string)      { r.aname().SetStringAndLen(v) }
+func (r Tauth) uname() msgString   { return msgString(r[msgOffset+4:]) }
+func (r Tauth) UnameBytes() []byte { return r.uname().Bytes() }
+func (r Tauth) Uname() string      { return r.uname().String() }
+
+func (r Tauth) aname() msgString   { return msgString(r[msgOffset+4+r.uname().Nbytes():]) }
+func (r Tauth) AnameBytes() []byte { return r.aname().Bytes() }
+func (r Tauth) Aname() string      { return r.aname().String() }
 
 /////////////////////////////////////
 // size[4] Rauth tag[2] aqid[13]
-type RepAuth struct{ MsgBase }
+type Rauth []byte
 
-func (r RepAuth) Aqid() Qid     { return Qid(r.MsgBase.Raw[msgOffset : msgOffset+13]) }
-func (r RepAuth) SetAqid(v Qid) { copy(r.MsgBase.Raw[msgOffset:msgOffset+13], v) }
+func (r Rauth) fill(t Tag, aqid Qid) {
+	MsgBase(r).fill(msgRauth, t, uint32(msgOffset+QidSize))
+	copy(r[msgOffset:msgOffset+QidSize], aqid)
+}
+
+func (r Rauth) Bytes() []byte { return MsgBase(r).Bytes() }
+func (r Rauth) Size() uint32  { return MsgBase(r).Size() }
+func (r Rauth) Tag() Tag      { return MsgBase(r).Tag() }
+func (r Rauth) Aqid() Qid     { return Qid(r[msgOffset : msgOffset+QidSize]) }
 
 /////////////////////////////////////
 // size[4] Rerror tag[2] ename[s]
-type RepError struct{ MsgBase }
+type Rerror []byte
 
-func MakeRepError(tag Tag, msg string) RepError {
-	m := make(RepError, msgOffset+2+2+len([]byte(msg)))
-	m.SetEname(msg)
-	fillMsgBase(m, Rerror, tag)
-	return m
+func (r Rerror) fill(t Tag, msg string) {
+	MsgBase(r).fill(msgRerror, t, uint32(msgOffset+2+len((msg))))
+	msgString(r[msgOffset:]).SetStringAndLen(msg)
 }
 
-func (r RepError) ename() msgString       { return msgString(r.MsgBase.Raw[msgOffset:]) }
-func (r RepError) EnameBytes() []byte     { return r.ename().Bytes() }
-func (r RepError) Ename() string          { return r.ename().String() }
-func (r RepError) SetEnameBytes(v []byte) { r.ename().SetBytesAndLen(v) }
-func (r RepError) SetEname(v string)      { r.ename().SetStringAndLen(v) }
+func (r Rerror) Bytes() []byte      { return MsgBase(r).Bytes() }
+func (r Rerror) Size() uint32       { return MsgBase(r).Size() }
+func (r Rerror) Tag() Tag           { return MsgBase(r).Tag() }
+func (r Rerror) ename() msgString   { return msgString(r[msgOffset:]) }
+func (r Rerror) EnameBytes() []byte { return r.ename().Bytes() }
+func (r Rerror) Ename() string      { return r.ename().String() }
 
 /////////////////////////////////////
 // size[4] Tclunk tag[2] fid[4]
-type ReqClunk struct{ MsgBase }
+type Tclunk []byte
 
-func (r ReqClunk) Fid() Fid     { return Fid(bo.Uint32(r.MsgBase.Raw[msgOffset : msgOffset+4])) }
-func (r ReqClunk) SetFid(v Fid) { bo.PutUint32(r.MsgBase.Raw[msgOffset:msgOffset+4], uint32(v)) }
+func (r Tclunk) fill(t Tag, fid Fid) {
+	MsgBase(r).fill(msgTclunk, t, uint32(msgOffset+4))
+	bo.PutUint32(r[msgOffset:msgOffset+4], uint32(fid))
+}
+
+func (r Tclunk) Bytes() []byte { return MsgBase(r).Bytes() }
+func (r Tclunk) Size() uint32  { return MsgBase(r).Size() }
+func (r Tclunk) Tag() Tag      { return MsgBase(r).Tag() }
+func (r Tclunk) Fid() Fid      { return Fid(bo.Uint32(r[msgOffset : msgOffset+4])) }
 
 /////////////////////////////////////
 // size[4] Rclunk tag[2]
-type RepClunk RepAck
+type Rclunk []byte
+
+func (r Rclunk) fill(t Tag) {
+	MsgBase(r).fill(msgRclunk, t, uint32(msgOffset))
+}
+
+func (r Rclunk) Bytes() []byte { return MsgBase(r).Bytes() }
+func (r Rclunk) Size() uint32  { return MsgBase(r).Size() }
+func (r Rclunk) Tag() Tag      { return MsgBase(r).Tag() }
 
 /////////////////////////////////////
 // size[4] Tflush tag[2] oldtag[2]
-type ReqFlush struct{ MsgBase }
+type Tflush []byte
 
-func (r ReqFlush) OldTag() Tag     { return Tag(bo.Uint16(r.MsgBase.Raw[msgOffset : msgOffset+2])) }
-func (r ReqFlush) OldSetTag(v Tag) { bo.PutUint16(r.MsgBase.Raw[msgOffset:msgOffset+2], uint16(v)) }
+func (r Tflush) fill(t Tag, oldTag Tag) {
+	MsgBase(r).fill(msgTflush, t, uint32(msgOffset+2))
+	bo.PutUint16(r[msgOffset:msgOffset+2], uint16(oldTag))
+}
+
+func (r Tflush) Bytes() []byte { return MsgBase(r).Bytes() }
+func (r Tflush) Size() uint32  { return MsgBase(r).Size() }
+func (r Tflush) Tag() Tag      { return MsgBase(r).Tag() }
+func (r Tflush) OldTag() Tag   { return Tag(bo.Uint16(r[msgOffset : msgOffset+2])) }
 
 /////////////////////////////////////
 // size[4] Rflush tag[2]
-type RepFlush RepAck
+type Rflush []byte
+
+func (r Rflush) fill(t Tag) {
+	MsgBase(r).fill(msgRflush, t, uint32(msgOffset))
+}
+
+func (r Rflush) Bytes() []byte { return MsgBase(r).Bytes() }
+func (r Rflush) Size() uint32  { return MsgBase(r).Size() }
+func (r Rflush) Tag() Tag      { return MsgBase(r).Tag() }
+
+/////////////////////////////////////
+// size[4] Twalk tag[2] fid[4] newfid[4] nwname[2] nwname*(wname[s])
+type Twalk []byte
+
+func (r Twalk) fill(t Tag, fid, newfid Fid, wnames []string) {
+	size := uint32(msgOffset + 4 + 4 + 2 + 2*len(wnames))
+	for _, n := range wnames {
+		size += uint32(len((n)))
+	}
+	MsgBase(r).fill(msgTwalk, t, size)
+	bo.PutUint32(r[msgOffset:msgOffset+4], uint32(fid))
+	bo.PutUint32(r[msgOffset+4:msgOffset+8], uint32(newfid))
+	bo.PutUint16(r[msgOffset+8:msgOffset+10], uint16(len(wnames)))
+	off := msgOffset + 10
+	for _, n := range wnames {
+		off = msgString(r[off:]).SetStringAndLen(n)
+	}
+}
+
+func (r Twalk) Bytes() []byte { return MsgBase(r).Bytes() }
+func (r Twalk) Size() uint32  { return MsgBase(r).Size() }
+func (r Twalk) Tag() Tag      { return MsgBase(r).Tag() }
+func (r Twalk) Fid() Fid      { return Fid(bo.Uint32(r[msgOffset : msgOffset+4])) }
+
+func (r Twalk) NewFid() Fid { return Fid(bo.Uint32(r[msgOffset+4 : msgOffset+8])) }
+
+func (r Twalk) NumWname() uint16 { return bo.Uint16(r[msgOffset+8 : msgOffset+10]) }
+
+func (r Twalk) wname(i int) msgString {
+	off := msgString(r[msgOffset+10:])
+	for j := 0; j < i; i++ {
+		off = msgString(off[off.Nbytes():])
+	}
+	return off
+}
+func (r Twalk) Wname(i int) string { return r.wname(i).String() }
+
+/////////////////////////////////////
+// size[4] Rwalk tag[2] nwqid[2] nwqid*(wqid[13])
+type Rwalk []byte
+
+func (r Rwalk) fill(t Tag, wqids []Qid) {
+	size := uint32(msgOffset + 2 + len(wqids)*QidSize)
+	MsgBase(r).fill(msgRwalk, t, size)
+	bo.PutUint16(r[msgOffset:msgOffset+2], uint16(len(wqids)))
+	off := msgOffset + 2
+	for i, wqid := range wqids {
+		o := off + i*QidSize
+		copy(r[o:o+QidSize], wqid.Bytes())
+	}
+}
+
+func (r Rwalk) Bytes() []byte   { return MsgBase(r).Bytes() }
+func (r Rwalk) Size() uint32    { return MsgBase(r).Size() }
+func (r Rwalk) Tag() Tag        { return MsgBase(r).Tag() }
+func (r Rwalk) NumWqid() uint16 { return bo.Uint16(r[msgOffset : msgOffset+2]) }
+func (r Rwalk) Wqid(i int) Qid {
+	off := msgOffset + 2 + i*QidSize
+	return Qid(r[off : off+QidSize])
+}
 
 /////////////////////////////////////
 // size[4] Tattach tag[2] fid[4] afid[4] uname[s] aname[s]
-type ReqAttach struct{ MsgBase }
+type Tattach []byte
 
-func (r ReqAttach) Fid() Fid     { return Fid(bo.Uint32(r.MsgBase.Raw[msgOffset : msgOffset+4])) }
-func (r ReqAttach) SetFid(v Fid) { bo.PutUint32(r.MsgBase.Raw[msgOffset:msgOffset+4], uint32(v)) }
+func (r Tattach) fill(t Tag, fid, afid Fid, uname, aname string) {
+	size := uint32(msgOffset + 4 + 4 + 2 + len((uname)) + 2 + len((aname)))
+	MsgBase(r).fill(msgTattach, t, size)
+	bo.PutUint32(r[msgOffset:msgOffset+4], uint32(fid))
+	bo.PutUint32(r[msgOffset+4:msgOffset+8], uint32(afid))
+	off := msgString(r[msgOffset+8:]).SetStringAndLen(uname)
+	msgString(r[off:]).SetStringAndLen(aname)
+}
 
-func (r ReqAttach) Afid() Fid     { return Fid(bo.Uint32(r.MsgBase.Raw[msgOffset+4 : msgOffset+8])) }
-func (r ReqAttach) SetAfid(v Fid) { bo.PutUint32(r.MsgBase.Raw[msgOffset+4:msgOffset+8], uint32(v)) }
+func (r Tattach) Bytes() []byte { return MsgBase(r).Bytes() }
+func (r Tattach) Size() uint32  { return MsgBase(r).Size() }
+func (r Tattach) Tag() Tag      { return MsgBase(r).Tag() }
+func (r Tattach) Fid() Fid      { return Fid(bo.Uint32(r[msgOffset : msgOffset+4])) }
+func (r Tattach) Afid() Fid     { return Fid(bo.Uint32(r[msgOffset+4 : msgOffset+8])) }
 
-func (r ReqAttach) uname() msgString       { return msgString(r.MsgBase.Raw[msgOffset+8:]) }
-func (r ReqAttach) UnameBytes() []byte     { return r.uname().Bytes() }
-func (r ReqAttach) Uname() string          { return r.uname().String() }
-func (r ReqAttach) SetUnameBytes(v []byte) { r.uname().SetBytesAndLen(v) }
-func (r ReqAttach) SetUname(v string)      { r.uname().SetStringAndLen(v) }
+func (r Tattach) uname() msgString   { return msgString(r[msgOffset+8:]) }
+func (r Tattach) UnameBytes() []byte { return r.uname().Bytes() }
+func (r Tattach) Uname() string      { return r.uname().String() }
 
-func (r ReqAttach) aname() msgString       { return msgString(r.MsgBase.Raw[r.uname().NextOffset():]) }
-func (r ReqAttach) AnameBytes() []byte     { return r.aname().Bytes() }
-func (r ReqAttach) Aname() string          { return r.aname().String() }
-func (r ReqAttach) SetAnameBytes(v []byte) { r.aname().SetBytesAndLen(v) }
-func (r ReqAttach) SetAname(v string)      { r.aname().SetStringAndLen(v) }
+func (r Tattach) aname() msgString   { return msgString(r[msgOffset+8+r.uname().Nbytes():]) }
+func (r Tattach) AnameBytes() []byte { return r.aname().Bytes() }
+func (r Tattach) Aname() string      { return r.aname().String() }
 
 /////////////////////////////////////
 // size[4] Rattach tag[2] qid[13]
-type RepAttach struct{ MsgBase }
+type Rattach []byte
 
-func (r RepAttach) Qid() Qid     { return Qid(r.MsgBase.Raw[msgOffset : msgOffset+13]) }
-func (r RepAttach) SetQid(v Qid) { copy(r.MsgBase.Raw[msgOffset:msgOffset+13], v) }
+func (r Rattach) fill(t Tag, qid Qid) {
+	size := uint32(msgOffset + QidSize)
+	MsgBase(r).fill(msgRattach, t, size)
+	copy(r[msgOffset:msgOffset+QidSize], qid.Bytes())
+}
+
+func (r Rattach) Bytes() []byte { return MsgBase(r).Bytes() }
+func (r Rattach) Size() uint32  { return MsgBase(r).Size() }
+func (r Rattach) Tag() Tag      { return MsgBase(r).Tag() }
+func (r Rattach) Qid() Qid      { return Qid(r[msgOffset : msgOffset+QidSize]) }
 
 /////////////////////////////////////
 // size[4] Topen tag[2] fid[4] mode[1]
-type ReqOpen struct{ MsgBase }
+type Topen []byte
 
-func (r ReqOpen) Fid() Fid     { return Fid(bo.Uint32(r.MsgBase.Raw[msgOffset : msgOffset+4])) }
-func (r ReqOpen) SetFid(v Fid) { bo.PutUint32(r.MsgBase.Raw[msgOffset:msgOffset+4], uint32(v)) }
+func (r Topen) fill(t Tag, fid Fid, mode OpenMode) {
+	size := uint32(msgOffset + 4 + 1)
+	MsgBase(r).fill(msgTopen, t, size)
+	bo.PutUint32(r[msgOffset:msgOffset+4], uint32(fid))
+	r[msgOffset+4] = byte(mode)
+}
 
-func (r ReqOpen) Mode() Mode     { return Mode(r.MsgBase.Raw[msgOffset+4]) }
-func (r ReqOpen) SetMode(v Mode) { r.MsgBase.Raw[msgOffset+4] = byte(v) }
+func (r Topen) Bytes() []byte  { return MsgBase(r).Bytes() }
+func (r Topen) Size() uint32   { return MsgBase(r).Size() }
+func (r Topen) Tag() Tag       { return MsgBase(r).Tag() }
+func (r Topen) Fid() Fid       { return Fid(bo.Uint32(r[msgOffset : msgOffset+4])) }
+func (r Topen) Mode() OpenMode { return OpenMode(r[msgOffset+4]) }
 
 /////////////////////////////////////
 // size[4] Ropen tag[2] qid[13] iounit[4]
-type RepOpen struct{ MsgBase }
+type Ropen []byte
 
-func (r RepAuth) Qid() Qid     { return Qid(r.MsgBase.Raw[msgOffset : msgOffset+13]) }
-func (r RepAuth) SetQid(v Qid) { copy(r.MsgBase.Raw[msgOffset:msgOffset+13], v) }
+func (r Ropen) fill(t Tag, qid Qid, iounit uint32) {
+	size := uint32(msgOffset + QidSize + 4)
+	MsgBase(r).fill(msgRopen, t, size)
+	copy(r[msgOffset:msgOffset+QidSize], qid.Bytes())
+	bo.PutUint32(r[msgOffset+QidSize:msgOffset+QidSize+4], iounit)
+}
 
-func (r ReqOpen) Iounit() uint32     { return bo.Uint32(r.MsgBase.Raw[msgOffset+13 : msgOffset+13+4]) }
-func (r ReqOpen) SetIounit(v uint32) { bo.PutUint32(r.MsgBase.Raw[msgOffset+13:msgOffset+13+4], v) }
+func (r Ropen) Bytes() []byte { return MsgBase(r).Bytes() }
+func (r Ropen) Size() uint32  { return MsgBase(r).Size() }
+func (r Ropen) Tag() Tag      { return MsgBase(r).Tag() }
+func (r Ropen) Qid() Qid      { return Qid(r[msgOffset : msgOffset+QidSize]) }
+func (r Ropen) Iounit() uint32 {
+	return bo.Uint32(r[msgOffset+QidSize : msgOffset+QidSize+4])
+}
 
 /////////////////////////////////////
 // size[4] Tcreate tag[2] fid[4] name[s] perm[4] mode[1]
-type ReqCreate struct{ MsgBase }
+type Tcreate []byte
 
-func (r ReqCreate) Fid() Fid     { return Fid(bo.Uint32(r.MsgBase.Raw[msgOffset : msgOffset+4])) }
-func (r ReqCreate) SetFid(v Fid) { bo.PutUint32(r.MsgBase.Raw[msgOffset:msgOffset+4], uint32(v)) }
-
-func (r ReqCreate) name() msgString       { return msgString(r.MsgBase.Raw[msgOffset+4:]) }
-func (r ReqCreate) NameBytes() []byte     { return r.name().Bytes() }
-func (r ReqCreate) Name() string          { return r.name().String() }
-func (r ReqCreate) SetNameBytes(v []byte) { r.name().SetBytesAndLen(v) }
-func (r ReqCreate) SetName(v string)      { r.name().SetStringAndLen(v) }
-
-func (r ReqCreate) Perm() uint32 { o := r.name().NextOffset(); return bo.Uint32(r.MsgBase.Raw[o : o+4]) }
-func (r ReqCreate) SetPerm(v uint32) {
-	o := r.name().NextOffset()
-	bo.PutUint32(r.MsgBase.Raw[o:o+4], v)
+func (r Tcreate) fill(t Tag, fid Fid, name string, perm uint32, mode OpenMode) {
+	size := uint32(msgOffset + QidSize + 4 + 2 + len((name)) + 4 + 1)
+	MsgBase(r).fill(msgTcreate, t, size)
+	bo.PutUint32(r[msgOffset:msgOffset+4], uint32(fid))
+	off := msgString(r[msgOffset+4:]).SetStringAndLen(name)
+	bo.PutUint32(r[off:off+4], perm)
+	r[off+4] = byte(mode)
 }
 
-func (r ReqCreate) Mode() Mode     { return Mode(r.MsgBase.Raw[r.name().NextOffset()+4]) }
-func (r ReqCreate) SetMode(v Mode) { r.MsgBase.Raw[r.name().NextOffset()+4] = byte(v) }
+func (r Tcreate) Bytes() []byte { return MsgBase(r).Bytes() }
+func (r Tcreate) Size() uint32  { return MsgBase(r).Size() }
+func (r Tcreate) Tag() Tag      { return MsgBase(r).Tag() }
+func (r Tcreate) Fid() Fid      { return Fid(bo.Uint32(r[msgOffset : msgOffset+4])) }
+
+func (r Tcreate) name() msgString   { return msgString(r[msgOffset+4:]) }
+func (r Tcreate) NameBytes() []byte { return r.name().Bytes() }
+func (r Tcreate) Name() string      { return r.name().String() }
+
+func (r Tcreate) Perm() uint32 {
+	o := msgOffset + 4 + r.name().Nbytes()
+	return bo.Uint32(r[o : o+4])
+}
+func (r Tcreate) Mode() OpenMode { return OpenMode(r[msgOffset+4+r.name().Nbytes()+4]) }
 
 /////////////////////////////////////
 // size[4] Rcreate tag[2] qid[13] iounit[4]
-type RepCreate struct{ MsgBase }
+type Rcreate []byte
 
-func (r RepCreate) Qid() Qid     { return Qid(r.MsgBase.Raw[msgOffset : msgOffset+13]) }
-func (r RepCreate) SetQid(v Qid) { copy(r.MsgBase.Raw[msgOffset:msgOffset+13], v) }
+func (r Rcreate) fill(t Tag, q Qid, iounit uint32) {
+	size := uint32(msgOffset + QidSize + 4)
+	MsgBase(r).fill(msgRcreate, t, size)
+	copy(r[msgOffset:msgOffset+QidSize], q.Bytes())
+	bo.PutUint32(r[msgOffset+QidSize:msgOffset+QidSize+4], iounit)
+}
 
-func (r ReqCreate) Iounit() uint32     { return bo.Uint32(r.MsgBase.Raw[msgOffset+13 : msgOffset+13+4]) }
-func (r ReqCreate) SetIounit(v uint32) { bo.PutUint32(r.MsgBase.Raw[msgOffset+13:msgOffset+13+4], v) }
+func (r Rcreate) Bytes() []byte { return MsgBase(r).Bytes() }
+func (r Rcreate) Size() uint32  { return MsgBase(r).Size() }
+func (r Rcreate) Tag() Tag      { return MsgBase(r).Tag() }
+func (r Rcreate) Qid() Qid      { return Qid(r[msgOffset : msgOffset+QidSize]) }
+func (r Rcreate) Iounit() uint32 {
+	return bo.Uint32(r[msgOffset+QidSize : msgOffset+QidSize+4])
+}
 
 /////////////////////////////////////
 // size[4] Tread tag[2] fid[4] offset[8] count[4]
-type ReqRead struct{ MsgBase }
+type Tread []byte
 
-func (r ReqRead) Fid() Fid     { return Fid(bo.Uint32(r.MsgBase.Raw[msgOffset : msgOffset+4])) }
-func (r ReqRead) SetFid(v Fid) { bo.PutUint32(r.MsgBase.Raw[msgOffset:msgOffset+4], uint32(v)) }
+func (r Tread) fill(t Tag, fid Fid, offset uint64, count uint32) {
+	size := uint32(msgOffset + QidSize + 4 + 8 + 4)
+	MsgBase(r).fill(msgTread, t, size)
+	bo.PutUint32(r[msgOffset:msgOffset+4], uint32(fid))
+	bo.PutUint64(r[msgOffset+4:msgOffset+12], offset)
+	bo.PutUint32(r[msgOffset+12:msgOffset+16], count)
+}
 
-func (r ReqRead) Offset() uint64     { return bo.Uint64(r.MsgBase.Raw[msgOffset+4 : msgOffset+12]) }
-func (r ReqRead) SetOffset(v uint64) { bo.PutUint64(r.MsgBase.Raw[msgOffset+4:msgOffset+12], v) }
+func (r Tread) Bytes() []byte { return MsgBase(r).Bytes() }
+func (r Tread) Size() uint32  { return MsgBase(r).Size() }
+func (r Tread) Tag() Tag      { return MsgBase(r).Tag() }
+func (r Tread) Fid() Fid      { return Fid(bo.Uint32(r[msgOffset : msgOffset+4])) }
+func (r Tread) SetFid(v Fid)  { bo.PutUint32(r[msgOffset:msgOffset+4], uint32(v)) }
 
-func (r ReqRead) Count() uint32     { return bo.Uint32(r.MsgBase.Raw[msgOffset+12 : msgOffset+16]) }
-func (r ReqRead) SetCount(v uint32) { bo.PutUint32(r.MsgBase.Raw[msgOffset+12:msgOffset+16], v) }
+func (r Tread) Offset() uint64     { return bo.Uint64(r[msgOffset+4 : msgOffset+12]) }
+func (r Tread) SetOffset(v uint64) { bo.PutUint64(r[msgOffset+4:msgOffset+12], v) }
+
+func (r Tread) Count() uint32     { return bo.Uint32(r[msgOffset+12 : msgOffset+16]) }
+func (r Tread) SetCount(v uint32) { bo.PutUint32(r[msgOffset+12:msgOffset+16], v) }
 
 /////////////////////////////////////
 // size[4] Rread tag[2] count[4] data[count]
-type RepRead struct{ MsgBase }
+type Rread []byte
 
-func (r RepRead) Count() uint32     { return bo.Uint32(r.MsgBase.Raw[msgOffset : msgOffset+4]) }
-func (r RepRead) SetCount(v uint32) { bo.PutUint32(r.MsgBase.Raw[msgOffset:msgOffset+4], v) }
-
-func (r RepRead) Data() []byte            { return r.MsgBase.Raw[msgOffset+4:] }
-func (r RepRead) SetDataNoCount(b []byte) { copy(r.MsgBase.Raw[msgOffset+4:], b) }
-func (r RepRead) SetData(b []byte) {
-	if len(b) > math.MaxUint32 {
-		panic(fmt.Errorf("data is larger than allowed: %d", len(b)))
+func (r Rread) fill(t Tag, data []byte) {
+	if len(data) > math.MaxUint32 {
+		panic(fmt.Errorf("data is larger than allowed: %d", len(data)))
 	}
-	r.SetDataNoCount(b)
-	r.SetCount(uint32(len(b)))
+	size := uint32(msgOffset + 4 + len(data))
+	MsgBase(r).fill(msgRread, t, size)
+	bo.PutUint32(r[msgOffset:msgOffset+4], uint32(len(data)))
+	copy(r[msgOffset+4:], data)
 }
+
+func (r Rread) Bytes() []byte { return MsgBase(r).Bytes() }
+func (r Rread) Size() uint32  { return MsgBase(r).Size() }
+func (r Rread) Tag() Tag      { return MsgBase(r).Tag() }
+func (r Rread) Count() uint32 { return bo.Uint32(r[msgOffset : msgOffset+4]) }
+func (r Rread) Data() []byte  { return r[msgOffset+4:] }
 
 /////////////////////////////////////
 // size[4] Twrite tag[2] fid[4] offset[8] count[4] data[count]
-type ReqWrite struct{ MsgBase }
+type Twrite []byte
 
-func (r ReqWrite) Fid() Fid     { return Fid(bo.Uint32(r.MsgBase.Raw[msgOffset : msgOffset+4])) }
-func (r ReqWrite) SetFid(v Fid) { bo.PutUint32(r.MsgBase.Raw[msgOffset:msgOffset+4], uint32(v)) }
-
-func (r ReqWrite) Offset() uint64     { return bo.Uint64(r.MsgBase.Raw[msgOffset+4 : msgOffset+12]) }
-func (r ReqWrite) SetOffset(v uint64) { bo.PutUint64(r.MsgBase.Raw[msgOffset+4:msgOffset+12], v) }
-
-func (r ReqWrite) Count() uint32     { return bo.Uint32(r.MsgBase.Raw[msgOffset+12 : msgOffset+16]) }
-func (r ReqWrite) SetCount(v uint32) { bo.PutUint32(r.MsgBase.Raw[msgOffset+12:msgOffset+16], v) }
-
-func (r ReqWrite) Data() []byte            { return r.MsgBase.Raw[msgOffset+16:] }
-func (r ReqWrite) SetDataNoCount(b []byte) { copy(r.Data(), b) }
-func (r ReqWrite) SetData(b []byte) {
-	if len(b) > math.MaxUint32 {
-		panic(fmt.Errorf("data is larger than allowed: %d", len(b)))
+func (r Twrite) fill(t Tag, fid Fid, offset uint64, data []byte) {
+	if len(data) > math.MaxUint32 {
+		panic(fmt.Errorf("data is larger than allowed: %d", len(data)))
 	}
-	r.SetDataNoCount(b)
-	r.SetCount(uint32(len(b)))
+	size := uint32(msgOffset + 4 + 8 + 4 + len(data))
+	MsgBase(r).fill(msgTwrite, t, size)
+	bo.PutUint32(r[msgOffset:msgOffset+4], uint32(fid))
+	bo.PutUint64(r[msgOffset+4:msgOffset+12], offset)
+	bo.PutUint32(r[msgOffset+12:msgOffset+16], uint32(len(data)))
+	copy(r[msgOffset+16:], data)
 }
+
+func (r Twrite) Bytes() []byte  { return MsgBase(r).Bytes() }
+func (r Twrite) Size() uint32   { return MsgBase(r).Size() }
+func (r Twrite) Tag() Tag       { return MsgBase(r).Tag() }
+func (r Twrite) Fid() Fid       { return Fid(bo.Uint32(r[msgOffset : msgOffset+4])) }
+func (r Twrite) Offset() uint64 { return bo.Uint64(r[msgOffset+4 : msgOffset+12]) }
+func (r Twrite) Count() uint32  { return bo.Uint32(r[msgOffset+12 : msgOffset+16]) }
+func (r Twrite) Data() []byte   { return r[msgOffset+16:] }
 
 /////////////////////////////////////
 // size[4] Rwrite tag[2] count[4]
-type RepWrite struct{ MsgBase }
+type Rwrite []byte
 
-func (r RepWrite) Count() uint32     { return bo.Uint32(r.MsgBase.Raw[msgOffset : msgOffset+4]) }
-func (r RepWrite) SetCount(v uint32) { bo.PutUint32(r.MsgBase.Raw[msgOffset:msgOffset+4], v) }
+func (r Rwrite) fill(t Tag, count uint32) {
+	size := uint32(msgOffset + 4)
+	MsgBase(r).fill(msgRwrite, t, size)
+	bo.PutUint32(r[msgOffset:msgOffset+4], count)
+}
+
+func (r Rwrite) Bytes() []byte { return MsgBase(r).Bytes() }
+func (r Rwrite) Size() uint32  { return MsgBase(r).Size() }
+func (r Rwrite) Tag() Tag      { return MsgBase(r).Tag() }
+func (r Rwrite) Count() uint32 { return bo.Uint32(r[msgOffset : msgOffset+4]) }
 
 /////////////////////////////////////
 // size[4] Tremove tag[2] fid[4]
-type ReqRemove struct{ MsgBase }
+type Tremove []byte
 
-func (r ReqRemove) Fid() Fid     { return Fid(bo.Uint32(r.MsgBase.Raw[msgOffset : msgOffset+4])) }
-func (r ReqRemove) SetFid(v Fid) { bo.PutUint32(r.MsgBase.Raw[msgOffset:msgOffset+4], uint32(v)) }
+func (r Tremove) fill(t Tag, fid Fid) {
+	size := uint32(msgOffset + 4)
+	MsgBase(r).fill(msgTremove, t, size)
+	bo.PutUint32(r[msgOffset:msgOffset+4], uint32(fid))
+}
+
+func (r Tremove) Bytes() []byte { return MsgBase(r).Bytes() }
+func (r Tremove) Size() uint32  { return MsgBase(r).Size() }
+func (r Tremove) Tag() Tag      { return MsgBase(r).Tag() }
+func (r Tremove) Fid() Fid      { return Fid(bo.Uint32(r[msgOffset : msgOffset+4])) }
 
 /////////////////////////////////////
 // size[4] Rremove tag[2]
-type RepRemove RepAck
+type Rremove []byte
+
+func (r Rremove) fill(t Tag) {
+	size := uint32(msgOffset)
+	MsgBase(r).fill(msgRremove, t, size)
+}
+
+func (r Rremove) Bytes() []byte { return MsgBase(r).Bytes() }
+func (r Rremove) Size() uint32  { return MsgBase(r).Size() }
+func (r Rremove) Tag() Tag      { return MsgBase(r).Tag() }
 
 /////////////////////////////////////
 // size[4] Tstat tag[2] fid[4]
-type ReqStat struct{ MsgBase }
+type Tstat []byte
 
-func (r ReqStat) Fid() Fid     { return Fid(bo.Uint32(r.MsgBase.Raw[msgOffset : msgOffset+4])) }
-func (r ReqStat) SetFid(v Fid) { bo.PutUint32(r.MsgBase.Raw[msgOffset:msgOffset+4], uint32(v)) }
+func (r Tstat) fill(t Tag, fid Fid) {
+	size := uint32(msgOffset)
+	MsgBase(r).fill(msgTstat, t, size)
+	bo.PutUint32(r[msgOffset:msgOffset+4], uint32(fid))
+}
+
+func (r Tstat) Bytes() []byte { return MsgBase(r).Bytes() }
+func (r Tstat) Size() uint32  { return MsgBase(r).Size() }
+func (r Tstat) Tag() Tag      { return MsgBase(r).Tag() }
+func (r Tstat) Fid() Fid      { return Fid(bo.Uint32(r[msgOffset : msgOffset+4])) }
 
 /////////////////////////////////////
 // size[4] Rstat tag[2] stat[n]
-type RepStat struct{ MsgBase }
+type Rstat []byte
 
-func (r RepStat) Stat() Stat     { return Stat(r.MsgBase.Raw[msgOffset:]) }
-func (r RepStat) SetStat(s Stat) { copy(r.MsgBase.Raw[msgOffset:], s) }
+func (r Rstat) fill(t Tag, s Stat) {
+	b := s.Bytes()
+	size := uint32(msgOffset + len(b) + 2)
+	MsgBase(r).fill(msgRstat, t, size)
+	// from docs:
+	//   "To make the contents of a directory, such as returned by read(5), easy
+	//   to parse, each directory entry begins with a size field. For
+	//   consistency, the entries in Twstat and Rstat messages also contain their
+	//   size, which means the size appears twice."
+	bo.PutUint16(r[msgOffset:msgOffset+2], uint16(len(b)))
+	copy(r[msgOffset+2:], b)
+}
+
+func (r Rstat) Bytes() []byte { return MsgBase(r).Bytes() }
+func (r Rstat) Size() uint32  { return MsgBase(r).Size() }
+func (r Rstat) Tag() Tag      { return MsgBase(r).Tag() }
+func (r Rstat) N() uint16     { return bo.Uint16(r[msgOffset : msgOffset+2]) }
+func (r Rstat) Stat() Stat    { return Stat(r[msgOffset+2:]) }
 
 /////////////////////////////////////
 // size[4] Twstat tag[2] fid[4] stat[n]
-type ReqWstat struct{ MsgBase }
+type Twstat []byte
 
-func (r ReqWstat) Fid() Fid     { return Fid(bo.Uint32(r.MsgBase.Raw[msgOffset : msgOffset+4])) }
-func (r ReqWstat) SetFid(v Fid) { bo.PutUint32(r.MsgBase.Raw[msgOffset:msgOffset+4], uint32(v)) }
+func (r Twstat) fill(t Tag, fid Fid, s Stat) {
+	size := uint32(msgOffset + 4 + s.Size())
+	MsgBase(r).fill(msgTwstat, t, size)
+	bo.PutUint32(r[msgOffset:msgOffset+4], uint32(fid))
+	copy(r[msgOffset+4:], s.Bytes())
+}
 
-func (r ReqWstat) Stat() Stat     { return Stat(r.MsgBase.Raw[msgOffset+4:]) }
-func (r ReqWstat) SetStat(s Stat) { copy(r.MsgBase.Raw[msgOffset+4:], s) }
+func (r Twstat) Bytes() []byte { return MsgBase(r).Bytes() }
+func (r Twstat) Size() uint32  { return MsgBase(r).Size() }
+func (r Twstat) Tag() Tag      { return MsgBase(r).Tag() }
+func (r Twstat) Fid() Fid      { return Fid(bo.Uint32(r[msgOffset : msgOffset+4])) }
+func (r Twstat) Stat() Stat    { return Stat(r[msgOffset+4:]) }
 
 /////////////////////////////////////
 // size[4] Rwstat tag[2]
-type RepWstat RepAck
+type Rwstat []byte
+
+func (r Rwstat) fill(t Tag) {
+	size := uint32(msgOffset)
+	MsgBase(r).fill(msgRwstat, t, size)
+}
+
+func (r Rwstat) Bytes() []byte { return MsgBase(r).Bytes() }
+func (r Rwstat) Size() uint32  { return MsgBase(r).Size() }
+func (r Rwstat) Tag() Tag      { return MsgBase(r).Tag() }
