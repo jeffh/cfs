@@ -13,7 +13,7 @@ func main() {
 	logger := log.New(os.Stdout, "", log.LstdFlags)
 	srv := ninep.Server{
 		Handler: &ninep.UnauthenticatedHandler{
-			Fs:       ninep.Dir("ninep"),
+			Fs:       ninep.Dir("."),
 			ErrorLog: logger,
 			TraceLog: logger,
 			Qids:     ninep.NewQidPool(),

@@ -25,6 +25,26 @@ type FileSystem interface {
 
 ////////////////////////////////////////////////
 
+type Dir string
+
+func (d Dir) OpenFile(path string, flag OpenMode, mode Mode) (FileHandle, error) {
+	fullPath := filepath.Join(string(d), path)
+	return os.OpenFile(fullPath, flag.ToOsFlags(), mode.ToOsMode())
+}
+
+func (d Dir) ListDir(path string) ([]os.FileInfo, error) {
+	fullPath := filepath.Join(string(d), path)
+	return ioutil.ReadDir(fullPath)
+}
+
+func (d Dir) Stat(path string) (os.FileInfo, error) {
+	fullPath := filepath.Join(string(d), path)
+	fmt.Printf("Stat(%#v)\n", fullPath)
+	return os.Stat(fullPath)
+}
+
+////////////////////////////////////////////////
+
 type directoryHandle struct {
 	fs       FileSystem
 	offset   int64
@@ -94,24 +114,6 @@ func (b *readOnlyMemoryBuffer) WriteAt(p []byte, off int64) (n int, err error) {
 }
 
 func (b *readOnlyMemoryBuffer) Close() error { return nil }
-
-////////////////////////////////////////////////
-
-type Dir string
-
-func (d Dir) OpenFile(path string, flag OpenMode, mode Mode) (FileHandle, error) {
-	fullPath := filepath.Join(string(d), path)
-	return os.OpenFile(fullPath, flag.ToOsFlags(), mode.ToOsMode())
-}
-
-func (d Dir) ListDir(path string) ([]os.FileInfo, error) {
-	return ioutil.ReadDir(path)
-}
-
-func (d Dir) Stat(path string) (os.FileInfo, error) {
-	fullPath := filepath.Join(string(d), path)
-	return os.Stat(fullPath)
-}
 
 ////////////////////////////////////////////////
 
@@ -296,7 +298,7 @@ func (h *UnauthenticatedHandler) Handle9P(ctx context.Context, m Message, w Repl
 			}
 			fil.h = f
 		}
-		h.tracef("local: Topen: %v -> %v", m.Fid(), fil.name)
+		h.tracef("local: Topen: %v -> %v %#v", m.Fid(), fil.name, fil.h)
 		h.Fids.Put(m.Fid(), fil)
 		q := h.Qids.Put(fil.name, ModeFromOS(info.Mode()).QidType())
 		w.Ropen(q, 0) // TODO: would be nice to support iounit
@@ -324,11 +326,6 @@ func (h *UnauthenticatedHandler) Handle9P(ctx context.Context, m Message, w Repl
 			info, err := h.Fs.Stat(path)
 			if err != nil {
 				h.errorf("local: Twalk: failed to call stat on %v for fid %v", path, m.Fid())
-				break
-			}
-
-			if !info.IsDir() {
-				h.errorf("local: Twalk: fid %v attempted to walk into non-dir: %v", m.Fid(), path)
 				break
 			}
 
@@ -393,11 +390,11 @@ func (h *UnauthenticatedHandler) Handle9P(ctx context.Context, m Message, w Repl
 		// TODO: handle overflow of converting uint64 -> int64
 		// TODO: handle retriable errors
 		n, err := fil.h.ReadAt(data, int64(m.Offset()))
-		if err == io.EOF {
-			w.Rread(nil)
-			return
-		}
 		if n == 0 {
+			if err == io.EOF {
+				w.Rread(nil)
+				return
+			}
 			h.errorf("local: Tread: error: fid %d couldn't read: %s", m.Fid(), err)
 			w.Rerror("failed to read: %s", err)
 			return
