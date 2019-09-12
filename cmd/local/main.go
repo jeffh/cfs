@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"log"
 	"os"
 
@@ -10,14 +11,20 @@ import (
 )
 
 func main() {
+	var root string
+
+	flag.StringVar(&root, "root", ".", "The root directory to serve files from")
+
+	flag.Parse()
+
+	fmt.Printf("Serving: %v\n", root)
+
 	logger := log.New(os.Stdout, "", log.LstdFlags)
 	srv := ninep.Server{
 		Handler: &ninep.UnauthenticatedHandler{
-			Fs:       ninep.Dir("."),
+			Fs:       ninep.Dir(root),
 			ErrorLog: logger,
 			TraceLog: logger,
-			Qids:     ninep.NewQidPool(),
-			Fids:     ninep.NewFidTracker(),
 		},
 		ErrorLog: logger,
 		TraceLog: logger,

@@ -3,9 +3,12 @@ package ninep
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"math"
 	"net"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -22,25 +25,42 @@ type Replier interface {
 	Rwalk(wqids []Qid)
 	Rstat(s Stat)
 	Rclunk()
+	Rremove()
+	Rcreate(q Qid, iounit uint32)
+	Rwrite(count uint32)
 	Rerror(format string, values ...interface{})
 
 	Disconnect()
+	RemoteAddr() string
 }
 
 type Handler interface {
+	Disconnected(remoteAddr string)
+	Connected(remoteAddr string)
 	Handle9P(ctx context.Context, req Message, w Replier)
 }
 
 /////////////////////////////////////////////////////////////
 
+const (
+	DefaultInitialTimeout = 1 * time.Second
+	DefaultReadTimeout    = 5 * time.Second //5 * time.Minute
+	DefaultWriteTimeout   = 15 * time.Second
+
+	// max number of requests a session can make
+	// needs to be balanced with max number of active connections
+	DefaultMaxInflightRequestsPerSession = 100
+)
+
 type Server struct {
 	TLSConfig *tls.Config
 
-	Handler Handler
+	InitialTimeout                time.Duration // timeout initial 9P handshake (version exchange)
+	ReadTimeout                   time.Duration // timeout reading data from clients
+	WriteTimeout                  time.Duration // timeout writing data to clients
+	MaxInflightRequestsPerSession int
 
-	ReadTimeout  time.Duration
-	WriteTimeout time.Duration
-	IdleTimeout  time.Duration
+	Handler Handler
 
 	MaxMsgSize uint32
 
@@ -81,8 +101,22 @@ func (s *Server) ServeTLS(l net.Listener, certFile, keyFile string) error {
 
 func (s *Server) Serve(l net.Listener) error {
 	s.tracef("listening on %s", l.Addr())
+
+	if s.InitialTimeout == 0 {
+		s.InitialTimeout = DefaultInitialTimeout
+	}
+	if s.ReadTimeout == 0 {
+		s.ReadTimeout = DefaultReadTimeout
+	}
+	if s.WriteTimeout == 0 {
+		s.WriteTimeout = DefaultWriteTimeout
+	}
+	if s.MaxInflightRequestsPerSession == 0 {
+		s.MaxInflightRequestsPerSession = DefaultMaxInflightRequestsPerSession
+	}
+
 	retries := 0
-	const maxWait = 2 * time.Second
+	const maxWait = 1 * time.Minute
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	for {
@@ -93,21 +127,21 @@ func (s *Server) Serve(l net.Listener) error {
 				wait := time.Duration(math.Min(math.Pow(float64(10*time.Millisecond), float64(retries)), float64(maxWait)))
 				s.tracef("accept error: %s; retrying in %v", err, wait)
 				time.Sleep(wait)
+				continue
 			} else {
 				return err
 			}
 		}
 
 		s.tracef("accepted connection from %s", conn.RemoteAddr())
-		sess := &serverSession{
+		sc := &serverConn{
 			rwc:        conn,
-			handler:    s.Handler,
 			maxMsgSize: DEFAULT_MAX_MESSAGE_SIZE,
 			ctx:        ctx,
-			errorLog:   s.ErrorLog,
-			traceLog:   s.TraceLog,
+			srv:        s,
+			handler:    s.Handler,
 		}
-		go sess.serve()
+		go sc.serve()
 	}
 }
 
@@ -133,36 +167,46 @@ func (s *Server) ListenAndServeTLS(addr string, certFile, keyFile string) error 
 /////////////////////////////////////////////////////////////
 
 // TODO: support multiplexing
-type serverSession struct {
+type serverConn struct {
 	rwc net.Conn
-	txn transaction
+
+	srv  *Server
+	txns chan *transaction
 
 	handler Handler
 	ctx     context.Context
 
 	maxMsgSize uint32
-
-	errorLog, traceLog Logger
+	stop       int32
 }
 
-func (s *serverSession) tracef(f string, values ...interface{}) {
-	if s.traceLog != nil {
-		s.traceLog.Printf(f, values...)
+func (s *serverConn) tracef(f string, values ...interface{}) {
+	if s.srv.TraceLog != nil {
+		s.srv.TraceLog.Printf(f, values...)
 	}
 }
 
-func (s *serverSession) errorf(f string, values ...interface{}) {
-	if s.errorLog != nil {
-		s.errorLog.Printf(f, values...)
+func (s *serverConn) errorf(f string, values ...interface{}) {
+	if s.srv.ErrorLog != nil {
+		s.srv.ErrorLog.Printf(f, values...)
 	}
 }
 
-func (s *serverSession) acceptTversion() bool {
+func (s *serverConn) prepareDeadlines() {
+	now := time.Now()
+	s.rwc.SetReadDeadline(now.Add(s.srv.ReadTimeout))
+	s.rwc.SetWriteDeadline(now.Add(s.srv.WriteTimeout))
+}
+
+func (s *serverConn) acceptTversion(txn *transaction) bool {
 	preferredSize := s.maxMsgSize
 	version := VERSION_9P
 
+	now := time.Now()
+	s.rwc.SetReadDeadline(now.Add(s.srv.InitialTimeout))
+	s.rwc.SetWriteDeadline(now.Add(s.srv.InitialTimeout))
 	for {
-		err := s.txn.readRequest(s.rwc)
+		err := txn.readRequest(s.rwc)
 		if err != nil {
 			s.errorf("failed to negotiate version: error when reading: %s", err)
 			return false
@@ -171,10 +215,10 @@ func (s *serverSession) acceptTversion() bool {
 		var request Tversion
 		{
 			var ok bool
-			request, ok = s.txn.Request().(Tversion)
+			request, ok = txn.Request().(Tversion)
 			if !ok {
-				s.errorf("failed to negotiate version: unexpected message type: %d", s.txn.requestType())
-				s.txn.Rerror("unknown")
+				s.errorf("failed to negotiate version: unexpected message type: %d", txn.requestType())
+				txn.Rerror("unknown")
 				return false
 			}
 		}
@@ -198,14 +242,14 @@ func (s *serverSession) acceptTversion() bool {
 
 		ok := false
 		if !strings.HasPrefix(request.Version(), VERSION_9P) {
-			s.txn.Rversion(size, "unknown")
+			txn.Rversion(size, "unknown")
 			s.tracef("negotiate version: unrecognized protocol version: got %#v, wanted %#v", request.Version(), version)
 		} else {
-			s.txn.Rversion(size, version)
+			txn.Rversion(size, version)
 			ok = true
 		}
 
-		err = s.txn.writeReply(s.rwc)
+		err = txn.writeReply(s.rwc)
 		if err != nil {
 			s.errorf("failed to negotiate version: %s", err)
 			return false
@@ -217,83 +261,265 @@ func (s *serverSession) acceptTversion() bool {
 	}
 }
 
-func (s *serverSession) hasCancelled() bool {
-	select {
-	case <-s.ctx.Done():
-		return true
-	default:
-		return false
-	}
+func (s *serverConn) requestStop() {
+	atomic.AddInt32(&s.stop, 1)
 }
 
 // this runs in a new goroutine
-func (s *serverSession) serve() {
+func (s *serverConn) serve() {
 	defer s.rwc.Close()
 
-	s.txn = newTransaction(s.maxMsgSize)
-
-	if !s.acceptTversion() {
-		return
+	// here's our pool of transactions we can write
+	{
+		max := s.srv.MaxInflightRequestsPerSession
+		if max <= 0 {
+			panic(fmt.Errorf("MaxInflightRequestsPerSession must be positive, got: %d", max))
+		}
+		s.txns = make(chan *transaction, max)
+		go func() {
+			for i := 0; i < max; i++ {
+				t := createTransaction(s.maxMsgSize)
+				s.txns <- &t
+			}
+		}()
 	}
 
-	// we can reallocate it to be smaller
-	s.txn = newTransaction(s.maxMsgSize)
-
-	for run := true; run; {
-		if s.hasCancelled() {
-			s.tracef("received shutdown signal")
-			run = false
-			break
+	{
+		verTxn := createTransaction(s.maxMsgSize)
+		if !s.acceptTversion(&verTxn) {
+			return
 		}
-		err := s.txn.readRequest(s.rwc)
-		if err != nil {
-			if IsTemporaryErr(err) {
-				s.errorf("(temporary) failed to read message: %s", err)
-				continue
-			} else {
-				s.errorf("failed to read message: %s", err)
+	}
+
+	remoteAddr := s.rwc.RemoteAddr().String()
+	ctx, cancel := context.WithCancel(s.ctx)
+	var err error
+	{
+		s.handler.Connected(remoteAddr)
+
+		for s.stop = 0; s.stop == 0; {
+			txn := <-s.txns
+			txn.remoteAddr = remoteAddr
+
+			s.prepareDeadlines()
+			err = txn.readRequest(s.rwc)
+			if err != nil {
 				break
 			}
-		}
 
-		if s.hasCancelled() {
-			s.tracef("received shutdown signal, erroring request from %s", s.rwc.RemoteAddr())
-			s.txn.Rerror("shutting down")
-			s.txn.writeReply(s.rwc) // we don't care, we're going away
-			run = false
-			break
-		}
-		if !s.handle() {
-			run = false
-		}
-
-		if s.txn.handled {
-			err = s.txn.writeReply(s.rwc)
-			if err != nil {
-				if IsTemporaryErr(err) {
-					s.errorf("(temporary) failed to read message: %s", err)
-					continue
-				} else {
-					s.errorf("failed to write message: %s", err)
-					break
-				}
+			select {
+			case <-ctx.Done():
+				s.tracef("received shutdown signal, erroring request from %s", s.rwc.RemoteAddr())
+				txn.Rerror("shutting down")
+				txn.writeReply(s.rwc) // we don't care, we're going away
+				break
+			default:
+				// NOTE: technically, we never verify that Tags are unique, but
+				// we're going to write that off as a bug in the client. We'll happily,
+				// reply with the same Tag and the client will be confused which
+				// response refers to which request they asked.
+				//
+				// NOTE: according to golang docs, we're safe to have multiple
+				// goroutines write to the same net.Conn
+				go s.dispatch(ctx, txn)
 			}
 		}
 	}
+	cancel()
 
-	s.tracef("closing connection from %s", s.rwc.RemoteAddr())
+	s.tracef("closing connection from %s: %s", remoteAddr, err)
+	s.handler.Disconnected(remoteAddr)
 }
 
-func (s *serverSession) handle() bool {
-	switch m := s.txn.Request().(type) {
-	case MsgBase:
-		s.txn.Rerror("unknown")
-		return false
+func (s *serverConn) dispatch(ctx context.Context, txn *transaction) {
+	shouldStop := !s.handle(ctx, txn)
+
+	select {
+	case <-ctx.Done():
+		txn.Rerror("shutting down")
+		shouldStop = true
 	default:
-		s.handler.Handle9P(s.ctx, m, &s.txn)
-		if !s.txn.handled {
-			s.txn.Rerror("not implemented")
+		if txn.handled {
+			s.prepareDeadlines()
+			err := txn.writeReply(s.rwc)
+			if err != nil {
+				s.errorf("failed to write message: %s", err)
+				shouldStop = true
+			}
+		} else if !txn.handled {
+			s.errorf("failed to handle message: %#v", txn.Request())
 		}
-		return !s.txn.disconnect
 	}
+
+	if shouldStop {
+		s.requestStop()
+	}
+	s.tracef("request handled: %s", MsgBase(txn.Request().Bytes()).Type())
+
+	txn.reset()
+	s.txns <- txn // return back to pool
+}
+
+func (s *serverConn) handle(ctx context.Context, txn *transaction) bool {
+	switch m := txn.Request().(type) {
+	case MsgBase:
+		s.errorf("Unknown message of type: %d", MsgBase(txn.Request().Bytes()).Type())
+		txn.Rerror("unknown msg")
+		return false
+
+	default:
+		s.handler.Handle9P(ctx, m, txn)
+		if !txn.handled {
+			txn.Rerror("not implemented")
+		}
+		return !txn.disconnect
+	}
+}
+
+///////////////////////////////////////////////////////
+
+type File struct {
+	Name string
+	User string
+	Flag OpenMode
+	Mode Mode
+	H    FileHandle
+}
+
+type Session struct {
+	fids FidTracker
+	qids QidPool
+}
+
+func (s *Session) FileForFid(f Fid) (fil File, found bool) {
+	fil, ok := s.fids.Get(f)
+	if ok {
+		fmt.Printf("FID: %d => %v\n", f, fil.Name)
+	}
+	return fil, ok
+}
+func (s *Session) DeleteFid(f Fid)                   { s.fids.Delete(f) }
+func (s *Session) PutFid(f Fid, h File) Fid          { return s.fids.Put(f, h) }
+func (s *Session) PutQid(name string, t QidType) Qid { return s.qids.Put(name, t) }
+
+type SessionTracker struct {
+	m    sync.Mutex
+	sess map[string]*Session
+}
+
+func (st *SessionTracker) unsafeInit() {
+	if st.sess == nil {
+		st.sess = make(map[string]*Session)
+	}
+}
+
+func (st *SessionTracker) Add(addr string) *Session {
+	st.m.Lock()
+	st.unsafeInit()
+	s, ok := st.sess[addr]
+	if !ok {
+		s = &Session{
+			fids: FidTracker{fids: make(map[Fid]File)},
+			qids: QidPool{pool: make(map[string]Qid)},
+		}
+		st.sess[addr] = s
+	}
+	st.m.Unlock()
+	return s
+}
+
+func (st *SessionTracker) Lookup(addr string) *Session {
+	st.m.Lock()
+	st.unsafeInit()
+	s, ok := st.sess[addr]
+	if !ok {
+		s = nil
+	}
+	st.m.Unlock()
+	return s
+}
+
+func (st *SessionTracker) Remove(addr string) {
+	st.m.Lock()
+	st.unsafeInit()
+	delete(st.sess, addr)
+	st.m.Unlock()
+}
+
+///////////////////////////////////////////////////////
+
+type FidTracker struct {
+	m    sync.Mutex
+	fids map[Fid]File
+}
+
+func (t *FidTracker) Get(f Fid) (h File, found bool) {
+	t.m.Lock()
+	h, found = t.fids[f]
+	t.m.Unlock()
+	return
+}
+
+func (t *FidTracker) Put(f Fid, h File) Fid {
+	t.m.Lock()
+	t.fids[f] = h
+	t.m.Unlock()
+	return f
+}
+
+func (t *FidTracker) Delete(f Fid) {
+	t.m.Lock()
+	delete(t.fids, f)
+	t.m.Unlock()
+}
+
+func (t *FidTracker) Clear() {
+	t.m.Lock()
+	for fid := range t.fids {
+		delete(t.fids, fid)
+	}
+	t.m.Unlock()
+}
+
+///////////////////////////////////////////////////////
+
+type QidPool struct {
+	m        sync.Mutex
+	pool     map[string]Qid
+	nextPath uint64
+}
+
+func (p *QidPool) Get(name string) (q Qid, found bool) {
+	p.m.Lock()
+	q, found = p.pool[name]
+	p.m.Unlock()
+	return
+}
+
+func (p *QidPool) Put(name string, t QidType) Qid {
+	var qid Qid
+	p.m.Lock()
+	if existing, ok := p.pool[name]; ok {
+		qid = existing
+	} else {
+		qid = NewQid().Fill(t, 0, p.nextPath)
+		p.nextPath++
+		p.pool[name] = qid
+	}
+	p.m.Unlock()
+	return qid
+}
+
+func (p *QidPool) Delete(name string) {
+	p.m.Lock()
+	delete(p.pool, name)
+	p.m.Unlock()
+}
+
+func (p *QidPool) Clear() {
+	p.m.Lock()
+	for k := range p.pool {
+		delete(p.pool, k)
+	}
+	p.m.Unlock()
 }

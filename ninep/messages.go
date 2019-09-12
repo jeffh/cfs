@@ -7,6 +7,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"time"
 )
 
 var (
@@ -17,11 +18,13 @@ type transaction struct {
 	inMsg  []byte
 	outMsg []byte
 
+	remoteAddr string
+
 	handled    bool
 	disconnect bool
 }
 
-func newTransaction(maxMsgSize uint32) transaction {
+func createTransaction(maxMsgSize uint32) transaction {
 	return transaction{
 		inMsg:  make([]byte, int(maxMsgSize)),
 		outMsg: make([]byte, int(maxMsgSize)),
@@ -32,6 +35,8 @@ func (t *transaction) Disconnect() {
 	t.handled = true
 	t.disconnect = true
 }
+
+func (t *transaction) RemoteAddr() string { return t.remoteAddr }
 
 func (t *transaction) readRequest(rdr io.Reader) error {
 	// read size
@@ -55,8 +60,28 @@ func (t *transaction) readRequest(rdr io.Reader) error {
 }
 
 func (t *transaction) writeReply(wr io.Writer) error {
-	_, err := wr.Write(MsgBase(t.outMsg).Bytes())
-	return err
+	b := MsgBase(t.outMsg).Bytes()
+	for len(b) > 0 {
+		n, err := wr.Write(b)
+		b = b[n:]
+		if IsTemporaryErr(err) {
+			continue
+		} else if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (t *transaction) reset() {
+	for i := range t.inMsg {
+		t.inMsg[i] = 0
+	}
+	for i := range t.outMsg {
+		t.outMsg[i] = 0
+	}
+	t.handled = false
+	t.disconnect = false
 }
 
 func (t *transaction) requestType() MsgType {
@@ -66,7 +91,7 @@ func (t *transaction) requestType() MsgType {
 
 func (t *transaction) Request() Message {
 	mb := MsgBase(t.inMsg)
-	fmt.Printf("recv: %s\n", mb.Type())
+	// fmt.Printf("recv: %s\n", mb.Type())
 	switch mb.Type() {
 	case msgTversion:
 		return Tversion(mb)
@@ -142,31 +167,26 @@ func (t *transaction) reqTag() Tag {
 func (t *transaction) Rversion(msgSize uint32, version string) {
 	t.handled = true
 	Rversion(t.outMsg).fill(t.reqTag(), msgSize, version)
-	fmt.Printf("send: %s\n", MsgBase(t.outMsg).Type())
 }
 
 func (t *transaction) Rattach(q Qid) {
 	t.handled = true
 	Rattach(t.outMsg).fill(t.reqTag(), q)
-	fmt.Printf("send: %s\n", MsgBase(t.outMsg).Type())
 }
 
 func (t *transaction) Ropen(q Qid, iounit uint32) {
 	t.handled = true
 	Ropen(t.outMsg).fill(t.reqTag(), q, iounit)
-	fmt.Printf("send: %s\n", MsgBase(t.outMsg).Type())
 }
 
 func (t *transaction) Rwalk(wqids []Qid) {
 	t.handled = true
 	Rwalk(t.outMsg).fill(t.reqTag(), wqids)
-	fmt.Printf("send: %s\n", MsgBase(t.outMsg).Type())
 }
 
 func (t *transaction) Rstat(s Stat) {
 	t.handled = true
 	Rstat(t.outMsg).fill(t.reqTag(), s)
-	fmt.Printf("send: %s %#v\n", MsgBase(t.outMsg).Type(), MsgBase(t.outMsg).Bytes())
 }
 
 func (t *transaction) RreadBuffer() []byte {
@@ -176,20 +196,32 @@ func (t *transaction) RreadBuffer() []byte {
 func (t *transaction) Rread(data []byte) {
 	t.handled = true
 	Rread(t.outMsg).fill(t.reqTag(), data)
-	fmt.Printf("send: %s\n", MsgBase(t.outMsg).Type())
 }
 
 func (t *transaction) Rclunk() {
 	t.handled = true
 	Rclunk(t.outMsg).fill(t.reqTag())
-	fmt.Printf("send: %s\n", MsgBase(t.outMsg).Type())
+}
+
+func (t *transaction) Rremove() {
+	t.handled = true
+	Rremove(t.outMsg).fill(t.reqTag())
+}
+
+func (t *transaction) Rcreate(q Qid, iounit uint32) {
+	t.handled = true
+	Rcreate(t.outMsg).fill(t.reqTag(), q, iounit)
+}
+
+func (t *transaction) Rwrite(count uint32) {
+	t.handled = true
+	Rwrite(t.outMsg).fill(t.reqTag(), count)
 }
 
 func (t *transaction) Rerror(format string, values ...interface{}) {
 	t.handled = true
 	msg := fmt.Sprintf(format, values...)
 	Rerror(t.outMsg).fill(t.reqTag(), msg)
-	fmt.Printf("send: %s %s\n", MsgBase(t.outMsg).Type(), msg)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -203,10 +235,13 @@ func readUpTo(r io.Reader, p []byte) (int, error) {
 		m, e := r.Read(b)
 		n += m
 		err = e
+		b = b[m:]
+		if IsTemporaryErr(e) {
+			continue
+		}
 		if m == len(b) || e != nil {
 			break
 		}
-		b = b[m:]
 	}
 	return n, err
 }
@@ -321,7 +356,7 @@ func (t MsgType) String() string {
 	case msgRwstat:
 		return "msgRwstat"
 	}
-	panic("unreachable")
+	panic(fmt.Errorf("Unexpected message: %d", t))
 }
 
 type OpenMode byte
@@ -410,7 +445,7 @@ func ModeFromOS(mode os.FileMode) Mode {
 	if mode&os.ModeTemporary != 0 {
 		perm |= M_TMP
 	}
-	return perm
+	return perm | Mode(mode.Perm())
 }
 
 var bo = binary.LittleEndian
@@ -651,6 +686,30 @@ func (s Stat) muid() msgString {
 func (s Stat) MuidBytes() []byte { return s.muid().Bytes() }
 func (s Stat) Muid() string      { return s.muid().String() }
 
+func (s Stat) IsZero() bool {
+	for _, v := range s.Bytes() {
+		if v != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func (s Stat) FileInfo() StatFileInfo { return StatFileInfo{s} }
+
+// os.FileInfo interface
+
+type StatFileInfo struct {
+	Stat
+}
+
+func (s StatFileInfo) Size() int64        { return int64(s.Stat.Length()) }
+func (s StatFileInfo) Name() string       { return s.Name() }
+func (s StatFileInfo) Mode() os.FileMode  { return s.Stat.Mode().ToOsMode() }
+func (s StatFileInfo) ModTime() time.Time { return time.Unix(int64(s.Stat.Mtime()), 0) }
+func (s StatFileInfo) IsDir() bool        { return s.Mode()&M_DIR != 0 }
+func (s StatFileInfo) Sys() interface{}   { return s.Stat }
+
 /////////////////////////////////////
 // size[4] Tversion tag[2] msize[4] version[s]
 type Tversion []byte
@@ -800,6 +859,14 @@ func (r Rflush) Tag() Tag      { return MsgBase(r).Tag() }
 /////////////////////////////////////
 // size[4] Twalk tag[2] fid[4] newfid[4] nwname[2] nwname*(wname[s])
 type Twalk []byte
+
+// From docs:
+// "To simplify the implementation of the servers, a maximum of sixteen name
+// elements or qids may be packed in a single message. This constant is called
+// MAXWELEM in fcall(3). Despite this restriction, the system imposes no limit
+// on the number of elements in a file name, only the number that may be
+// transmitted in a single message."
+const MAXWELEM = 16
 
 func (r Twalk) fill(t Tag, fid, newfid Fid, wnames []string) {
 	size := uint32(msgOffset + 4 + 4 + 2 + 2*len(wnames))
@@ -958,9 +1025,9 @@ func (r Tcreate) name() msgString   { return msgString(r[msgOffset+4:]) }
 func (r Tcreate) NameBytes() []byte { return r.name().Bytes() }
 func (r Tcreate) Name() string      { return r.name().String() }
 
-func (r Tcreate) Perm() uint32 {
+func (r Tcreate) Perm() Mode {
 	o := msgOffset + 4 + r.name().Nbytes()
-	return bo.Uint32(r[o : o+4])
+	return Mode(bo.Uint32(r[o : o+4]))
 }
 func (r Tcreate) Mode() OpenMode { return OpenMode(r[msgOffset+4+r.name().Nbytes()+4]) }
 
@@ -1049,7 +1116,7 @@ func (r Twrite) Tag() Tag       { return MsgBase(r).Tag() }
 func (r Twrite) Fid() Fid       { return Fid(bo.Uint32(r[msgOffset : msgOffset+4])) }
 func (r Twrite) Offset() uint64 { return bo.Uint64(r[msgOffset+4 : msgOffset+12]) }
 func (r Twrite) Count() uint32  { return bo.Uint32(r[msgOffset+12 : msgOffset+16]) }
-func (r Twrite) Data() []byte   { return r[msgOffset+16:] }
+func (r Twrite) Data() []byte   { return r[msgOffset+16 : msgOffset+16+int(r.Count())] }
 
 /////////////////////////////////////
 // size[4] Rwrite tag[2] count[4]
