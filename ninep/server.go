@@ -24,6 +24,7 @@ type Replier interface {
 	Rread(data []byte)
 	Rwalk(wqids []Qid)
 	Rstat(s Stat)
+	Rwstat()
 	Rclunk()
 	Rremove()
 	Rcreate(q Qid, iounit uint32)
@@ -389,6 +390,8 @@ type File struct {
 type Session struct {
 	fids FidTracker
 	qids QidPool
+
+	qidsToHandle map[uint64]FileHandle
 }
 
 func (s *Session) FileForFid(f Fid) (fil File, found bool) {
@@ -401,6 +404,16 @@ func (s *Session) FileForFid(f Fid) (fil File, found bool) {
 func (s *Session) DeleteFid(f Fid)                   { s.fids.Delete(f) }
 func (s *Session) PutFid(f Fid, h File) Fid          { return s.fids.Put(f, h) }
 func (s *Session) PutQid(name string, t QidType) Qid { return s.qids.Put(name, t) }
+func (s *Session) PutFileHandle(q Qid, h FileHandle) { s.qidsToHandle[q.Path()] = h }
+func (s *Session) Qid(name string) (Qid, bool)       { return s.qids.Get(name) }
+func (s *Session) FileHandle(q Qid) (FileHandle, bool) {
+	h, ok := s.qidsToHandle[q.Path()]
+	return h, ok
+}
+
+func (s *Session) DeleteFileHandle(q Qid) {
+	delete(s.qidsToHandle, q.Path())
+}
 
 type SessionTracker struct {
 	m    sync.Mutex
@@ -419,8 +432,9 @@ func (st *SessionTracker) Add(addr string) *Session {
 	s, ok := st.sess[addr]
 	if !ok {
 		s = &Session{
-			fids: FidTracker{fids: make(map[Fid]File)},
-			qids: QidPool{pool: make(map[string]Qid)},
+			fids:         FidTracker{fids: make(map[Fid]File)},
+			qids:         QidPool{pool: make(map[string]Qid)},
+			qidsToHandle: make(map[uint64]FileHandle),
 		}
 		st.sess[addr] = s
 	}

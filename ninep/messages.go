@@ -14,6 +14,13 @@ var (
 	ErrBadFormat = errors.New("Unrecognized 9P protocol")
 )
 
+const (
+	NoTouchU64  = ^uint64(0)
+	NoTouchU32  = ^uint32(0)
+	NoTouchU16  = ^uint16(0)
+	NoTouchMode = ^Mode(0)
+)
+
 type transaction struct {
 	inMsg  []byte
 	outMsg []byte
@@ -189,6 +196,11 @@ func (t *transaction) Rstat(s Stat) {
 	Rstat(t.outMsg).fill(t.reqTag(), s)
 }
 
+func (t *transaction) Rwstat() {
+	t.handled = true
+	Rwstat(t.outMsg).fill(t.reqTag())
+}
+
 func (t *transaction) RreadBuffer() []byte {
 	return Rread(t.outMsg).Data()
 }
@@ -221,6 +233,7 @@ func (t *transaction) Rwrite(count uint32) {
 func (t *transaction) Rerror(format string, values ...interface{}) {
 	t.handled = true
 	msg := fmt.Sprintf(format, values...)
+	fmt.Printf("ERROR: %s\n", msg)
 	Rerror(t.outMsg).fill(t.reqTag(), msg)
 }
 
@@ -367,14 +380,13 @@ const (
 	ORDWR   = 2
 	OEXEC   = 3 // execute, == read but check execute permission
 	OTRUNC  = 0x10
-	OCEXEC  = 0x20   // close on exec
-	ORCLOSE = 0x40   // remove on close
-	OEXCL   = 0x1000 // exclusive use (create only)
+	OCEXEC  = 0x20 // close on exec
+	ORCLOSE = 0x40 // remove on close
 )
 
-func (m OpenMode) ToOsFlags() int {
+func (m OpenMode) ToOsFlag() int {
 	var flags int
-	if m&OREAD != 0 {
+	if m&OREAD == 0 {
 		flags |= os.O_RDONLY
 	}
 	if m&OWRITE != 0 {
@@ -403,11 +415,24 @@ const (
 	M_EXEC   = 0x1        // mode bit for execute permission
 
 	// Mask for the type bits
-	M_TTYPE = M_DIR | M_APPEND | M_EXCL | M_MOUNT | M_TMP
+	M_TYPE = M_DIR | M_APPEND | M_EXCL | M_MOUNT | M_TMP
 
 	// Mask for the permissions bits
 	M_PERM = M_READ | M_WRITE | M_EXEC
 )
+
+// Convert to OS file flag with given OpenMode ORed in.
+// Applies flags that are part of Mode (used for file creation)
+func (m Mode) ToOsFlag(o OpenMode) int {
+	flag := o.ToOsFlag()
+	if m&M_EXCL != 0 {
+		flag |= os.O_EXCL
+	}
+	if m&M_APPEND != 0 {
+		flag |= os.O_APPEND
+	}
+	return flag
+}
 
 func (m Mode) ToOsMode() os.FileMode {
 	var mode os.FileMode
@@ -428,7 +453,14 @@ func (m Mode) ToOsMode() os.FileMode {
 }
 
 func (m Mode) QidType() QidType {
-	return QidType(m >> 24)
+	return QidType((m & M_TYPE) >> 24)
+}
+
+func ModeFromFileInfo(info os.FileInfo) Mode {
+	if in, ok := info.(FileInfoMode9P); ok {
+		return in.Mode9P()
+	}
+	return ModeFromOS(info.Mode())
 }
 
 func ModeFromOS(mode os.FileMode) Mode {
@@ -536,6 +568,14 @@ func (q Qid) Bytes() []byte   { return q[:QidSize] }
 func (q Qid) Type() QidType   { return QidType(q[0]) }
 func (q Qid) Version() uint32 { return bo.Uint32(q[1:5]) }
 func (q Qid) Path() uint64    { return bo.Uint64(q[5 : 5+8]) }
+func (q Qid) IsNoTouch() bool {
+	for _, v := range q.Bytes() {
+		if v != 0xff {
+			return false
+		}
+	}
+	return true
+}
 
 func (q Qid) String() string {
 	return fmt.Sprintf("Qid{ type: %v, version: %v, path: %v }", q.Type(), q.Version(), q.Path())
@@ -640,49 +680,59 @@ func (s Stat) String() string {
 		s.Uid(),
 		s.Gid(),
 		s.Muid(),
-		s,
+		s.Bytes(),
 	)
 }
 
 func (s Stat) Size() uint16     { return bo.Uint16(s[:2]) }
 func (s Stat) SetSize(v uint16) { bo.PutUint16(s[:2], v) }
 
-func (s Stat) Type() uint16     { return bo.Uint16(s[2:4]) }
-func (s Stat) SetType(v uint16) { bo.PutUint16(s[2:4], v) }
+func (s Stat) TypeNoTouch() bool { return s.Type() == NoTouchU16 }
+func (s Stat) Type() uint16      { return bo.Uint16(s[2:4]) }
+func (s Stat) SetType(v uint16)  { bo.PutUint16(s[2:4], v) }
 
-func (s Stat) Dev() uint32     { return bo.Uint32(s[4:8]) }
-func (s Stat) SetDev(v uint32) { bo.PutUint32(s[4:8], v) }
+func (s Stat) DevNoTouch() bool { return s.Dev() == NoTouchU32 }
+func (s Stat) Dev() uint32      { return bo.Uint32(s[4:8]) }
+func (s Stat) SetDev(v uint32)  { bo.PutUint32(s[4:8], v) }
 
 func (s Stat) Qid() Qid     { return Qid(s[8 : 8+QidSize]) }
 func (s Stat) SetQid(v Qid) { copy(s[8:8+QidSize], v.Bytes()) }
 
-func (s Stat) Mode() Mode     { return Mode(bo.Uint32(s[8+QidSize : 8+QidSize+4])) }
-func (s Stat) SetMode(v Mode) { bo.PutUint32(s[8+QidSize:8+QidSize+4], uint32(v)) }
+func (s Stat) ModeNoTouch() bool { return s.Mode() == NoTouchMode }
+func (s Stat) Mode() Mode        { return Mode(bo.Uint32(s[8+QidSize : 8+QidSize+4])) }
+func (s Stat) SetMode(v Mode)    { bo.PutUint32(s[8+QidSize:8+QidSize+4], uint32(v)) }
 
-func (s Stat) Atime() uint32     { return bo.Uint32(s[8+QidSize+4 : 8+QidSize+4+4]) }
-func (s Stat) SetAtime(v uint32) { bo.PutUint32(s[8+QidSize+4:8+QidSize+4+4], v) }
+func (s Stat) AtimeNoTouch() bool { return s.Atime() == NoTouchU32 }
+func (s Stat) Atime() uint32      { return bo.Uint32(s[8+QidSize+4 : 8+QidSize+4+4]) }
+func (s Stat) SetAtime(v uint32)  { bo.PutUint32(s[8+QidSize+4:8+QidSize+4+4], v) }
 
-func (s Stat) Mtime() uint32     { return bo.Uint32(s[8+QidSize+4+4 : 8+QidSize+4+4+4]) }
-func (s Stat) SetMtime(v uint32) { bo.PutUint32(s[8+QidSize+4+4:8+QidSize+4+4+4], v) }
+func (s Stat) MtimeNoTouch() bool { return s.Mtime() == NoTouchU32 }
+func (s Stat) Mtime() uint32      { return bo.Uint32(s[8+QidSize+4+4 : 8+QidSize+4+4+4]) }
+func (s Stat) SetMtime(v uint32)  { bo.PutUint32(s[8+QidSize+4+4:8+QidSize+4+4+4], v) }
 
-func (s Stat) Length() uint64     { return bo.Uint64(s[8+QidSize+4+4+4 : 8+QidSize+4+4+4+8]) }
-func (s Stat) SetLength(v uint64) { bo.PutUint64(s[8+QidSize+4+4+4:8+QidSize+4+4+4+8], v) }
+func (s Stat) LengthNoTouch() bool { return s.Length() == NoTouchU64 }
+func (s Stat) Length() uint64      { return bo.Uint64(s[8+QidSize+4+4+4 : 8+QidSize+4+4+4+8]) }
+func (s Stat) SetLength(v uint64)  { bo.PutUint64(s[8+QidSize+4+4+4:8+QidSize+4+4+4+8], v) }
 
 func (s Stat) name() msgString   { return msgString(s[41:]) }
+func (s Stat) NameNoTouch() bool { return len(s.NameBytes()) == 0 }
 func (s Stat) NameBytes() []byte { return s.name().Bytes() }
 func (s Stat) Name() string      { return s.name().String() }
 
 func (s Stat) uid() msgString   { return msgString(s[41+s.name().Nbytes():]) }
+func (s Stat) UidNoTouch() bool { return len(s.UidBytes()) == 0 }
 func (s Stat) UidBytes() []byte { return s.uid().Bytes() }
 func (s Stat) Uid() string      { return s.uid().String() }
 
 func (s Stat) gid() msgString   { return msgString(s[41+s.name().Nbytes()+s.uid().Nbytes():]) }
+func (s Stat) GidNoTouch() bool { return len(s.GidBytes()) == 0 }
 func (s Stat) GidBytes() []byte { return s.gid().Bytes() }
 func (s Stat) Gid() string      { return s.gid().String() }
 
 func (s Stat) muid() msgString {
 	return msgString(s[41+s.name().Nbytes()+s.uid().Nbytes()+s.gid().Nbytes():])
 }
+func (s Stat) MuidNoTouch() bool { return len(s.MuidBytes()) == 0 }
 func (s Stat) MuidBytes() []byte { return s.muid().Bytes() }
 func (s Stat) Muid() string      { return s.muid().String() }
 
@@ -1204,17 +1254,25 @@ func (r Rstat) Stat() Stat    { return Stat(r[msgOffset+2:]) }
 type Twstat []byte
 
 func (r Twstat) fill(t Tag, fid Fid, s Stat) {
-	size := uint32(msgOffset + 4 + s.Size())
+	b := s.Bytes()
+	size := uint32(msgOffset + 4 + len(b))
 	MsgBase(r).fill(msgTwstat, t, size)
 	bo.PutUint32(r[msgOffset:msgOffset+4], uint32(fid))
-	copy(r[msgOffset+4:], s.Bytes())
+	// from docs:
+	//   "To make the contents of a directory, such as returned by read(5), easy
+	//   to parse, each directory entry begins with a size field. For
+	//   consistency, the entries in Twstat and Rstat messages also contain their
+	//   size, which means the size appears twice."
+	bo.PutUint16(r[msgOffset+4:msgOffset+6], uint16(len(b)))
+	copy(r[msgOffset+6:], s)
 }
 
 func (r Twstat) Bytes() []byte { return MsgBase(r).Bytes() }
 func (r Twstat) Size() uint32  { return MsgBase(r).Size() }
 func (r Twstat) Tag() Tag      { return MsgBase(r).Tag() }
 func (r Twstat) Fid() Fid      { return Fid(bo.Uint32(r[msgOffset : msgOffset+4])) }
-func (r Twstat) Stat() Stat    { return Stat(r[msgOffset+4:]) }
+func (r Twstat) N() uint16     { return bo.Uint16(r[msgOffset+4 : msgOffset+6]) }
+func (r Twstat) Stat() Stat    { return Stat(r[msgOffset+6:]) }
 
 /////////////////////////////////////
 // size[4] Rwstat tag[2]
