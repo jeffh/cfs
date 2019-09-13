@@ -1,4 +1,5 @@
 // +build darwin freebsd netbsd openbsd
+
 package ninep
 
 import (
