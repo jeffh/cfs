@@ -289,6 +289,7 @@ func (b *readOnlyMemoryBuffer) WriteAt(p []byte, off int64) (n int, err error) {
 	return 0, errWriteNotAllowed
 }
 
+func (b *readOnlyMemoryBuffer) Sync() error  { return nil }
 func (b *readOnlyMemoryBuffer) Close() error { return nil }
 
 ////////////////////////////////////////////////

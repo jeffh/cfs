@@ -391,6 +391,7 @@ type Session struct {
 	fids FidTracker
 	qids QidPool
 
+	m            sync.Mutex
 	qidsToHandle map[uint64]FileHandle
 }
 
@@ -407,12 +408,24 @@ func (s *Session) PutQid(name string, t QidType) Qid { return s.qids.Put(name, t
 func (s *Session) PutFileHandle(q Qid, h FileHandle) { s.qidsToHandle[q.Path()] = h }
 func (s *Session) Qid(name string) (Qid, bool)       { return s.qids.Get(name) }
 func (s *Session) FileHandle(q Qid) (FileHandle, bool) {
+	s.m.Lock()
 	h, ok := s.qidsToHandle[q.Path()]
+	s.m.Unlock()
 	return h, ok
 }
 
 func (s *Session) DeleteFileHandle(q Qid) {
+	s.m.Lock()
 	delete(s.qidsToHandle, q.Path())
+	s.m.Unlock()
+}
+
+func (s *Session) Close() {
+	s.m.Lock()
+	for _, h := range s.qidsToHandle {
+		h.Close()
+	}
+	s.m.Unlock()
 }
 
 type SessionTracker struct {
@@ -456,8 +469,14 @@ func (st *SessionTracker) Lookup(addr string) *Session {
 func (st *SessionTracker) Remove(addr string) {
 	st.m.Lock()
 	st.unsafeInit()
-	delete(st.sess, addr)
+	s, ok := st.sess[addr]
+	if ok {
+		delete(st.sess, addr)
+	}
 	st.m.Unlock()
+	if ok {
+		s.Close()
+	}
 }
 
 ///////////////////////////////////////////////////////
