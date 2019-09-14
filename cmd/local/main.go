@@ -12,8 +12,10 @@ import (
 
 func main() {
 	var root string
+	var addr string
 
-	flag.StringVar(&root, "root", ".", "The root directory to serve files from")
+	flag.StringVar(&root, "root", ".", "The root directory to serve files from. Defaults the current working directory.")
+	flag.StringVar(&addr, "addr", "localhost:564", "The address and port to listen the 9p server. Defaults to 'localhost:564'.")
 
 	flag.Parse()
 
@@ -29,6 +31,6 @@ func main() {
 		ErrorLog: logger,
 		TraceLog: logger,
 	}
-	err := srv.ListenAndServe("")
+	err := srv.ListenAndServe(addr)
 	fmt.Printf("Error: %s", err)
 }
