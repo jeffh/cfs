@@ -13,6 +13,6 @@ func Atime(info os.FileInfo) (t time.Time, ok bool) {
 	statT, ok = info.Sys().(*syscall.Stat_t)
 	if ok {
 		t = time.Unix(statT.Atim.Sec, statT.Atim.Nsec)
-		return
 	}
+	return
 }
