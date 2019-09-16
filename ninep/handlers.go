@@ -209,8 +209,8 @@ func (d Dir) WriteStat(path string, s Stat) error {
 }
 
 func (d Dir) Delete(path string) error {
-	return os.Remove(path)
-	// return os.RemoveAll(path)
+	fullPath := filepath.Join(string(d), path)
+	return os.RemoveAll(fullPath)
 }
 
 ////////////////////////////////////////////////
