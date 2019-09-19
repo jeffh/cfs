@@ -230,7 +230,12 @@ func (t *transaction) Rwrite(count uint32) {
 	Rwrite(t.outMsg).fill(t.reqTag(), count)
 }
 
-func (t *transaction) Rerror(format string, values ...interface{}) {
+func (t *transaction) Rerror(err error) {
+	t.handled = true
+	Rerror(t.outMsg).fill(t.reqTag(), err.Error())
+}
+
+func (t *transaction) Rerrorf(format string, values ...interface{}) {
 	t.handled = true
 	msg := fmt.Sprintf(format, values...)
 	fmt.Printf("ERROR: %s\n", msg)

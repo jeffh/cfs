@@ -29,7 +29,8 @@ type Replier interface {
 	Rremove()
 	Rcreate(q Qid, iounit uint32)
 	Rwrite(count uint32)
-	Rerror(format string, values ...interface{})
+	Rerror(err error)
+	Rerrorf(format string, values ...interface{})
 
 	Disconnect()
 	RemoteAddr() string
@@ -50,7 +51,7 @@ const (
 
 	// max number of requests a session can make
 	// needs to be balanced with max number of active connections
-	DefaultMaxInflightRequestsPerSession = 100
+	DefaultMaxInflightRequestsPerSession = 30
 )
 
 type Server struct {
@@ -219,7 +220,7 @@ func (s *serverConn) acceptTversion(txn *transaction) bool {
 			request, ok = txn.Request().(Tversion)
 			if !ok {
 				s.errorf("failed to negotiate version: unexpected message type: %d", txn.requestType())
-				txn.Rerror("unknown")
+				txn.Rerrorf("unknown")
 				return false
 			}
 		}
@@ -311,7 +312,7 @@ func (s *serverConn) serve() {
 			select {
 			case <-ctx.Done():
 				s.tracef("received shutdown signal, erroring request from %s", s.rwc.RemoteAddr())
-				txn.Rerror("shutting down")
+				txn.Rerrorf("shutting down")
 				txn.writeReply(s.rwc) // we don't care, we're going away
 				break
 			default:
@@ -337,7 +338,7 @@ func (s *serverConn) dispatch(ctx context.Context, txn *transaction) {
 
 	select {
 	case <-ctx.Done():
-		txn.Rerror("shutting down")
+		txn.Rerrorf("shutting down")
 		shouldStop = true
 	default:
 		if txn.handled {
@@ -365,13 +366,13 @@ func (s *serverConn) handle(ctx context.Context, txn *transaction) bool {
 	switch m := txn.Request().(type) {
 	case MsgBase:
 		s.errorf("Unknown message of type: %d", MsgBase(txn.Request().Bytes()).Type())
-		txn.Rerror("unknown msg")
+		txn.Rerrorf("unknown msg")
 		return false
 
 	default:
 		s.handler.Handle9P(ctx, m, txn)
 		if !txn.handled {
-			txn.Rerror("not implemented")
+			txn.Rerrorf("not implemented")
 		}
 		return !txn.disconnect
 	}

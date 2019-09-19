@@ -1,7 +1,6 @@
 package ninep
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -20,7 +19,7 @@ var (
 	errWriteNotAllowed     = errors.New("not allowed to write")
 	errSeekNotAllowed      = errors.New("seeking is not allowed")
 	errChangeUidNotAllowed = errors.New("changing uid is not allowed by protocol")
-	errUnsupported         = errors.New("unsupported")
+	ErrUnsupported         = errors.New("unsupported")
 )
 
 // Represent a file that can be read or written to. Can be either a file or directory
@@ -32,9 +31,23 @@ type FileHandle interface {
 	Sync() error
 }
 
+// Special file handle used for authentication
+type AuthFileHandle interface {
+	FileHandle
+	// Returns true if the user is authorized to access the FileSystem
+	// Called when Tattach occurs, after ta user has authenticated from Tauth
+	Authorized() bool
+}
+
 // return os.FileInfo from FileSystem can implement this if they want to
 // utilize modes only available in 9P protocol
 type FileInfoMode9P interface{ Mode9P() Mode }
+
+// Optionally implemented by FileSystem to support auth
+// Return nil, nil to indicate no authentication needed
+type Authenticated interface {
+	Auth(ctx context.Context, addr, user, access string) (AuthFileHandle, error)
+}
 
 type FileSystem interface {
 	MakeDir(path string, mode Mode) error
@@ -126,7 +139,7 @@ func (d Dir) WriteStat(path string, s Stat) error {
 
 		statT, ok := info.Sys().(*syscall.Stat_t)
 		if !ok {
-			return errUnsupported
+			return ErrUnsupported
 		}
 		oldUid = int(statT.Uid)
 		oldGid = int(statT.Gid)
@@ -283,16 +296,6 @@ func (h *directoryHandle) Close() error {
 }
 
 ////////////////////////////////////////////////
-type readOnlyMemoryBuffer struct{ bytes.Reader }
-
-func (b *readOnlyMemoryBuffer) WriteAt(p []byte, off int64) (n int, err error) {
-	return 0, errWriteNotAllowed
-}
-
-func (b *readOnlyMemoryBuffer) Sync() error  { return nil }
-func (b *readOnlyMemoryBuffer) Close() error { return nil }
-
-////////////////////////////////////////////////
 
 func prepareFileInfoForStat(qid Qid, info os.FileInfo) (size int, name, uid, gid, muid string) {
 	ownerInfo := func(v interface{}) (uid, gid, muid string, ok bool) {
@@ -405,10 +408,14 @@ func (h *UnauthenticatedHandler) Handle9P(ctx context.Context, m Message, w Repl
 		return
 	}
 	switch m := m.(type) {
+	case Tauth:
+		w.Rerror(ErrUnsupported)
+		return
+
 	case Tattach:
 		if m.Afid() != NO_FID {
 			h.tracef("local: Tattach: reject auth request")
-			w.Rerror("no authentication")
+			w.Rerrorf("no authentication")
 			return
 		}
 
@@ -426,14 +433,14 @@ func (h *UnauthenticatedHandler) Handle9P(ctx context.Context, m Message, w Repl
 		fil, ok := session.FileForFid(m.Fid())
 		if !ok {
 			h.errorf("local: Topen: unknown fid: %v", m.Fid())
-			w.Rerror("unknown fid %d", m.Fid())
+			w.Rerrorf("unknown fid %d", m.Fid())
 			return
 		}
 		fullPath := cleanPath(fil.Name)
 		info, err := h.Fs.Stat(fullPath)
 		if err != nil {
 			h.errorf("local: Topen: failed to call stat on %v: %s", fullPath, err)
-			w.Rerror("file does not exist: %s", fullPath)
+			w.Rerrorf("file does not exist: %s", fullPath)
 			return
 		}
 		q := session.PutQid(fil.Name, ModeFromFileInfo(info).QidType())
@@ -442,11 +449,11 @@ func (h *UnauthenticatedHandler) Handle9P(ctx context.Context, m Message, w Repl
 			//   "It is illegal to write a directory, truncate it, or attempt to remove it on close"
 			if m.Mode()&ORCLOSE != 0 {
 				h.tracef("local: Topen: client error: requested dir with ORCLOSE")
-				w.Rerror("dir cannot have ORCLOSE set")
+				w.Rerrorf("dir cannot have ORCLOSE set")
 				return
 			} else if m.Mode()&OTRUNC != 0 {
 				h.tracef("local: Topen: client error: requested dir with OTRUNC")
-				w.Rerror("dir cannot have OTRUNC set")
+				w.Rerrorf("dir cannot have OTRUNC set")
 				return
 			}
 			fil.Mode = ModeFromFileInfo(info)
@@ -463,7 +470,7 @@ func (h *UnauthenticatedHandler) Handle9P(ctx context.Context, m Message, w Repl
 			f, err := h.Fs.OpenFile(fullPath, m.Mode(), fil.Mode)
 			if err != nil || f == nil {
 				h.tracef("local: Topen: error opening file %v: %s", fullPath, err)
-				w.Rerror("cannot open: %s", err)
+				w.Rerrorf("cannot open: %s", err)
 				return
 			}
 			fil.Mode = ModeFromFileInfo(info)
@@ -479,19 +486,19 @@ func (h *UnauthenticatedHandler) Handle9P(ctx context.Context, m Message, w Repl
 		fil, ok := session.FileForFid(m.Fid())
 		if !ok {
 			h.errorf("local: Twalk: unknown fid: %v", m.Fid())
-			w.Rerror("unknown fid %d", m.Fid())
+			w.Rerrorf("unknown fid %d", m.Fid())
 			return
 		}
 		if m.Fid() != m.NewFid() {
 			if _, found := session.FileForFid(m.NewFid()); found {
 				h.errorf("local: Twalk: %v wanted new fid %v which is already taken", m.Fid(), m.NewFid())
-				w.Rerror(fmt.Sprintf("conflict with newfid (fid=%d, newfid=%d)", m.Fid(), m.NewFid()))
+				w.Rerrorf("conflict with newfid (fid=%d, newfid=%d)", m.Fid(), m.NewFid())
 				return
 			}
 		}
 		if fil.Mode&M_DIR == 0 && m.NumWname() > 0 {
 			h.errorf("local: Twalk: failed to because file is not a dir (fid %v): %v", m.Fid(), fil.Name)
-			w.Rerror("walk in non-directory")
+			w.Rerrorf("walk in non-directory")
 			return
 		}
 
@@ -506,7 +513,7 @@ func (h *UnauthenticatedHandler) Handle9P(ctx context.Context, m Message, w Repl
 				path = "/"
 			} else if strings.Contains(name, string(os.PathSeparator)) {
 				h.errorf("local: Twalk: invalid walk element for fid %d: %v", m.Fid(), name)
-				w.Rerror("invalid walk element: %v", name)
+				w.Rerrorf("invalid walk element: %v", name)
 				return
 			} else {
 				path = filepath.Join(path, name)
@@ -554,14 +561,14 @@ func (h *UnauthenticatedHandler) Handle9P(ctx context.Context, m Message, w Repl
 		fil, ok := session.FileForFid(m.Fid())
 		if !ok {
 			h.errorf("local: Tstat: unknown fid: %v", m.Fid())
-			w.Rerror("unknown fid %d", m.Fid())
+			w.Rerrorf("unknown fid %d", m.Fid())
 			return
 		}
 		fullPath := cleanPath(fil.Name)
 		info, err := h.Fs.Stat(fullPath)
 		if err != nil {
 			h.errorf("local: Tstat: failed to call stat on %v: %s", fullPath, err)
-			w.Rerror("file does not exist: %s", fullPath)
+			w.Rerrorf("file does not exist: %s", fullPath)
 			return
 		}
 		qid := session.PutQid(fil.Name, ModeFromOS(info.Mode()).QidType())
@@ -576,19 +583,19 @@ func (h *UnauthenticatedHandler) Handle9P(ctx context.Context, m Message, w Repl
 		fil, ok := session.FileForFid(m.Fid())
 		if !ok {
 			h.errorf("local: Tread: unknown fid: %v", m.Fid())
-			w.Rerror("unknown fid %d", m.Fid())
+			w.Rerrorf("unknown fid %d", m.Fid())
 			return
 		}
 
 		if fil.Flag&3 != OREAD && fil.Flag&3 != ORDWR {
 			h.errorf("local: Tread: file opened with wrong flags: fid %v", m.Fid())
-			w.Rerror("fid %d wasn't opened with read flag set", m.Fid())
+			w.Rerrorf("fid %d wasn't opened with read flag set", m.Fid())
 			return
 		}
 
 		if fil.H == nil {
 			h.errorf("local: Tread: file not opened: %v", m.Fid())
-			w.Rerror("fid %d wasn't opened", m.Fid())
+			w.Rerrorf("fid %d wasn't opened", m.Fid())
 			return
 		}
 		data := w.RreadBuffer()
@@ -601,7 +608,7 @@ func (h *UnauthenticatedHandler) Handle9P(ctx context.Context, m Message, w Repl
 				return
 			}
 			h.errorf("local: Tread: error: fid %d couldn't read: %s", m.Fid(), err)
-			w.Rerror("failed to read: %s", err)
+			w.Rerrorf("failed to read: %s", err)
 			return
 		} else if err != nil && err != io.EOF {
 			h.tracef("local: Tread: warn: fid %d couldn't read full buffer (only %d bytes): %s", m.Fid(), n, err)
@@ -627,7 +634,7 @@ func (h *UnauthenticatedHandler) Handle9P(ctx context.Context, m Message, w Repl
 			h.tracef("local: Tclunk %v %v", m.Fid(), fil.Name)
 			w.Rclunk()
 		} else {
-			w.Rerror("local: Tclunk: unknown fid %d", m.Fid())
+			w.Rerrorf("local: Tclunk: unknown fid %d", m.Fid())
 		}
 
 	case Tremove:
@@ -638,21 +645,21 @@ func (h *UnauthenticatedHandler) Handle9P(ctx context.Context, m Message, w Repl
 			h.tracef("local: Tremove %v %v", m.Fid(), fil.Name)
 			w.Rremove()
 		} else {
-			w.Rerror("local: Tremove: unknown fid %d", m.Fid())
+			w.Rerrorf("local: Tremove: unknown fid %d", m.Fid())
 		}
 
 	case Tcreate:
 		fil, ok := session.FileForFid(m.Fid())
 		if !ok {
 			h.errorf("local: Tcreate: unknown fid: %v", m.Fid())
-			w.Rerror("unknown fid %d", m.Fid())
+			w.Rerrorf("unknown fid %d", m.Fid())
 			return
 		}
 		fullPath := filepath.Join(fil.Name, cleanPath(m.Name()))
 		info, err := h.Fs.Stat(fullPath)
 		if !os.IsNotExist(err) || err == nil {
 			h.errorf("local: Tcreate: file exists %v: %s", fullPath, err)
-			w.Rerror("file exists: %s", fullPath)
+			w.Rerrorf("file exists: %s", fullPath)
 			return
 		}
 		isDir := m.Perm()&M_DIR != 0
@@ -663,17 +670,17 @@ func (h *UnauthenticatedHandler) Handle9P(ctx context.Context, m Message, w Repl
 			//   "It is illegal to write a directory, truncate it, or attempt to remove it on close"
 			if m.Mode()&ORCLOSE != 0 {
 				h.tracef("local: Tcreate: client error: requested dir with ORCLOSE")
-				w.Rerror("dir cannot have ORCLOSE set")
+				w.Rerrorf("dir cannot have ORCLOSE set")
 				return
 			} else if m.Mode()&OTRUNC != 0 {
 				h.tracef("local: Tcreate: client error: requested dir with OTRUNC")
-				w.Rerror("dir cannot have OTRUNC set")
+				w.Rerrorf("dir cannot have OTRUNC set")
 				return
 			}
 
 			if err := h.Fs.MakeDir(fullPath, m.Perm()); err != nil {
 				h.errorf("local: Tcreate: failed to create dir: %s", err)
-				w.Rerror("dir cannot be created: %s", err)
+				w.Rerrorf("dir cannot be created: %s", err)
 				return
 			}
 			fil.Flag = m.Mode()
@@ -687,7 +694,7 @@ func (h *UnauthenticatedHandler) Handle9P(ctx context.Context, m Message, w Repl
 			f, err := h.Fs.CreateFile(fullPath, m.Mode(), m.Perm())
 			if err != nil || f == nil {
 				h.tracef("local: Tcreate: error creating file %v %v: %s", fullPath, m.Perm().ToOsMode(), err)
-				w.Rerror("cannot create: %s", err)
+				w.Rerrorf("cannot create: %s", err)
 				return
 			}
 			fil.Flag = m.Mode()
@@ -706,19 +713,19 @@ func (h *UnauthenticatedHandler) Handle9P(ctx context.Context, m Message, w Repl
 		fil, ok := session.FileForFid(m.Fid())
 		if !ok {
 			h.errorf("local: Twrite: unknown fid: %v", m.Fid())
-			w.Rerror("unknown fid %d", m.Fid())
+			w.Rerrorf("unknown fid %d", m.Fid())
 			return
 		}
 
 		if fil.Flag&3 != OWRITE && fil.Flag&3 != ORDWR {
 			h.errorf("local: Twrite: file opened with wrong flags: fid %v", m.Fid())
-			w.Rerror("fid %d wasn't opened with write flag set", m.Fid())
+			w.Rerrorf("fid %d wasn't opened with write flag set", m.Fid())
 			return
 		}
 
 		if fil.H == nil {
 			h.errorf("local: Twrite: file not opened: %v", m.Fid())
-			w.Rerror("fid %d wasn't opened", m.Fid())
+			w.Rerrorf("fid %d wasn't opened", m.Fid())
 			return
 		}
 		data := m.Data()
@@ -728,7 +735,7 @@ func (h *UnauthenticatedHandler) Handle9P(ctx context.Context, m Message, w Repl
 		n, err := fil.H.WriteAt(data, int64(m.Offset()))
 		if n == 0 && err != nil {
 			h.errorf("local: Twrite: error: fid %d couldn't write: %s", m.Fid(), err)
-			w.Rerror("failed to write to fid %d", m.Fid())
+			w.Rerrorf("failed to write to fid %d", m.Fid())
 			return
 		}
 		if err != nil {
@@ -741,7 +748,7 @@ func (h *UnauthenticatedHandler) Handle9P(ctx context.Context, m Message, w Repl
 		fil, ok := session.FileForFid(m.Fid())
 		if !ok {
 			h.errorf("local: Twstat: unknown fid: %v", m.Fid())
-			w.Rerror("unknown fid %d", m.Fid())
+			w.Rerrorf("unknown fid %d", m.Fid())
 			return
 		}
 		qid := session.PutQid(fil.Name, fil.Mode.QidType())
@@ -759,7 +766,7 @@ func (h *UnauthenticatedHandler) Handle9P(ctx context.Context, m Message, w Repl
 			if fil.H != nil {
 				if err := fil.H.Sync(); err != nil {
 					h.errorf("local: Twstat: failed to fsync %v: %s", fullPath, err)
-					w.Rerror("failed syncing stat for %s: %s", fullPath, err)
+					w.Rerrorf("failed syncing stat for %s: %s", fullPath, err)
 					return
 				}
 			}
@@ -779,38 +786,38 @@ func (h *UnauthenticatedHandler) Handle9P(ctx context.Context, m Message, w Repl
 
 			if !stat.MuidNoTouch() {
 				h.errorf("local: Twstat: client failed: deny attempt to change Muid")
-				w.Rerror("wstat: attempted to change Muid")
+				w.Rerrorf("wstat: attempted to change Muid")
 				return
 			}
 
 			if !stat.DevNoTouch() {
 				h.errorf("local: Twstat: client failed: deny attempt to change dev (%d)", stat.Dev())
-				w.Rerror("wstat: attempted to change dev")
+				w.Rerrorf("wstat: attempted to change dev")
 				return
 			}
 
 			if !stat.TypeNoTouch() {
 				h.errorf("local: Twstat: client failed: deny attempt to change type (%d)", stat.Type())
-				w.Rerror("wstat: attempted to change type")
+				w.Rerrorf("wstat: attempted to change type")
 				return
 			}
 
 			if !stat.Qid().IsNoTouch() {
 				h.errorf("local: Twstat: client failed: deny attempt to change qid")
-				w.Rerror("wstat: attempted to change qid")
+				w.Rerrorf("wstat: attempted to change qid")
 				return
 			}
 
 			if !stat.ModeNoTouch() && int(stat.Mode()&M_DIR>>24) != int(qid.Type()&QT_DIR) {
 				h.errorf("local: Twstat: client failed: deny attempt to change M_DIR bit on Mode")
-				w.Rerror("wstat: attempted to change Mode to M_DIR bit")
+				w.Rerrorf("wstat: attempted to change Mode to M_DIR bit")
 				return
 			}
 
 			err := h.Fs.WriteStat(fullPath, stat)
 			if err != nil {
 				h.errorf("local: Twstat: failed for %v: %s", fullPath, err)
-				w.Rerror("failed writing stat for %s: %s", fullPath, err)
+				w.Rerrorf("failed writing stat for %s: %s", fullPath, err)
 				return
 			}
 		}
