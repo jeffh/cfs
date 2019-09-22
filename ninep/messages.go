@@ -240,7 +240,6 @@ func (t *transaction) Rerror(err error) {
 func (t *transaction) Rerrorf(format string, values ...interface{}) {
 	t.handled = true
 	msg := fmt.Sprintf(format, values...)
-	fmt.Printf("ERROR: %s\n", msg)
 	Rerror(t.outMsg).fill(t.reqTag(), msg)
 }
 

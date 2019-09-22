@@ -11,15 +11,24 @@ import (
 )
 
 func main() {
-	var root string
-	var addr string
-	var trace bool
-	var errLog bool
+	var (
+		root   string
+		addr   string
+		trace  bool
+		errLog bool
+
+		certFile string
+		keyFile  string
+
+		err error
+	)
 
 	flag.StringVar(&root, "root", ".", "The root directory to serve files from. Defaults the current working directory.")
 	flag.StringVar(&addr, "addr", "localhost:564", "The address and port to listen the 9p server. Defaults to 'localhost:564'.")
 	flag.BoolVar(&trace, "trace", false, "Print trace of 9p server to stdout")
 	flag.BoolVar(&errLog, "err", false, "Print errors of 9p server to stderr")
+	flag.StringVar(&certFile, "certfile", "", "Accept only TLS wrapped connections. Also needs to specify keyfile flag.")
+	flag.StringVar(&keyFile, "keyfile", "", "Accept only TLS wrapped connections. Also needs to specify certfile flag.")
 
 	flag.Parse()
 
@@ -34,17 +43,11 @@ func main() {
 		errLogger = log.New(os.Stderr, "", log.LstdFlags)
 	}
 
-	srv := ninep.Server{
-		Handler: &ninep.UnauthenticatedHandler{
-			Fs: ninep.Dir(root),
-			Loggable: ninep.Loggable{
-				ErrorLog: errLogger,
-				TraceLog: traceLogger,
-			},
-		},
-		ErrorLog: errLogger,
-		TraceLog: traceLogger,
+	srv := ninep.NewServer(ninep.Dir(root), errLogger, traceLogger)
+	if certFile != "" && keyFile != "" {
+		err = srv.ListenAndServeTLS(addr, certFile, keyFile)
+	} else {
+		err = srv.ListenAndServe(addr)
 	}
-	err := srv.ListenAndServe(addr)
 	fmt.Printf("Error: %s", err)
 }

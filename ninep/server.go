@@ -69,6 +69,22 @@ type Server struct {
 	ErrorLog, TraceLog Logger
 }
 
+// Provides an easy way to create a server (you can still construct the Server
+// struct manually if you want).
+func NewServer(fs FileSystem, errLogger, traceLogger Logger) *Server {
+	return &Server{
+		Handler: &DefaultHandler{
+			Fs: fs,
+			Loggable: Loggable{
+				ErrorLog: errLogger,
+				TraceLog: traceLogger,
+			},
+		},
+		ErrorLog: errLogger,
+		TraceLog: traceLogger,
+	}
+}
+
 func (s *Server) tracef(f string, values ...interface{}) {
 	if s.TraceLog != nil {
 		s.TraceLog.Printf(f, values...)
@@ -398,9 +414,6 @@ type Session struct {
 
 func (s *Session) FileForFid(f Fid) (fil File, found bool) {
 	fil, ok := s.fids.Get(f)
-	if ok {
-		fmt.Printf("FID: %d => %v\n", f, fil.Name)
-	}
 	return fil, ok
 }
 func (s *Session) DeleteFid(f Fid)          { s.fids.Delete(f) }

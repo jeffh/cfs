@@ -394,22 +394,22 @@ func cleanPath(path string) string {
 
 ////////////////////////////////////////////////
 
-type UnauthenticatedHandler struct {
+type DefaultHandler struct {
 	Fs FileSystem
 	st SessionTracker
 
 	Loggable
 }
 
-func (h *UnauthenticatedHandler) Connected(addr string) {
+func (h *DefaultHandler) Connected(addr string) {
 	h.st.Add(addr)
 }
 
-func (h *UnauthenticatedHandler) Disconnected(addr string) {
+func (h *DefaultHandler) Disconnected(addr string) {
 	h.st.Remove(addr)
 }
 
-func (h *UnauthenticatedHandler) Handle9P(ctx context.Context, m Message, w Replier) {
+func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 	session := h.st.Lookup(w.RemoteAddr())
 	if session == nil {
 		h.errorf("No previous session for %s", w.RemoteAddr())
