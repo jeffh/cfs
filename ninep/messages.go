@@ -569,10 +569,11 @@ func (q Qid) Fill(t QidType, version uint32, path uint64) Qid {
 // qid.vers[4] version number for given path
 // qid.path[8] the file server's unique identification for the file
 
-func (q Qid) Bytes() []byte   { return q[:QidSize] }
-func (q Qid) Type() QidType   { return QidType(q[0]) }
-func (q Qid) Version() uint32 { return bo.Uint32(q[1:5]) }
-func (q Qid) Path() uint64    { return bo.Uint64(q[5 : 5+8]) }
+func (q Qid) Bytes() []byte       { return q[:QidSize] }
+func (q Qid) Type() QidType       { return QidType(q[0]) }
+func (q Qid) Version() uint32     { return bo.Uint32(q[1:5]) }
+func (q Qid) SetVersion(v uint32) { bo.PutUint32(q[1:5], v) }
+func (q Qid) Path() uint64        { return bo.Uint64(q[5 : 5+8]) }
 func (q Qid) IsNoTouch() bool {
 	for _, v := range q.Bytes() {
 		if v != 0xff {

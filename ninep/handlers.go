@@ -43,6 +43,18 @@ type AuthFileHandle interface {
 // utilize modes only available in 9P protocol
 type FileInfoMode9P interface{ Mode9P() Mode }
 
+// return os.FileInfo from FileSystem can implement this if they want more
+// precisely control the Qid version, which should change every time the
+// version number changes.
+type FileInfoVersion interface{ Version() uint32 }
+
+// TODO: support this feature
+// return os.FileInfo from FileSystem can implement this if they want more
+// precisely control the Qid path, which represents the same internal file
+// in the file system (aka - rm foo.txt; touch foo.txt operate on two different
+// paths)
+// type FileInfoPath interface{ Path() uint32 }
+
 // Optionally implemented by FileSystem to support auth
 // Return nil, nil to indicate no authentication needed
 type Authenticated interface {
@@ -180,7 +192,9 @@ func (d Dir) WriteStat(path string, s Stat) error {
 			return err
 		}
 		defer func() {
-			os.Chown(fullPath, oldUid, oldGid)
+			if err != nil {
+				os.Chown(fullPath, oldUid, oldGid)
+			}
 		}()
 	}
 
@@ -196,17 +210,24 @@ func (d Dir) WriteStat(path string, s Stat) error {
 		oldMtime = info.ModTime()
 
 		if changeMtime && changeAtime {
+			fmt.Printf("change Mtime (%v) & Atime (%v) -> %s\n", time.Unix(int64(s.Atime()), 0), time.Unix(int64(s.Mtime()), 0), err)
 			err = os.Chtimes(fullPath, time.Unix(int64(s.Atime()), 0), time.Unix(int64(s.Mtime()), 0))
 		} else if changeMtime {
+			fmt.Printf("change Mtime\n")
 			err = os.Chtimes(fullPath, oldAtime, time.Unix(int64(s.Mtime()), 0))
 		} else if changeAtime {
+			fmt.Printf("change Atime\n")
 			err = os.Chtimes(fullPath, time.Unix(int64(s.Atime()), 0), oldMtime)
+		} else {
+			fmt.Printf("change nothing\n")
 		}
 		if err != nil {
 			return err
 		}
 		defer func() {
-			os.Chtimes(fullPath, oldAtime, oldMtime)
+			if err != nil {
+				os.Chtimes(fullPath, oldAtime, oldMtime)
+			}
 		}()
 	}
 
@@ -257,7 +278,7 @@ func (h *directoryHandle) ReadAt(p []byte, offset int64) (int, error) {
 		h.allFiles = make([]Stat, len(entries))
 		for i, info := range entries {
 			subpath := filepath.Join(h.path, info.Name())
-			q := h.session.PutQid(subpath, ModeFromFileInfo(info).QidType())
+			q := h.session.PutQid(subpath, ModeFromFileInfo(info).QidType(), 0)
 			st := fileInfoToStat(q, info)
 			h.allFiles[i] = st
 		}
@@ -375,22 +396,9 @@ func cleanPath(path string) string {
 
 type UnauthenticatedHandler struct {
 	Fs FileSystem
-
-	ErrorLog, TraceLog Logger
-
 	st SessionTracker
-}
 
-func (h *UnauthenticatedHandler) errorf(format string, values ...interface{}) {
-	if h.ErrorLog != nil {
-		h.ErrorLog.Printf(format, values...)
-	}
-}
-
-func (h *UnauthenticatedHandler) tracef(format string, values ...interface{}) {
-	if h.TraceLog != nil {
-		h.TraceLog.Printf(format, values...)
-	}
+	Loggable
 }
 
 func (h *UnauthenticatedHandler) Connected(addr string) {
@@ -427,7 +435,7 @@ func (h *UnauthenticatedHandler) Handle9P(ctx context.Context, m Message, w Repl
 			Flag: OREAD,
 			Mode: M_DIR,
 		})
-		w.Rattach(session.PutQid("", QT_DIR))
+		w.Rattach(session.PutQid("", QT_DIR, 0))
 
 	case Topen:
 		fil, ok := session.FileForFid(m.Fid())
@@ -443,7 +451,7 @@ func (h *UnauthenticatedHandler) Handle9P(ctx context.Context, m Message, w Repl
 			w.Rerrorf("file does not exist: %s", fullPath)
 			return
 		}
-		q := session.PutQid(fil.Name, ModeFromFileInfo(info).QidType())
+		q := session.PutQid(fil.Name, ModeFromFileInfo(info).QidType(), 0)
 		if info.IsDir() {
 			// From Topen docs:
 			//   "It is illegal to write a directory, truncate it, or attempt to remove it on close"
@@ -529,10 +537,10 @@ func (h *UnauthenticatedHandler) Handle9P(ctx context.Context, m Message, w Repl
 
 			h.tracef("local: Twalk: %v :: %v %v", m.Fid(), fil.Name, info.Mode())
 			if err == nil {
-				q := session.PutQid(fil.Name, ModeFromOS(info.Mode()).QidType())
+				q := session.PutQid(fil.Name, ModeFromOS(info.Mode()).QidType(), 0)
 				walkedQids = append(walkedQids, q)
 			} else {
-				q := session.PutQid(fil.Name, 0)
+				q := session.PutQid(fil.Name, 0, 0)
 				walkedQids = append(walkedQids, q)
 			}
 
@@ -571,7 +579,7 @@ func (h *UnauthenticatedHandler) Handle9P(ctx context.Context, m Message, w Repl
 			w.Rerrorf("file does not exist: %s", fullPath)
 			return
 		}
-		qid := session.PutQid(fil.Name, ModeFromOS(info.Mode()).QidType())
+		qid := session.PutQid(fil.Name, ModeFromOS(info.Mode()).QidType(), 0)
 		stat := fileInfoToStat(qid, info)
 		fil.User = stat.Uid()
 		fil.Mode = ModeFromOS(info.Mode())
@@ -626,9 +634,11 @@ func (h *UnauthenticatedHandler) Handle9P(ctx context.Context, m Message, w Repl
 				}
 				fil.H = nil
 			}
-			if fil.Mode&ORCLOSE != 0 {
+			if fil.Flag&ORCLOSE != 0 {
+				h.tracef("local: deleting %v %#v", m.Fid(), fil.Name)
 				// delete the file
 				h.Fs.Delete(fil.Name)
+				session.DeleteQid(fil.Name)
 			}
 			session.DeleteFid(m.Fid())
 			h.tracef("local: Tclunk %v %v", m.Fid(), fil.Name)
@@ -642,6 +652,7 @@ func (h *UnauthenticatedHandler) Handle9P(ctx context.Context, m Message, w Repl
 		if ok {
 			h.Fs.Delete(fil.Name)
 			session.DeleteFid(m.Fid())
+			session.DeleteQid(fil.Name)
 			h.tracef("local: Tremove %v %v", m.Fid(), fil.Name)
 			w.Rremove()
 		} else {
@@ -664,7 +675,7 @@ func (h *UnauthenticatedHandler) Handle9P(ctx context.Context, m Message, w Repl
 		}
 		isDir := m.Perm()&M_DIR != 0
 		fil.Name = fullPath
-		q := session.PutQid(fil.Name, m.Perm().QidType())
+		q := session.PutQid(fil.Name, m.Perm().QidType(), 0)
 		if isDir {
 			// From Topen docs:
 			//   "It is illegal to write a directory, truncate it, or attempt to remove it on close"
@@ -738,6 +749,7 @@ func (h *UnauthenticatedHandler) Handle9P(ctx context.Context, m Message, w Repl
 			w.Rerrorf("failed to write to fid %d", m.Fid())
 			return
 		}
+		session.PutQid(fil.Name, fil.Mode.QidType(), 1)
 		if err != nil {
 			h.tracef("local: Twrite: warn: fid %d couldn't write full buffer (only %d/%d bytes): %s", m.Fid(), n, len(data), err)
 		}
@@ -751,7 +763,7 @@ func (h *UnauthenticatedHandler) Handle9P(ctx context.Context, m Message, w Repl
 			w.Rerrorf("unknown fid %d", m.Fid())
 			return
 		}
-		qid := session.PutQid(fil.Name, fil.Mode.QidType())
+		qid := session.PutQid(fil.Name, fil.Mode.QidType(), 1)
 		fullPath := cleanPath(fil.Name)
 		stat := m.Stat()
 

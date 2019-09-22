@@ -390,7 +390,7 @@ type File struct {
 
 type Session struct {
 	fids FidTracker
-	qids QidPool
+	qids *QidPool
 
 	m            sync.Mutex
 	qidsToHandle map[uint64]FileHandle
@@ -403,9 +403,11 @@ func (s *Session) FileForFid(f Fid) (fil File, found bool) {
 	}
 	return fil, ok
 }
-func (s *Session) DeleteFid(f Fid)                   { s.fids.Delete(f) }
-func (s *Session) PutFid(f Fid, h File) Fid          { return s.fids.Put(f, h) }
-func (s *Session) PutQid(name string, t QidType) Qid { return s.qids.Put(name, t) }
+func (s *Session) DeleteFid(f Fid)          { s.fids.Delete(f) }
+func (s *Session) PutFid(f Fid, h File) Fid { return s.fids.Put(f, h) }
+func (s *Session) PutQid(name string, t QidType, version uint32) Qid {
+	return s.qids.Put(name, t, version)
+}
 func (s *Session) PutFileHandle(q Qid, h FileHandle) { s.qidsToHandle[q.Path()] = h }
 func (s *Session) Qid(name string) (Qid, bool)       { return s.qids.Get(name) }
 func (s *Session) FileHandle(q Qid) (FileHandle, bool) {
@@ -413,6 +415,10 @@ func (s *Session) FileHandle(q Qid) (FileHandle, bool) {
 	h, ok := s.qidsToHandle[q.Path()]
 	s.m.Unlock()
 	return h, ok
+}
+
+func (s *Session) DeleteQid(name string) {
+	s.qids.Delete(name)
 }
 
 func (s *Session) DeleteFileHandle(q Qid) {
@@ -432,11 +438,14 @@ func (s *Session) Close() {
 type SessionTracker struct {
 	m    sync.Mutex
 	sess map[string]*Session
+
+	qids *QidPool
 }
 
 func (st *SessionTracker) unsafeInit() {
 	if st.sess == nil {
 		st.sess = make(map[string]*Session)
+		st.qids = &QidPool{pool: make(map[string]Qid)}
 	}
 }
 
@@ -447,7 +456,7 @@ func (st *SessionTracker) Add(addr string) *Session {
 	if !ok {
 		s = &Session{
 			fids:         FidTracker{fids: make(map[Fid]File)},
-			qids:         QidPool{pool: make(map[string]Qid)},
+			qids:         st.qids,
 			qidsToHandle: make(map[uint64]FileHandle),
 		}
 		st.sess[addr] = s
@@ -530,13 +539,17 @@ func (p *QidPool) Get(name string) (q Qid, found bool) {
 	return
 }
 
-func (p *QidPool) Put(name string, t QidType) Qid {
+func (p *QidPool) Put(name string, t QidType, verDelta uint32) Qid {
 	var qid Qid
 	p.m.Lock()
 	if existing, ok := p.pool[name]; ok {
 		qid = existing
+		if verDelta != 0 {
+			qid.SetVersion(qid.Version() + verDelta)
+			p.pool[name] = qid
+		}
 	} else {
-		qid = NewQid().Fill(t, 0, p.nextPath)
+		qid = NewQid().Fill(t, verDelta, p.nextPath)
 		p.nextPath++
 		p.pool[name] = qid
 	}
