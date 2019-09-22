@@ -278,7 +278,7 @@ func (h *directoryHandle) ReadAt(p []byte, offset int64) (int, error) {
 		h.allFiles = make([]Stat, len(entries))
 		for i, info := range entries {
 			subpath := filepath.Join(h.path, info.Name())
-			q := h.session.PutQid(subpath, ModeFromFileInfo(info).QidType(), 0)
+			q := h.session.PutQid(subpath, ModeFromFileInfo(info).QidType(), versionFromFileInfo(info))
 			st := fileInfoToStat(q, info)
 			h.allFiles[i] = st
 		}
@@ -435,7 +435,7 @@ func (h *UnauthenticatedHandler) Handle9P(ctx context.Context, m Message, w Repl
 			Flag: OREAD,
 			Mode: M_DIR,
 		})
-		w.Rattach(session.PutQid("", QT_DIR, 0))
+		w.Rattach(session.PutQid("", QT_DIR, NoQidVersion))
 
 	case Topen:
 		fil, ok := session.FileForFid(m.Fid())
@@ -451,7 +451,7 @@ func (h *UnauthenticatedHandler) Handle9P(ctx context.Context, m Message, w Repl
 			w.Rerrorf("file does not exist: %s", fullPath)
 			return
 		}
-		q := session.PutQid(fil.Name, ModeFromFileInfo(info).QidType(), 0)
+		q := session.PutQid(fil.Name, ModeFromFileInfo(info).QidType(), versionFromFileInfo(info))
 		if info.IsDir() {
 			// From Topen docs:
 			//   "It is illegal to write a directory, truncate it, or attempt to remove it on close"
@@ -537,10 +537,10 @@ func (h *UnauthenticatedHandler) Handle9P(ctx context.Context, m Message, w Repl
 
 			h.tracef("local: Twalk: %v :: %v %v", m.Fid(), fil.Name, info.Mode())
 			if err == nil {
-				q := session.PutQid(fil.Name, ModeFromOS(info.Mode()).QidType(), 0)
+				q := session.PutQid(fil.Name, ModeFromOS(info.Mode()).QidType(), versionFromFileInfo(info))
 				walkedQids = append(walkedQids, q)
 			} else {
-				q := session.PutQid(fil.Name, 0, 0)
+				q := session.PutQid(fil.Name, 0, versionFromFileInfo(info))
 				walkedQids = append(walkedQids, q)
 			}
 
@@ -579,7 +579,7 @@ func (h *UnauthenticatedHandler) Handle9P(ctx context.Context, m Message, w Repl
 			w.Rerrorf("file does not exist: %s", fullPath)
 			return
 		}
-		qid := session.PutQid(fil.Name, ModeFromOS(info.Mode()).QidType(), 0)
+		qid := session.PutQid(fil.Name, ModeFromOS(info.Mode()).QidType(), versionFromFileInfo(info))
 		stat := fileInfoToStat(qid, info)
 		fil.User = stat.Uid()
 		fil.Mode = ModeFromOS(info.Mode())
@@ -675,7 +675,7 @@ func (h *UnauthenticatedHandler) Handle9P(ctx context.Context, m Message, w Repl
 		}
 		isDir := m.Perm()&M_DIR != 0
 		fil.Name = fullPath
-		q := session.PutQid(fil.Name, m.Perm().QidType(), 0)
+		q := session.PutQid(fil.Name, m.Perm().QidType(), versionFromFileInfo(info))
 		if isDir {
 			// From Topen docs:
 			//   "It is illegal to write a directory, truncate it, or attempt to remove it on close"
@@ -749,7 +749,7 @@ func (h *UnauthenticatedHandler) Handle9P(ctx context.Context, m Message, w Repl
 			w.Rerrorf("failed to write to fid %d", m.Fid())
 			return
 		}
-		session.PutQid(fil.Name, fil.Mode.QidType(), 1)
+		session.TouchQid(fil.Name, fil.Mode.QidType())
 		if err != nil {
 			h.tracef("local: Twrite: warn: fid %d couldn't write full buffer (only %d/%d bytes): %s", m.Fid(), n, len(data), err)
 		}
@@ -763,7 +763,7 @@ func (h *UnauthenticatedHandler) Handle9P(ctx context.Context, m Message, w Repl
 			w.Rerrorf("unknown fid %d", m.Fid())
 			return
 		}
-		qid := session.PutQid(fil.Name, fil.Mode.QidType(), 1)
+		qid := session.TouchQid(fil.Name, fil.Mode.QidType())
 		fullPath := cleanPath(fil.Name)
 		stat := m.Stat()
 

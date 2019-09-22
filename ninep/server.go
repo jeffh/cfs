@@ -408,6 +408,9 @@ func (s *Session) PutFid(f Fid, h File) Fid { return s.fids.Put(f, h) }
 func (s *Session) PutQid(name string, t QidType, version uint32) Qid {
 	return s.qids.Put(name, t, version)
 }
+func (s *Session) TouchQid(name string, t QidType) Qid {
+	return s.qids.Touch(name, t, 1)
+}
 func (s *Session) PutFileHandle(q Qid, h FileHandle) { s.qidsToHandle[q.Path()] = h }
 func (s *Session) Qid(name string) (Qid, bool)       { return s.qids.Get(name) }
 func (s *Session) FileHandle(q Qid) (FileHandle, bool) {
@@ -539,17 +542,38 @@ func (p *QidPool) Get(name string) (q Qid, found bool) {
 	return
 }
 
-func (p *QidPool) Put(name string, t QidType, verDelta uint32) Qid {
+func (p *QidPool) Touch(name string, t QidType, verDelta uint32) Qid {
 	var qid Qid
 	p.m.Lock()
 	if existing, ok := p.pool[name]; ok {
 		qid = existing
-		if verDelta != 0 {
+		if verDelta != NoQidVersion {
 			qid.SetVersion(qid.Version() + verDelta)
 			p.pool[name] = qid
 		}
 	} else {
-		qid = NewQid().Fill(t, verDelta, p.nextPath)
+		qid = NewQid().Fill(t, 0, p.nextPath)
+		p.nextPath++
+		p.pool[name] = qid
+	}
+	p.m.Unlock()
+	return qid
+}
+
+func (p *QidPool) Put(name string, t QidType, version uint32) Qid {
+	var qid Qid
+	p.m.Lock()
+	if existing, ok := p.pool[name]; ok {
+		qid = existing
+		if version != NoQidVersion {
+			qid.SetVersion(version)
+			p.pool[name] = qid
+		}
+	} else {
+		if version == NoQidVersion {
+			version = 0
+		}
+		qid = NewQid().Fill(t, version, p.nextPath)
 		p.nextPath++
 		p.pool[name] = qid
 	}

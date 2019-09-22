@@ -19,6 +19,8 @@ const (
 	NoTouchU32  = ^uint32(0)
 	NoTouchU16  = ^uint16(0)
 	NoTouchMode = ^Mode(0)
+
+	NoQidVersion = NoTouchU32
 )
 
 type transaction struct {
@@ -459,6 +461,13 @@ func (m Mode) ToOsMode() os.FileMode {
 
 func (m Mode) QidType() QidType {
 	return QidType((m & M_TYPE) >> 24)
+}
+
+func versionFromFileInfo(info os.FileInfo) uint32 {
+	if i, ok := info.(FileInfoVersion); ok {
+		return i.Version()
+	}
+	return NoQidVersion
 }
 
 func ModeFromFileInfo(info os.FileInfo) Mode {
