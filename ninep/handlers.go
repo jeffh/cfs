@@ -55,9 +55,8 @@ type FileInfoVersion interface{ Version() uint32 }
 // paths)
 // type FileInfoPath interface{ Path() uint32 }
 
-// Optionally implemented by FileSystem to support auth
 // Return nil, nil to indicate no authentication needed
-type Authenticated interface {
+type Authorizer interface {
 	Auth(ctx context.Context, addr, user, access string) (AuthFileHandle, error)
 }
 
@@ -395,8 +394,9 @@ func cleanPath(path string) string {
 ////////////////////////////////////////////////
 
 type DefaultHandler struct {
-	Fs FileSystem
-	st SessionTracker
+	Fs   FileSystem
+	Auth Authorizer
+	st   SessionTracker
 
 	Loggable
 }
@@ -417,14 +417,69 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 	}
 	switch m := m.(type) {
 	case Tauth:
-		w.Rerror(ErrUnsupported)
+		if h.Auth == nil {
+			h.tracef("local: Tattach: unsupported")
+			w.Rerror(ErrUnsupported)
+		} else {
+			handle, err := h.Auth.Auth(ctx, w.RemoteAddr(), m.Uname(), m.Aname())
+			if err != nil {
+				h.tracef("local: Tattach: reject auth request: authorizer error: %s", err)
+				w.Rerrorf("reject: %s", err)
+				return
+			}
+
+			fil := File{
+				Name: fmt.Sprintf(".auth.%v", m.Afid()),
+				User: m.Uname(),
+				Flag: ORDWR | ORCLOSE,
+				Mode: M_AUTH,
+				H:    handle,
+			}
+			session.PutFid(m.Afid(), fil)
+			qid := session.PutQid(fil.Name, fil.Mode.QidType(), NoQidVersion)
+
+			h.tracef("local: Tattach: offer auth file: %v", fil.Name)
+			w.Rattach(qid)
+		}
 		return
 
 	case Tattach:
-		if m.Afid() != NO_FID {
-			h.tracef("local: Tattach: reject auth request")
-			w.Rerrorf("no authentication")
-			return
+		if h.Auth != nil {
+			if m.Afid() != NO_FID {
+				fil, found := session.FileForFid(m.Afid())
+				if !found {
+					h.tracef("local: Tattach: reject auth request")
+					w.Rerrorf("no authentication")
+					return
+				}
+
+				afid, ok := fil.H.(AuthFileHandle)
+				if !ok {
+					h.tracef("local: Tattach: invalid afid (not auth file)")
+					w.Rerrorf("unauthorized afid")
+					return
+				}
+
+				if !afid.Authorized() {
+					h.tracef("local: Tattach: invalid afid (not authorized yet)")
+					w.Rerrorf("unauthorized afid")
+					return
+				}
+
+				h.tracef("local: Tattach: authorized afid (%v)", afid)
+			} else {
+				h.tracef("local: Tattach: reject auth request")
+				w.Rerrorf("authentication required")
+				return
+			}
+		} else {
+			if m.Afid() != NO_FID {
+				h.tracef("local: Tattach: reject auth request")
+				w.Rerrorf("no authentication")
+				return
+			} else {
+				// we're ok
+			}
 		}
 
 		// associate fid to root
