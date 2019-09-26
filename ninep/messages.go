@@ -7,6 +7,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -277,9 +278,22 @@ const (
 	VERSION_9P2000 string = "9P2000"
 	VERSION_9P     string = "9P"
 
-	DEFAULT_MAX_MESSAGE_SIZE = uint32(8192)
-	MIN_MESSAGE_SIZE         = uint32(128)
+	MIN_MESSAGE_SIZE = uint32(128)
 )
+
+// The default maximum size of 9p message blocks. Should never be below MIN_MESSAGE_SIZE
+var DEFAULT_MAX_MESSAGE_SIZE uint32
+
+func init() {
+	s := os.Getpagesize()
+	if s > math.MaxUint32 {
+		s = math.MaxUint32
+	}
+	if uint32(s) < MIN_MESSAGE_SIZE {
+		s = int(MIN_MESSAGE_SIZE)
+	}
+	DEFAULT_MAX_MESSAGE_SIZE = uint32(s)
+}
 
 type MsgType byte
 
@@ -390,6 +404,29 @@ const (
 	ORCLOSE = 0x40 // remove on close
 )
 
+func (m OpenMode) String() string {
+	res := []string{}
+	if m&OREAD == 0 {
+		res = append(res, "OREAD")
+	}
+	if m&OWRITE != 0 {
+		res = append(res, "OWRITE")
+	}
+	if m&ORDWR != 0 {
+		res = append(res, "ORDWR")
+	}
+	if m&OTRUNC != 0 {
+		res = append(res, "OTRUNC")
+	}
+	if m&OCEXEC != 0 {
+		res = append(res, "OCEXEC")
+	}
+	if m&ORCLOSE != 0 {
+		res = append(res, "ORCLOSE")
+	}
+	return strings.Join(res, "|")
+}
+
 func (m OpenMode) ToOsFlag() int {
 	var flags int
 	if m&OREAD == 0 {
@@ -426,6 +463,38 @@ const (
 	// Mask for the permissions bits
 	M_PERM = M_READ | M_WRITE | M_EXEC
 )
+
+func (m Mode) String() string {
+	res := []string{}
+	if m&M_READ != 0 {
+		res = append(res, "M_READ")
+	}
+	if m&M_WRITE != 0 {
+		res = append(res, "M_WRITE")
+	}
+	if m&M_EXEC != 0 {
+		res = append(res, "M_EXEC")
+	}
+	if m&M_DIR != 0 {
+		res = append(res, "M_DIR")
+	}
+	if m&M_APPEND != 0 {
+		res = append(res, "M_APPEND")
+	}
+	if m&M_EXCL != 0 {
+		res = append(res, "M_EXCL")
+	}
+	if m&M_MOUNT != 0 {
+		res = append(res, "M_MOUNT")
+	}
+	if m&M_AUTH != 0 {
+		res = append(res, "M_AUTH")
+	}
+	if m&M_TMP != 0 {
+		res = append(res, "M_TMP")
+	}
+	return strings.Join(res, "|")
+}
 
 // Convert to OS file flag with given OpenMode ORed in.
 // Applies flags that are part of Mode (used for file creation)
@@ -542,6 +611,10 @@ func (s msgString) Nbytes() int { return int(s.Len()) + 2 }
 /////////////////////////////////////
 
 type Fid uint32 // always size 4
+
+func (f Fid) String() string {
+	return fmt.Sprintf("Fid(%d)", f)
+}
 
 /////////////////////////////////////
 

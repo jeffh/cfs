@@ -72,6 +72,143 @@ type FileSystem interface {
 
 ////////////////////////////////////////////////
 
+// Loggable
+type TraceFileHandle struct {
+	H    FileHandle
+	Path string
+	Loggable
+}
+
+func (h *TraceFileHandle) ReadAt(p []byte, offset int64) (int, error) {
+	n, err := h.H.ReadAt(p, offset)
+	if err != nil {
+		h.tracef("File(%v).ReadAt(_, %v) => (%d, %s)", h.Path, offset, n, err)
+		h.errorf("File(%v).ReadAt(_, %v) => (%d, %s)", h.Path, offset, n, err)
+	} else {
+		h.tracef("File(%v).ReadAt(_, %v) => (%d, nil)", h.Path, offset, n)
+	}
+	return n, err
+}
+
+func (h *TraceFileHandle) WriteAt(p []byte, offset int64) (int, error) {
+	n, err := h.H.WriteAt(p, offset)
+	if err != nil {
+		h.tracef("File(%v).WriteAt(_, %v) => (%d, %s)", h.Path, offset, n, err)
+		h.errorf("File(%v).WriteAt(_, %v) => (%d, %s)", h.Path, offset, n, err)
+	} else {
+		h.tracef("File(%v).WriteAt(_, %v) => (%d, nil)", h.Path, offset, n)
+	}
+	return n, err
+}
+
+func (h *TraceFileHandle) Sync() error {
+	err := h.H.Sync()
+	if err != nil {
+		h.tracef("File(%v).Sync() => %s", h.Path, err)
+		h.errorf("File(%v).Sync() => %s", h.Path, err)
+	} else {
+		h.tracef("File(%v).Sync() => nil", h.Path)
+	}
+	return err
+}
+
+func (h *TraceFileHandle) Close() error {
+	err := h.H.Close()
+	if err != nil {
+		h.tracef("File(%v).Close() => %s", h.Path, err)
+		h.errorf("File(%v).Close() => %s", h.Path, err)
+	} else {
+		h.tracef("File(%v).Close() => nil", h.Path)
+	}
+	return err
+}
+
+////////////////////
+
+type TraceFileSystem struct {
+	Fs FileSystem
+	Loggable
+}
+
+func (f TraceFileSystem) MakeDir(path string, mode Mode) error {
+	err := f.Fs.MakeDir(path, mode)
+	f.tracef("FS.MakeDir(%v, %s) => %s", path, mode, err)
+	if err != nil {
+		f.errorf("FS.MakeDir(%v, %s) => %s", path, mode, err)
+	}
+	return err
+}
+
+func (f TraceFileSystem) CreateFile(path string, flag OpenMode, mode Mode) (FileHandle, error) {
+	h, err := f.Fs.CreateFile(path, flag, mode)
+	f.tracef("FS.CreateFile(%v, %s, %s) => (%v, %s)", path, flag, mode, h, err)
+	if err != nil || h == nil {
+		f.errorf("FS.CreateFile(%v, %s, %s) => (%v, %s)", path, flag, mode, h, err)
+	}
+	h = &TraceFileHandle{
+		H:        h,
+		Path:     path,
+		Loggable: f.Loggable,
+	}
+	return h, err
+}
+
+func (f TraceFileSystem) OpenFile(path string, flag OpenMode, mode Mode) (FileHandle, error) {
+	h, err := f.Fs.OpenFile(path, flag, mode)
+	f.tracef("FS.OpenFile(%v, %s, %s) => (%v, %s)", path, flag, mode, h, err)
+	if err != nil || h == nil {
+		f.errorf("FS.OpenFile(%v, %s, %s) => (%v, %s)", path, flag, mode, h, err)
+	}
+	h = &TraceFileHandle{
+		H:        h,
+		Path:     path,
+		Loggable: f.Loggable,
+	}
+	return h, err
+}
+
+func (f TraceFileSystem) ListDir(path string) ([]os.FileInfo, error) {
+	infos, err := f.Fs.ListDir(path)
+	f.tracef("FS.ListDir(%v) => (%v, %s)", infos, err)
+	if err != nil {
+		f.errorf("FS.ListDir(%v) => (_, %s)", path, err)
+	}
+	return infos, err
+}
+
+func (f TraceFileSystem) Stat(path string) (os.FileInfo, error) {
+	info, err := f.Fs.Stat(path)
+	if info != nil {
+		f.tracef("FS.Stat(%v) => (os.FileInfo{name: %#v, size: %d...}, %s)", path, info.Name(), info.Size(), err)
+	} else {
+		f.tracef("FS.Stat(%v) => (nil, %s)", path, err)
+	}
+	if err != nil {
+		f.errorf("FS.Stat(%v) => (_, %s)", path, err)
+	}
+	return info, err
+}
+
+func (f TraceFileSystem) WriteStat(path string, s Stat) error {
+	f.tracef("FS.WriteStat(%v, %s)", path, s)
+	err := f.Fs.WriteStat(path, s)
+	if err != nil {
+		f.errorf("FS.WriteStat(%v, %s) => %s", path, s, err)
+	}
+	return err
+}
+
+func (f TraceFileSystem) Delete(path string) error {
+	f.tracef("FS.Delete(%v)", path)
+	err := f.Fs.Delete(path)
+	if err != nil {
+		f.errorf("FS.Delete(%v) => %s", path, err)
+	}
+	return err
+}
+
+////////////////////////////////////////////////
+
 type Dir string
 
 func (d Dir) MakeDir(path string, mode Mode) error {
@@ -435,6 +572,7 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 				Mode: M_AUTH,
 				H:    handle,
 			}
+			// fil.IncRef()
 			session.PutFid(m.Afid(), fil)
 			qid := session.PutQid(fil.Name, fil.Mode.QidType(), NoQidVersion)
 
@@ -495,7 +633,7 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 	case Topen:
 		fil, ok := session.FileForFid(m.Fid())
 		if !ok {
-			h.errorf("local: Topen: unknown fid: %v", m.Fid())
+			h.errorf("local: Topen: unknown %s", m.Fid())
 			w.Rerrorf("unknown fid %d", m.Fid())
 			return
 		}
@@ -525,42 +663,40 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 				session: session,
 				path:    fullPath,
 			}
-			// } else if f, ok := session.FileHandle(q); ok {
-			// 	fil.Mode = ModeFromFileInfo(info)
-			// 	fil.Flag = m.Mode()
-			// 	fil.H = f
+			// fil.IncRef()
 		} else {
 			f, err := h.Fs.OpenFile(fullPath, m.Mode(), fil.Mode)
 			if err != nil || f == nil {
-				h.tracef("local: Topen: error opening file %v: %s", fullPath, err)
+				h.tracef("local: Topen: error opening file %v: %s %s", fullPath, err, m.Fid)
 				w.Rerrorf("cannot open: %s", err)
 				return
 			}
 			fil.Mode = ModeFromFileInfo(info)
 			fil.Flag = m.Mode()
 			fil.H = f
+			// fil.IncRef()
 			session.PutFileHandle(q, f)
 		}
-		h.tracef("local: Topen: %v -> %v (isDir=%v, mode=%v, qid=%v)", m.Fid(), fullPath, info.IsDir(), info.Mode(), q)
+		h.tracef("local: Topen: %s -> %v (isDir=%v, mode=%v, qid=%v)", m.Fid(), fullPath, info.IsDir(), info.Mode(), q)
 		session.PutFid(m.Fid(), fil)
 		w.Ropen(q, 0) // TODO: would be nice to support iounit
 
 	case Twalk:
 		fil, ok := session.FileForFid(m.Fid())
 		if !ok {
-			h.errorf("local: Twalk: unknown fid: %v", m.Fid())
+			h.errorf("local: Twalk: unknown %s", m.Fid())
 			w.Rerrorf("unknown fid %d", m.Fid())
 			return
 		}
 		if m.Fid() != m.NewFid() {
 			if _, found := session.FileForFid(m.NewFid()); found {
-				h.errorf("local: Twalk: %v wanted new fid %v which is already taken", m.Fid(), m.NewFid())
+				h.errorf("local: Twalk: %s wanted new %s which is already taken", m.Fid(), m.NewFid())
 				w.Rerrorf("conflict with newfid (fid=%d, newfid=%d)", m.Fid(), m.NewFid())
 				return
 			}
 		}
 		if fil.Mode&M_DIR == 0 && m.NumWname() > 0 {
-			h.errorf("local: Twalk: failed to because file is not a dir (fid %v): %v", m.Fid(), fil.Name)
+			h.errorf("local: Twalk: failed to because file is not a dir %s: %v", m.Fid(), fil.Name)
 			w.Rerrorf("walk in non-directory")
 			return
 		}
@@ -575,7 +711,7 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 			if name == "/" {
 				path = "/"
 			} else if strings.Contains(name, string(os.PathSeparator)) {
-				h.errorf("local: Twalk: invalid walk element for fid %d: %v", m.Fid(), name)
+				h.errorf("local: Twalk: invalid walk element for %s: %v", m.Fid(), name)
 				w.Rerrorf("invalid walk element: %v", name)
 				return
 			} else {
@@ -584,13 +720,13 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 			var err error
 			info, err = h.Fs.Stat(path)
 			if err != nil {
-				h.errorf("local: Twalk: failed to call stat on %v for fid %v", path, m.Fid())
+				h.errorf("local: Twalk: failed to call stat on %v for %s", path, m.Fid())
 				break
 			}
 
 			fil.Name = path
 
-			h.tracef("local: Twalk: %v :: %v %v", m.Fid(), fil.Name, info.Mode())
+			h.tracef("local: Twalk: %s :: %v %v", m.Fid(), fil.Name, info.Mode())
 			if err == nil {
 				q := session.PutQid(fil.Name, ModeFromOS(info.Mode()).QidType(), versionFromFileInfo(info))
 				walkedQids = append(walkedQids, q)
@@ -614,16 +750,16 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 		if len(walkedQids) == int(m.NumWname()) {
 			session.PutFid(m.NewFid(), fil)
 		}
-		h.tracef("local: Twalk: %v=>%v: %v %v -> %v", m.Fid(), m.NewFid(), fil.Name, m.NumWname(), len(walkedQids))
+		h.tracef("local: Twalk: %s=>%s: %v %v -> %v", m.Fid(), m.NewFid(), fil.Name, m.NumWname(), len(walkedQids))
 		if len(walkedQids) > 0 {
-			h.tracef("local: Twalk: %v=>%v: qid=%v", m.Fid(), m.NewFid(), walkedQids[len(walkedQids)-1])
+			h.tracef("local: Twalk: %s=>%s: qid=%v", m.Fid(), m.NewFid(), walkedQids[len(walkedQids)-1])
 		}
 		w.Rwalk(walkedQids)
 
 	case Tstat:
 		fil, ok := session.FileForFid(m.Fid())
 		if !ok {
-			h.errorf("local: Tstat: unknown fid: %v", m.Fid())
+			h.errorf("local: Tstat: unknown %s", m.Fid())
 			w.Rerrorf("unknown fid %d", m.Fid())
 			return
 		}
@@ -639,26 +775,26 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 		fil.User = stat.Uid()
 		fil.Mode = ModeFromOS(info.Mode())
 		session.PutFid(m.Fid(), fil)
-		h.tracef("local: Tstat %v %v -> %s %v", m.Fid(), fil.Name, stat, info.Mode())
+		h.tracef("local: Tstat %s %v -> %s %v", m.Fid(), fil.Name, stat, info.Mode())
 		w.Rstat(stat)
 
 	case Tread:
 		fil, ok := session.FileForFid(m.Fid())
 		if !ok {
-			h.errorf("local: Tread: unknown fid: %v", m.Fid())
+			h.errorf("local: Tread: unknown %s", m.Fid())
 			w.Rerrorf("unknown fid %d", m.Fid())
 			return
 		}
 
 		if fil.Flag&3 != OREAD && fil.Flag&3 != ORDWR {
-			h.errorf("local: Tread: file opened with wrong flags: fid %v", m.Fid())
-			w.Rerrorf("fid %d wasn't opened with read flag set", m.Fid())
+			h.errorf("local: Tread: file opened with wrong flags: %s", m.Fid())
+			w.Rerrorf("%s wasn't opened with read flag set", m.Fid())
 			return
 		}
 
 		if fil.H == nil {
-			h.errorf("local: Tread: file not opened: %v", m.Fid())
-			w.Rerrorf("fid %d wasn't opened", m.Fid())
+			h.errorf("local: Tread: file not opened: %s", m.Fid())
+			w.Rerrorf("%s wasn't opened", m.Fid())
 			return
 		}
 		data := w.RreadBuffer()
@@ -674,33 +810,38 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 			w.Rerrorf("failed to read: %s", err)
 			return
 		} else if err != nil && err != io.EOF {
-			h.tracef("local: Tread: warn: fid %d couldn't read full buffer (only %d bytes): %s", m.Fid(), n, err)
+			h.tracef("local: Tread: warn: %s couldn't read full buffer (only %d bytes): %s", m.Fid(), n, err)
 		}
-		h.tracef("local: Tread: fid %d (offset=%d, bytes=%d)", m.Fid(), m.Offset(), n)
+		h.tracef("local: Tread: %s (offset=%d, bytes=%d)", m.Fid(), m.Offset(), n)
 		w.Rread(data[:n])
 
 	case Tclunk:
 		fil, ok := session.FileForFid(m.Fid())
 		if ok {
 			if fil.H != nil {
+				// if fil.DecRef() {
 				fil.H.Close()
 				if q, ok := session.Qid(fil.Name); ok {
 					session.DeleteFileHandle(q)
 				}
 				fil.H = nil
+				// }
 			}
 			if fil.Flag&ORCLOSE != 0 {
-				h.tracef("local: deleting %v %#v", m.Fid(), fil.Name)
+				h.tracef("local: deleting %s %#v", m.Fid(), fil.Name)
 				// delete the file
 				h.Fs.Delete(fil.Name)
 				session.DeleteQid(fil.Name)
 			}
 			session.DeleteFid(m.Fid())
-			h.tracef("local: Tclunk %v %v", m.Fid(), fil.Name)
+			h.tracef("local: Tclunk: %s %v", m.Fid(), fil.Name)
 			w.Rclunk()
 		} else {
-			w.Rerrorf("local: Tclunk: unknown fid %d", m.Fid())
+			w.Rerrorf("local: Tclunk: unknown %s", m.Fid())
 		}
+
+	case Tflush:
+		break // TODO: need to implement this
 
 	case Tremove:
 		fil, ok := session.FileForFid(m.Fid())
@@ -708,7 +849,7 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 			h.Fs.Delete(fil.Name)
 			session.DeleteFid(m.Fid())
 			session.DeleteQid(fil.Name)
-			h.tracef("local: Tremove %v %v", m.Fid(), fil.Name)
+			h.tracef("local: Tremove: %v %v", m.Fid(), fil.Name)
 			w.Rremove()
 		} else {
 			w.Rerrorf("local: Tremove: unknown fid %d", m.Fid())
@@ -756,6 +897,7 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 				session: session,
 				path:    fullPath,
 			}
+			// fil.IncRef()
 		} else {
 			f, err := h.Fs.CreateFile(fullPath, m.Mode(), m.Perm())
 			if err != nil || f == nil {
@@ -766,6 +908,7 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 			fil.Flag = m.Mode()
 			fil.Mode = m.Perm()
 			fil.H = f
+			// fil.IncRef()
 			session.PutFileHandle(q, f)
 		}
 		if info != nil {

@@ -397,11 +397,20 @@ func (s *serverConn) handle(ctx context.Context, txn *transaction) bool {
 ///////////////////////////////////////////////////////
 
 type File struct {
-	Name string
-	User string
-	Flag OpenMode
-	Mode Mode
-	H    FileHandle
+	Name     string
+	User     string
+	Flag     OpenMode
+	Mode     Mode
+	H        FileHandle
+	RefCount int32
+}
+
+func (f *File) IncRef() {
+	atomic.AddInt32(&f.RefCount, 1)
+}
+
+func (f *File) DecRef() bool {
+	return atomic.AddInt32(&f.RefCount, -1) == 0
 }
 
 type Session struct {

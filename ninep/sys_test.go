@@ -1,0 +1,32 @@
+package ninep
+
+import (
+	"io/ioutil"
+	"os"
+	"testing"
+	"time"
+)
+
+func TestStat(t *testing.T) {
+	f, err := ioutil.TempFile("", "")
+	threshold := time.Now().Add(-time.Second)
+	if err != nil {
+		t.Error(err.Error())
+	}
+	defer os.Remove(f.Name())
+	defer f.Close()
+
+	info, err := Stat(f.Name())
+	if err != nil {
+		t.Error(err.Error())
+	}
+
+	at, ok := Atime(info)
+	if !ok {
+		t.Errorf("Failed to read access time")
+	}
+
+	if at.Before(threshold) {
+		t.Errorf("expected access time to be recent: got %v, but expected to be after %v", at, thresold)
+	}
+}
