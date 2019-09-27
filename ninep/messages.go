@@ -233,6 +233,11 @@ func (t *transaction) Rwrite(count uint32) {
 	Rwrite(t.outMsg).fill(t.reqTag(), count)
 }
 
+func (t *transaction) Rflush() {
+	t.handled = true
+	Rflush(t.outMsg).fill(t.reqTag())
+}
+
 func (t *transaction) Rerror(err error) {
 	t.handled = true
 	Rerror(t.outMsg).fill(t.reqTag(), err.Error())
@@ -267,6 +272,7 @@ func readUpTo(r io.Reader, p []byte) (int, error) {
 }
 
 type Message interface {
+	Tag() Tag
 	Bytes() []byte
 }
 

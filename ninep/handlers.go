@@ -16,10 +16,11 @@ import (
 )
 
 var (
-	errWriteNotAllowed     = errors.New("not allowed to write")
-	errSeekNotAllowed      = errors.New("seeking is not allowed")
+	ErrWriteNotAllowed = errors.New("not allowed to write")
+	ErrSeekNotAllowed  = errors.New("seeking is not allowed")
+	ErrUnsupported     = errors.New("unsupported")
+
 	errChangeUidNotAllowed = errors.New("changing uid is not allowed by protocol")
-	ErrUnsupported         = errors.New("unsupported")
 )
 
 // Represent a file that can be read or written to. Can be either a file or directory
@@ -72,6 +73,24 @@ type FileSystem interface {
 
 ////////////////////////////////////////////////
 
+type fileInfoWithName struct {
+	fi   os.FileInfo
+	name string
+}
+
+func (f *fileInfoWithName) Name() string       { return f.name }
+func (f *fileInfoWithName) Size() int64        { return f.fi.Size() }
+func (f *fileInfoWithName) Mode() os.FileMode  { return f.fi.Mode() }
+func (f *fileInfoWithName) ModTime() time.Time { return f.fi.ModTime() }
+func (f *fileInfoWithName) IsDir() bool        { return f.fi.IsDir() }
+func (f *fileInfoWithName) Sys() interface{}   { return f.fi.Sys() }
+
+func FileInfoWithName(fi os.FileInfo, name string) os.FileInfo {
+	return &fileInfoWithName{fi, name}
+}
+
+////////////////////////////////////////////////
+
 // Loggable
 type TraceFileHandle struct {
 	H    FileHandle
@@ -93,10 +112,10 @@ func (h *TraceFileHandle) ReadAt(p []byte, offset int64) (int, error) {
 func (h *TraceFileHandle) WriteAt(p []byte, offset int64) (int, error) {
 	n, err := h.H.WriteAt(p, offset)
 	if err != nil {
-		h.tracef("File(%v).WriteAt(_, %v) => (%d, %s)", h.Path, offset, n, err)
-		h.errorf("File(%v).WriteAt(_, %v) => (%d, %s)", h.Path, offset, n, err)
+		h.tracef("File(%v).WriteAt(len(%d), %v) => (%d, %s)", h.Path, len(p), offset, n, err)
+		h.errorf("File(%v).WriteAt(len(%d), %v) => (%d, %s)", h.Path, len(p), offset, n, err)
 	} else {
-		h.tracef("File(%v).WriteAt(_, %v) => (%d, nil)", h.Path, offset, n)
+		h.tracef("File(%v).WriteAt(len(%d), %v) => (%d, nil)", h.Path, len(p), offset, n)
 	}
 	return n, err
 }
@@ -233,7 +252,13 @@ func (d Dir) ListDir(path string) ([]os.FileInfo, error) {
 
 func (d Dir) Stat(path string) (os.FileInfo, error) {
 	fullPath := filepath.Join(string(d), path)
-	return os.Stat(fullPath)
+	info, err := os.Stat(fullPath)
+	if err == nil {
+		if fullPath == string(d) {
+			info = FileInfoWithName(info, "")
+		}
+	}
+	return info, err
 }
 
 func (d Dir) WriteStat(path string, s Stat) error {
@@ -404,7 +429,7 @@ func (h *directoryHandle) ReadAt(p []byte, offset int64) (int, error) {
 		h.fetched = false
 	}
 	if h.offset != offset {
-		return 0, errSeekNotAllowed
+		return 0, ErrSeekNotAllowed
 	}
 	if !h.fetched {
 		entries, err := h.fs.ListDir(h.path)
@@ -436,7 +461,7 @@ func (h *directoryHandle) ReadAt(p []byte, offset int64) (int, error) {
 }
 
 func (h *directoryHandle) WriteAt(p []byte, offset int64) (int, error) {
-	return 0, errWriteNotAllowed
+	return 0, ErrWriteNotAllowed
 }
 
 func (h *directoryHandle) Sync() error {
@@ -840,9 +865,6 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 			w.Rerrorf("local: Tclunk: unknown %s", m.Fid())
 		}
 
-	case Tflush:
-		break // TODO: need to implement this
-
 	case Tremove:
 		fil, ok := session.FileForFid(m.Fid())
 		if ok {
@@ -938,7 +960,7 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 			return
 		}
 		data := m.Data()
-		h.tracef("local: Twrite: want fid %d (offset=%d, data=%v)", m.Fid(), m.Offset(), data)
+		h.tracef("local: Twrite: want fid %d (offset=%d, data=%d)", m.Fid(), m.Offset(), len(data))
 		// TODO: handle overflow of converting uint64 -> int64
 		// TODO: handle retriable errors
 		n, err := fil.H.WriteAt(data, int64(m.Offset()))

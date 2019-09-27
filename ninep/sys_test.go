@@ -16,7 +16,7 @@ func TestStat(t *testing.T) {
 	defer os.Remove(f.Name())
 	defer f.Close()
 
-	info, err := Stat(f.Name())
+	info, err := os.Stat(f.Name())
 	if err != nil {
 		t.Error(err.Error())
 	}
@@ -27,6 +27,6 @@ func TestStat(t *testing.T) {
 	}
 
 	if at.Before(threshold) {
-		t.Errorf("expected access time to be recent: got %v, but expected to be after %v", at, thresold)
+		t.Errorf("expected access time to be recent: got %v, but expected to be after %v", at, threshold)
 	}
 }

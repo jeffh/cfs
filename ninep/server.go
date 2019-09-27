@@ -184,12 +184,14 @@ func (s *Server) ListenAndServeTLS(addr string, certFile, keyFile string) error 
 
 /////////////////////////////////////////////////////////////
 
-// TODO: support multiplexing
 type serverConn struct {
 	rwc net.Conn
 
 	srv  *Server
 	txns chan *transaction
+
+	mut      sync.Mutex
+	liveTags map[Tag]context.CancelFunc
 
 	handler Handler
 	ctx     context.Context
@@ -259,7 +261,7 @@ func (s *serverConn) acceptTversion(txn *transaction) bool {
 		}
 
 		ok := false
-		if !strings.HasPrefix(request.Version(), VERSION_9P) {
+		if !strings.HasPrefix(request.Version(), VERSION_9P2000) {
 			txn.Rversion(size, "unknown")
 			s.tracef("negotiate version: unrecognized protocol version: got %#v, wanted %#v", request.Version(), version)
 		} else {
@@ -283,6 +285,27 @@ func (s *serverConn) requestStop() {
 	atomic.AddInt32(&s.stop, 1)
 }
 
+func (s *serverConn) assocTag(t Tag, c context.CancelFunc) bool {
+	s.mut.Lock()
+	_, found := s.liveTags[t]
+	if !found {
+		s.liveTags[t] = c
+	}
+	s.mut.Unlock()
+	// return !found
+	return true
+}
+
+func (s *serverConn) dissocTag(t Tag) {
+	s.mut.Lock()
+	cancel, ok := s.liveTags[t]
+	delete(s.liveTags, t)
+	s.mut.Unlock()
+	if ok {
+		cancel()
+	}
+}
+
 // this runs in a new goroutine
 func (s *serverConn) serve() {
 	defer s.rwc.Close()
@@ -293,6 +316,7 @@ func (s *serverConn) serve() {
 		if max <= 0 {
 			panic(fmt.Errorf("MaxInflightRequestsPerSession must be positive, got: %d", max))
 		}
+		s.liveTags = make(map[Tag]context.CancelFunc)
 		s.txns = make(chan *transaction, max)
 		go func() {
 			for i := 0; i < max; i++ {
@@ -318,18 +342,26 @@ func (s *serverConn) serve() {
 		for s.stop = 0; s.stop == 0; {
 			txn := <-s.txns
 			txn.remoteAddr = remoteAddr
-
 			s.prepareDeadlines()
 			err = txn.readRequest(s.rwc)
 			if err != nil {
+				txn.reset()
+				s.txns <- txn
 				break
 			}
 
+			tag := txn.Request().Tag()
+			s.mut.Lock()
+			fmt.Printf("=== TAGS: %v %#v\n", tag, s.liveTags)
+			s.mut.Unlock()
+
 			select {
 			case <-ctx.Done():
-				s.tracef("received shutdown signal, erroring request from %s", s.rwc.RemoteAddr())
-				txn.Rerrorf("shutting down")
+				s.tracef("closing connection, erroring request from %s", s.rwc.RemoteAddr())
+				txn.Rerrorf("closing connection")
 				txn.writeReply(s.rwc) // we don't care, we're going away
+				txn.reset()
+				s.txns <- txn
 				break
 			default:
 				// NOTE: technically, we never verify that Tags are unique, but
@@ -350,13 +382,52 @@ func (s *serverConn) serve() {
 }
 
 func (s *serverConn) dispatch(ctx context.Context, txn *transaction) {
-	shouldStop := !s.handle(ctx, txn)
+	req := txn.Request()
+	tag := req.Tag()
+	ctx, cancel := context.WithCancel(ctx)
+	ok := s.assocTag(tag, cancel)
 
+	if !ok {
+		defer cancel()
+	}
+
+	shouldStop := false
+
+	// dispatch
+	if ok {
+		switch m := req.(type) {
+		case MsgBase:
+			s.errorf("Unknown message of type: %d", MsgBase(req.Bytes()).Type())
+			txn.Rerrorf("unknown msg")
+
+		case Tflush:
+			s.tracef("Cancel request tag %d", tag)
+			oldTag := m.OldTag()
+			defer s.dissocTag(oldTag)
+			txn.Rflush()
+
+		default:
+			s.handler.Handle9P(ctx, m, txn)
+			if !txn.handled {
+				txn.Rerrorf("not implemented")
+			}
+			shouldStop = txn.disconnect
+		}
+	} else {
+		s.errorf("tag already in use: %d :: %#v", tag, s.liveTags)
+		txn.Rerrorf("Tag already in use: %d", tag)
+	}
+
+	// handle dispatch result
 	select {
-	case <-ctx.Done():
-		txn.Rerrorf("shutting down")
-		shouldStop = true
+	case <-ctx.Done(): // we can't dissocTag above this otherwise this branch will always resolve
+		txn.Rerrorf("canceling message")
+		s.dissocTag(req.Tag())
+
 	default:
+		// since we're on multiple threads, we want to remove the tag ASAP, but
+		// ctx.Done() above will always be followed.
+		s.dissocTag(req.Tag())
 		if txn.handled {
 			s.prepareDeadlines()
 			err := txn.writeReply(s.rwc)
@@ -365,33 +436,22 @@ func (s *serverConn) dispatch(ctx context.Context, txn *transaction) {
 				shouldStop = true
 			}
 		} else if !txn.handled {
-			s.errorf("failed to handle message: %#v", txn.Request())
+			s.errorf("failed to handle message: %#v", req)
 		}
 	}
 
 	if shouldStop {
 		s.requestStop()
 	}
-	s.tracef("request handled: %s", MsgBase(txn.Request().Bytes()).Type())
+
+	if e, ok := txn.Reply().(Rerror); ok {
+		s.errorf("return error: %s", e.Ename())
+	} else {
+		s.tracef("return %s", txn.requestType())
+	}
 
 	txn.reset()
 	s.txns <- txn // return back to pool
-}
-
-func (s *serverConn) handle(ctx context.Context, txn *transaction) bool {
-	switch m := txn.Request().(type) {
-	case MsgBase:
-		s.errorf("Unknown message of type: %d", MsgBase(txn.Request().Bytes()).Type())
-		txn.Rerrorf("unknown msg")
-		return false
-
-	default:
-		s.handler.Handle9P(ctx, m, txn)
-		if !txn.handled {
-			txn.Rerrorf("not implemented")
-		}
-		return !txn.disconnect
-	}
 }
 
 ///////////////////////////////////////////////////////
