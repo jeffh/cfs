@@ -1,17 +1,14 @@
-.PHONY: test all clean
+.PHONY: test test_race all all_race clean
 
 CMDS := $(shell ls cmd)
 
 all: $(CMDS)
 
 $(CMDS):
-	go build -o ./bin/$@ ./cmd/$@
+	go build $(GOARGS) -o ./bin/$@ ./cmd/$@
 
 test:
-	go test ./...
-
-test_race:
-	go test -race ./...
+	go test $(GOARGS) ./...
 
 clean:
 	rm -rf bin; true

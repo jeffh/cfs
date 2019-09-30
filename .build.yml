@@ -15,4 +15,4 @@ tasks:
     make test
  - race: |
     cd cfs
-    make test_race
+    GOARGS=-race make build test
