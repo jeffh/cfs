@@ -175,7 +175,7 @@ type serverConn struct {
 	rwc net.Conn
 
 	srv  *Server
-	txns chan *transaction
+	txns chan *srvTransaction
 
 	mut      sync.Mutex
 	liveTags map[Tag]context.CancelFunc
@@ -205,9 +205,8 @@ func (s *serverConn) prepareDeadlines() {
 	s.rwc.SetWriteDeadline(now.Add(s.srv.WriteTimeout))
 }
 
-func (s *serverConn) acceptTversion(txn *transaction) bool {
+func (s *serverConn) acceptTversion(txn *srvTransaction) bool {
 	preferredSize := s.maxMsgSize
-	version := VERSION_9P
 
 	now := time.Now()
 	s.rwc.SetReadDeadline(now.Add(s.srv.InitialTimeout))
@@ -248,10 +247,16 @@ func (s *serverConn) acceptTversion(txn *transaction) bool {
 		}
 
 		ok := false
-		if !strings.HasPrefix(request.Version(), VERSION_9P2000) {
+		if !strings.HasPrefix(request.Version(), VERSION_9P) {
 			txn.Rversion(size, "unknown")
-			s.tracef("negotiate version: unrecognized protocol version: got %#v, wanted %#v", request.Version(), version)
+			s.tracef("negotiate version: unrecognized protocol version: got %#v, wanted prefix of %#v", request.Version(), VERSION_9P)
 		} else {
+			version := request.Version()
+			i := strings.Index(version, ".")
+			if i != -1 {
+				i = len(version)
+			}
+			version = version[:i]
 			txn.Rversion(size, version)
 			ok = true
 		}
@@ -304,17 +309,17 @@ func (s *serverConn) serve() {
 			panic(fmt.Errorf("MaxInflightRequestsPerSession must be positive, got: %d", max))
 		}
 		s.liveTags = make(map[Tag]context.CancelFunc)
-		s.txns = make(chan *transaction, max)
+		s.txns = make(chan *srvTransaction, max)
 		go func() {
 			for i := 0; i < max; i++ {
-				t := createTransaction(s.maxMsgSize)
+				t := createServerTransaction(s.maxMsgSize)
 				s.txns <- &t
 			}
 		}()
 	}
 
 	{
-		verTxn := createTransaction(s.maxMsgSize)
+		verTxn := createServerTransaction(s.maxMsgSize)
 		if !s.acceptTversion(&verTxn) {
 			return
 		}
@@ -363,7 +368,7 @@ func (s *serverConn) serve() {
 	s.handler.Disconnected(remoteAddr)
 }
 
-func (s *serverConn) dispatch(ctx context.Context, txn *transaction) {
+func (s *serverConn) dispatch(ctx context.Context, txn *srvTransaction) {
 	req := txn.Request()
 	tag := req.Tag()
 	ctx, cancel := context.WithCancel(ctx)
