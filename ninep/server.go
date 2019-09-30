@@ -55,45 +55,32 @@ const (
 )
 
 type Server struct {
-	TLSConfig *tls.Config
+	Loggable
+	Handler Handler
 
 	InitialTimeout                time.Duration // timeout initial 9P handshake (version exchange)
 	ReadTimeout                   time.Duration // timeout reading data from clients
 	WriteTimeout                  time.Duration // timeout writing data to clients
 	MaxInflightRequestsPerSession int
 
-	Handler Handler
+	TLSConfig *tls.Config
 
 	MaxMsgSize uint32
-
-	ErrorLog, TraceLog Logger
 }
 
 // Provides an easy way to create a server (you can still construct the Server
 // struct manually if you want).
 func NewServer(fs FileSystem, errLogger, traceLogger Logger) *Server {
-	return &Server{
-		Handler: &DefaultHandler{
-			Fs: fs,
-			Loggable: Loggable{
-				ErrorLog: errLogger,
-				TraceLog: traceLogger,
-			},
-		},
+	loggable := Loggable{
 		ErrorLog: errLogger,
 		TraceLog: traceLogger,
 	}
-}
-
-func (s *Server) tracef(f string, values ...interface{}) {
-	if s.TraceLog != nil {
-		s.TraceLog.Printf(f, values...)
-	}
-}
-
-func (s *Server) errorf(f string, values ...interface{}) {
-	if s.ErrorLog != nil {
-		s.ErrorLog.Printf(f, values...)
+	return &Server{
+		Handler: &DefaultHandler{
+			Fs:       fs,
+			Loggable: loggable,
+		},
+		Loggable: loggable,
 	}
 }
 
@@ -118,7 +105,7 @@ func (s *Server) ServeTLS(l net.Listener, certFile, keyFile string) error {
 }
 
 func (s *Server) Serve(l net.Listener) error {
-	s.tracef("listening on %s", l.Addr())
+	s.Tracef("listening on %s", l.Addr())
 
 	if s.InitialTimeout == 0 {
 		s.InitialTimeout = DefaultInitialTimeout
@@ -143,7 +130,7 @@ func (s *Server) Serve(l net.Listener) error {
 			if IsTemporaryErr(err) {
 				retries++
 				wait := time.Duration(math.Min(math.Pow(float64(10*time.Millisecond), float64(retries)), float64(maxWait)))
-				s.tracef("accept error: %s; retrying in %v", err, wait)
+				s.Tracef("accept error: %s; retrying in %v", err, wait)
 				time.Sleep(wait)
 				continue
 			} else {
@@ -151,7 +138,7 @@ func (s *Server) Serve(l net.Listener) error {
 			}
 		}
 
-		s.tracef("accepted connection from %s", conn.RemoteAddr())
+		s.Tracef("accepted connection from %s", conn.RemoteAddr())
 		sc := &serverConn{
 			rwc:        conn,
 			maxMsgSize: DEFAULT_MAX_MESSAGE_SIZE,
