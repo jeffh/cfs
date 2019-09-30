@@ -46,7 +46,7 @@ func main() {
 		errLogger = log.New(os.Stderr, "", log.LstdFlags)
 	}
 
-	var fsys ninep.FileSystem = fs.Dir(root)
+	var fsys ninep.FileSystem = &fs.Mem{}
 
 	if tracefs {
 		fsys = fs.TraceFileSystem{

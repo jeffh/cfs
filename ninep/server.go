@@ -350,11 +350,6 @@ func (s *serverConn) serve() {
 				break
 			}
 
-			tag := txn.Request().Tag()
-			s.mut.Lock()
-			fmt.Printf("=== TAGS: %v %#v\n", tag, s.liveTags)
-			s.mut.Unlock()
-
 			select {
 			case <-ctx.Done():
 				s.tracef("closing connection, erroring request from %s", s.rwc.RemoteAddr())

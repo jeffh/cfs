@@ -10,5 +10,8 @@ $(CMDS):
 test:
 	go test ./...
 
+test_race:
+	go test -race ./...
+
 clean:
 	rm -rf bin; true
