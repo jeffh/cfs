@@ -539,7 +539,12 @@ type FileSystemProxy struct {
 	usedFids map[Fid]bool
 }
 
-func (fs *FileSystemProxy) splitPath(path string) []string { return strings.Split(path, "/") }
+func (fs *FileSystemProxy) splitPath(path string) []string {
+	if path == "" {
+		return nil
+	}
+	return strings.Split(path, "/")
+}
 func (fs *FileSystemProxy) allocFid() Fid {
 	f := Fid(0)
 	fs.mut.Lock()

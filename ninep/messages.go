@@ -974,8 +974,8 @@ func (r Tcreate) fill(t Tag, fid Fid, name string, perm uint32, mode OpenMode) {
 	MsgBase(r).fill(msgTcreate, t, size)
 	bo.PutUint32(r[msgOffset:msgOffset+4], uint32(fid))
 	off := msgString(r[msgOffset+4:]).SetStringAndLen(name)
-	bo.PutUint32(r[off:off+4], perm)
-	r[off+4] = byte(mode)
+	bo.PutUint32(r[msgOffset+4+off:msgOffset+4+off+4], perm)
+	r[msgOffset+4+off+4] = byte(mode)
 }
 
 func (r Tcreate) Bytes() []byte { return MsgBase(r).Bytes() }
