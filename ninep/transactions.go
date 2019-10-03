@@ -160,6 +160,11 @@ func (t *srvTransaction) Rversion(msgSize uint32, version string) {
 	Rversion(t.outMsg).fill(t.reqTag(), msgSize, version)
 }
 
+func (t *srvTransaction) Rauth(q Qid) {
+	t.handled = true
+	Rattach(t.outMsg).fill(t.reqTag(), q)
+}
+
 func (t *srvTransaction) Rattach(q Qid) {
 	t.handled = true
 	Rattach(t.outMsg).fill(t.reqTag(), q)
@@ -186,7 +191,7 @@ func (t *srvTransaction) Rwstat() {
 }
 
 func (t *srvTransaction) RreadBuffer() []byte {
-	return Rread(t.outMsg).Data()
+	return Rread(t.outMsg).DataNoLimit()
 }
 
 func (t *srvTransaction) Rread(data []byte) {
@@ -246,7 +251,7 @@ func createClientTransaction(tag Tag, maxMsgSize uint32) cltTransaction {
 	}
 }
 
-func (t *cltTransaction) readRequest(rdr io.Reader) error {
+func (t *cltTransaction) readReply(rdr io.Reader) error {
 	// read size
 	_, err := readUpTo(rdr, t.inMsg[:4])
 	if err != nil {
@@ -267,7 +272,7 @@ func (t *cltTransaction) readRequest(rdr io.Reader) error {
 	return nil
 }
 
-func (t *cltTransaction) writeReply(wr io.Writer) error {
+func (t *cltTransaction) writeRequest(wr io.Writer) error {
 	b := MsgBase(t.outMsg).Bytes()
 	for len(b) > 0 {
 		n, err := wr.Write(b)
@@ -296,7 +301,7 @@ func (t *cltTransaction) requestType() MsgType {
 }
 
 func (t *cltTransaction) Request() Message {
-	mb := MsgBase(t.inMsg)
+	mb := MsgBase(t.outMsg)
 	// fmt.Printf("recv: %s\n", mb.Type())
 	switch mb.Type() {
 	case msgTversion:
@@ -331,7 +336,7 @@ func (t *cltTransaction) Request() Message {
 }
 
 func (t *cltTransaction) Reply() Message {
-	mb := MsgBase(t.outMsg)
+	mb := MsgBase(t.inMsg)
 	switch mb.Type() {
 	case msgRversion:
 		return Rversion(mb)
@@ -372,6 +377,10 @@ func (t *cltTransaction) reqTag() Tag {
 
 func (t *cltTransaction) Tversion(msgSize uint32, version string) {
 	Tversion(t.outMsg).fill(t.reqTag(), msgSize, version)
+}
+
+func (t *cltTransaction) Tauth(afid Fid, uname, aname string) {
+	Tauth(t.outMsg).fill(t.reqTag(), afid, uname, aname)
 }
 
 func (t *cltTransaction) Tattach(fid, afid Fid, uname, aname string) {

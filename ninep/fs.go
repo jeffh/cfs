@@ -21,7 +21,7 @@ type AuthFileHandle interface {
 	FileHandle
 	// Returns true if the user is authorized to access the FileSystem
 	// Called when Tattach occurs, after ta user has authenticated from Tauth
-	Authorized() bool
+	Authorized(usr, mnt string) bool
 }
 
 // return os.FileInfo from FileSystem can implement this if they want to
@@ -54,6 +54,10 @@ type Authorizer interface {
 	Auth(ctx context.Context, addr, user, access string) (AuthFileHandle, error)
 }
 
+type Authorizee interface {
+	Prove(ctx context.Context, user, access string) error
+}
+
 // A higher-level interface to the Plan9 file system protocol (9P2000)
 //
 // The following assumptions are part of the interface:
@@ -63,8 +67,8 @@ type FileSystem interface {
 	MakeDir(path string, mode Mode) error
 	// Creates a file and opens it for readng/writing
 	CreateFile(path string, flag OpenMode, mode Mode) (FileHandle, error)
-	// Opens an existing file for readng/writing
-	OpenFile(path string, flag OpenMode, mode Mode) (FileHandle, error)
+	// Opens an existing file for reading/writing
+	OpenFile(path string, flag OpenMode) (FileHandle, error)
 	// Lists directories and files in a given path. Does not include '.' or '..'
 	ListDir(path string) ([]os.FileInfo, error)
 	// Lists stats about a given file or directory.

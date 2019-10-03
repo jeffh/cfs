@@ -187,7 +187,7 @@ func (m *Mem) CreateFile(path string, flag ninep.OpenMode, mode ninep.Mode) (nin
 	return m.openFile(n)
 }
 
-func (m *Mem) OpenFile(path string, flag ninep.OpenMode, mode ninep.Mode) (ninep.FileHandle, error) {
+func (m *Mem) OpenFile(path string, flag ninep.OpenMode) (ninep.FileHandle, error) {
 	parts := strings.Split(path, "/")
 	last := len(parts) - 1
 	n, err := m.traverse(parts[:last-1])

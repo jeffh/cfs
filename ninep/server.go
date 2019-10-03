@@ -18,6 +18,7 @@ type Logger interface {
 
 type Replier interface {
 	Rversion(msgSize uint32, version string)
+	Rauth(qid Qid)
 	Rattach(qid Qid)
 	Ropen(q Qid, iounit uint32)
 	RreadBuffer() []byte
@@ -254,9 +255,8 @@ func (s *serverConn) acceptTversion(txn *srvTransaction) bool {
 			version := request.Version()
 			i := strings.Index(version, ".")
 			if i != -1 {
-				i = len(version)
+				version = version[:i]
 			}
-			version = version[:i]
 			txn.Rversion(size, version)
 			ok = true
 		}

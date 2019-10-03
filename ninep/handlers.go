@@ -16,6 +16,7 @@ var (
 	ErrUnsupported     = errors.New("unsupported")
 
 	ErrChangeUidNotAllowed = errors.New("changing uid is not allowed by protocol")
+	ErrBufferTooSmall      = errors.New("buffer too small")
 )
 
 ////////////////////////////////////////////////
@@ -31,6 +32,7 @@ type directoryHandle struct {
 }
 
 func (h *directoryHandle) ReadAt(p []byte, offset int64) (int, error) {
+	// TODO: we can return more than one directory entry if we know the maxMsgSize < stat sizes
 	if offset == 0 {
 		// reset
 		h.offset = 0
@@ -61,7 +63,9 @@ func (h *directoryHandle) ReadAt(p []byte, offset int64) (int, error) {
 	next := h.allFiles[h.index]
 	size := next.Nbytes()
 	if len(p) < size {
-		return 0, errors.New("buffer too small")
+		fmt.Printf("%d < %d\n", len(p), size)
+		// TODO: returnn nil one time to indicate too small of a read
+		return 0, ErrBufferTooSmall
 	}
 	copy(p, next.Bytes())
 
@@ -208,7 +212,7 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 			qid := session.PutQid(fil.Name, fil.Mode.QidType(), NoQidVersion)
 
 			h.Tracef("local: Tattach: offer auth file: %v", fil.Name)
-			w.Rattach(qid)
+			w.Rauth(qid)
 		}
 		return
 
@@ -229,13 +233,13 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 					return
 				}
 
-				if !afid.Authorized() {
+				if !afid.Authorized(m.Uname(), m.Aname()) {
 					h.Tracef("local: Tattach: invalid afid (not authorized yet)")
 					w.Rerrorf("unauthorized afid")
 					return
 				}
 
-				h.Tracef("local: Tattach: authorized afid (%v)", afid)
+				h.Tracef("local: Tattach: authorized afid (%s)", afid)
 			} else {
 				h.Tracef("local: Tattach: reject auth request")
 				w.Rerrorf("authentication required")
@@ -252,7 +256,7 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 		}
 
 		// associate fid to root
-		h.Tracef("local: Tattach: %v", m.Fid())
+		h.Tracef("local: Tattach: %s", m.Fid())
 		session.PutFid(m.Fid(), File{
 			Name: "/",
 			User: m.Uname(),
@@ -296,7 +300,7 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 			}
 			// fil.IncRef()
 		} else {
-			f, err := h.Fs.OpenFile(fullPath, m.Mode(), fil.Mode)
+			f, err := h.Fs.OpenFile(fullPath, m.Mode())
 			if err != nil || f == nil {
 				h.Tracef("local: Topen: error opening file %v: %s %s", fullPath, err, m.Fid)
 				w.Rerrorf("cannot open: %s", err)

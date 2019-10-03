@@ -87,11 +87,11 @@ func (f TraceFileSystem) CreateFile(path string, flag ninep.OpenMode, mode ninep
 	return h, err
 }
 
-func (f TraceFileSystem) OpenFile(path string, flag ninep.OpenMode, mode ninep.Mode) (ninep.FileHandle, error) {
-	h, err := f.Fs.OpenFile(path, flag, mode)
-	f.Tracef("FS.OpenFile(%v, %s, %s) => (%v, %s)", path, flag, mode, h, err)
+func (f TraceFileSystem) OpenFile(path string, flag ninep.OpenMode) (ninep.FileHandle, error) {
+	h, err := f.Fs.OpenFile(path, flag)
+	f.Tracef("FS.OpenFile(%v, %s) => (%v, %s)", path, flag, h, err)
 	if err != nil || h == nil {
-		f.Errorf("FS.OpenFile(%v, %s, %s) => (%v, %s)", path, flag, mode, h, err)
+		f.Errorf("FS.OpenFile(%v, %s) => (%v, %s)", path, flag, h, err)
 	}
 	h = &TraceFileHandle{
 		H:        h,

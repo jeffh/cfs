@@ -391,6 +391,8 @@ func (s msgString) Nbytes() int { return int(s.Len()) + 2 }
 
 type Fid uint32 // always size 4
 
+const MAX_FID = math.MaxUint32 - 2
+
 func (f Fid) String() string {
 	return fmt.Sprintf("Fid(%d)", f)
 }
@@ -413,6 +415,15 @@ const (
 const QidSize = 13
 
 type Qid []byte // always size 13
+
+var NoTouchQid Qid
+
+func init() {
+	NoTouchQid = NewQid()
+	for i := range NoTouchQid {
+		NoTouchQid[i] = 0xff
+	}
+}
 
 func NewQid() Qid {
 	return Qid(make([]byte, QidSize))
@@ -443,6 +454,12 @@ func (q Qid) IsNoTouch() bool {
 	return true
 }
 
+func (q Qid) Clone() Qid {
+	qid := make(Qid, len(q))
+	copy(qid, q)
+	return qid
+}
+
 func (q Qid) String() string {
 	return fmt.Sprintf("Qid{ type: %v, version: %v, path: %v }", q.Type(), q.Version(), q.Path())
 }
@@ -471,7 +488,10 @@ The stat transaction inquires about the file identified by fid. The reply will c
 */
 type Stat []byte
 
-const minStatSize = 2 + 2 + 4 + 13 + 4 + 4 + 4 + 8 + 4*2
+const (
+	minStatSize = 2 + 2 + 4 + 13 + 4 + 4 + 4 + 8 + 4*2
+	maxStatSize = minStatSize + maxStringLen*4
+)
 
 func statSize(name, uid, gid, muid string) int {
 	return minStatSize + len(name) + len(uid) + len(gid) + len(muid)
@@ -520,6 +540,19 @@ func (s Stat) fill(name, uid, gid, muid string) {
 	// s.uid().SetStringAndLen(uid)
 	// s.gid().SetStringAndLen(gid)
 	// s.muid().SetStringAndLen(muid)
+}
+
+// TODO: use global instead?
+func SyncStat() Stat {
+	st := NewStat("", "", "", "")
+	st.SetType(NoTouchU16)
+	st.SetDev(NoTouchU32)
+	st.SetQid(NoTouchQid)
+	st.SetMode(NoTouchMode)
+	st.SetAtime(NoTouchU32)
+	st.SetMtime(NoTouchU32)
+	st.SetLength(NoTouchU64)
+	return st
 }
 
 func NewStat(name, uid, gid, muid string) Stat {
@@ -612,6 +645,11 @@ func (s Stat) IsZero() bool {
 }
 
 func (s Stat) FileInfo() StatFileInfo { return StatFileInfo{s} }
+func (s Stat) Clone() Stat {
+	st := make(Stat, len(s))
+	copy(st, s)
+	return st
+}
 
 // os.FileInfo interface
 
@@ -620,11 +658,19 @@ type StatFileInfo struct {
 }
 
 func (s StatFileInfo) Size() int64        { return int64(s.Stat.Length()) }
-func (s StatFileInfo) Name() string       { return s.Name() }
+func (s StatFileInfo) Name() string       { return s.Stat.Name() }
 func (s StatFileInfo) Mode() os.FileMode  { return s.Stat.Mode().ToOsMode() }
 func (s StatFileInfo) ModTime() time.Time { return time.Unix(int64(s.Stat.Mtime()), 0) }
-func (s StatFileInfo) IsDir() bool        { return s.Mode()&M_DIR != 0 }
+func (s StatFileInfo) IsDir() bool        { return s.Stat.Mode()&M_DIR != 0 }
 func (s StatFileInfo) Sys() interface{}   { return s.Stat }
+
+func FileInfosFromStats(infos []Stat) []os.FileInfo {
+	sfi := make([]os.FileInfo, len(infos))
+	for i, info := range infos {
+		sfi[i] = info.FileInfo()
+	}
+	return sfi
+}
 
 /////////////////////////////////////
 // size[4] Tversion tag[2] msize[4] version[s]
@@ -851,7 +897,7 @@ func (r Tattach) fill(t Tag, fid, afid Fid, uname, aname string) {
 	bo.PutUint32(r[msgOffset:msgOffset+4], uint32(fid))
 	bo.PutUint32(r[msgOffset+4:msgOffset+8], uint32(afid))
 	off := msgString(r[msgOffset+8:]).SetStringAndLen(uname)
-	msgString(r[off:]).SetStringAndLen(aname)
+	msgString(r[msgOffset+8+off:]).SetStringAndLen(aname)
 }
 
 func (r Tattach) Bytes() []byte { return MsgBase(r).Bytes() }
@@ -1004,11 +1050,12 @@ func (r Rread) fill(t Tag, data []byte) {
 	copy(r[msgOffset+4:], data)
 }
 
-func (r Rread) Bytes() []byte { return MsgBase(r).Bytes() }
-func (r Rread) Size() uint32  { return MsgBase(r).Size() }
-func (r Rread) Tag() Tag      { return MsgBase(r).Tag() }
-func (r Rread) Count() uint32 { return bo.Uint32(r[msgOffset : msgOffset+4]) }
-func (r Rread) Data() []byte  { return r[msgOffset+4:] }
+func (r Rread) Bytes() []byte       { return MsgBase(r).Bytes() }
+func (r Rread) Size() uint32        { return MsgBase(r).Size() }
+func (r Rread) Tag() Tag            { return MsgBase(r).Tag() }
+func (r Rread) Count() uint32       { return bo.Uint32(r[msgOffset : msgOffset+4]) }
+func (r Rread) Data() []byte        { return r[msgOffset+4 : msgOffset+4+r.Count()] }
+func (r Rread) DataNoLimit() []byte { return r[msgOffset+4:] }
 
 /////////////////////////////////////
 // size[4] Twrite tag[2] fid[4] offset[8] count[4] data[count]
