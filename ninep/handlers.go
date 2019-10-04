@@ -493,6 +493,12 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 			w.Rerrorf("unknown fid %d", m.Fid())
 			return
 		}
+		name := m.Name()
+		if name == "." || name == ".." {
+			h.Errorf("local: Tcreate: cannot make file: %v", name)
+			w.Rerrorf("invalid name: %#v", name)
+			return
+		}
 		fullPath := filepath.Join(fil.Name, cleanPath(m.Name()))
 		info, err := h.Fs.Stat(fullPath)
 		if !os.IsNotExist(err) || err == nil {

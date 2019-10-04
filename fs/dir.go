@@ -7,6 +7,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -25,6 +26,9 @@ func (d Dir) MakeDir(path string, mode ninep.Mode) error {
 
 func (d Dir) CreateFile(path string, flag ninep.OpenMode, mode ninep.Mode) (ninep.FileHandle, error) {
 	fullPath := filepath.Join(string(d), path)
+	if strings.Index(path, "/") != -1 {
+		return nil, ninep.ErrUnsupported
+	}
 	return os.OpenFile(fullPath, flag.ToOsFlag()|os.O_CREATE, mode.ToOsMode())
 }
 

@@ -228,6 +228,7 @@ func (c *Client) Walk(f, newF Fid, path []string) ([]Qid, error) {
 		c.Errorf("Twalk: Failed to write request: %s", err)
 		return nil, err
 	}
+	c.Tracef("Twalk %s -> %s %#v", f, newF, path)
 
 	if err := txn.readReply(c.rwc); err != nil {
 		c.Errorf("failed to read version: %s", err)
@@ -236,8 +237,12 @@ func (c *Client) Walk(f, newF Fid, path []string) ([]Qid, error) {
 
 	switch r := txn.Reply().(type) {
 	case Rwalk:
-		c.Tracef("Rwalk")
+		c.Tracef("Rwalk %d", r.NumWqid())
 		size := int(r.NumWqid())
+
+		if size != len(path) {
+			return nil, ErrInvalidPath
+		}
 		var qids []Qid
 		if size > 0 {
 			qids = make([]Qid, size)
@@ -267,6 +272,7 @@ func (c *Client) Stat(f Fid) (Stat, error) {
 		c.Errorf("Tstat: Failed to write request: %s", err)
 		return nil, err
 	}
+	c.Tracef("Tstat %s", f)
 
 	if err := txn.readReply(c.rwc); err != nil {
 		c.Errorf("failed to read version: %s", err)
@@ -275,7 +281,7 @@ func (c *Client) Stat(f Fid) (Stat, error) {
 
 	switch r := txn.Reply().(type) {
 	case Rstat:
-		c.Tracef("Rstat")
+		c.Tracef("Rstat %s", r.Stat())
 		st := r.Stat().Clone()
 		return st, nil
 	case Rerror:
@@ -366,7 +372,7 @@ func (c *Client) Clunk(f Fid) error {
 
 	switch r := txn.Reply().(type) {
 	case Rclunk:
-		c.Tracef("Rclunk")
+		c.Tracef("Rclunk %s", f)
 		return nil
 	case Rerror:
 		err := errors.New(r.Ename())

@@ -12,7 +12,8 @@ import (
 )
 
 var (
-	ErrBadFormat = errors.New("Unrecognized 9P protocol")
+	ErrBadFormat   = errors.New("Unrecognized 9P protocol")
+	ErrInvalidPath = errors.New("Path does not exist")
 )
 
 const (
@@ -1125,7 +1126,7 @@ func (r Rremove) Tag() Tag      { return MsgBase(r).Tag() }
 type Tstat []byte
 
 func (r Tstat) fill(t Tag, fid Fid) {
-	size := uint32(msgOffset)
+	size := uint32(msgOffset + 4)
 	MsgBase(r).fill(msgTstat, t, size)
 	bo.PutUint32(r[msgOffset:msgOffset+4], uint32(fid))
 }
