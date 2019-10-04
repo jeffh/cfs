@@ -12,8 +12,7 @@ import (
 
 func main() {
 	var (
-		files []string
-
+		files     []string
 		recursive bool
 	)
 
