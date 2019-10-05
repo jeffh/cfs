@@ -34,7 +34,7 @@ func main() {
 
 		for _, path := range files {
 			info, err := fs.Stat(path)
-			if err == ninep.ErrInvalidPath {
+			if os.IsNotExist(err) {
 				return fmt.Errorf("Path does not exist: %s", path)
 			}
 			if err != nil {

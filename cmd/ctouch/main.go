@@ -1,0 +1,50 @@
+package main
+
+import (
+	"flag"
+	"fmt"
+	"os"
+	"time"
+
+	"git.sr.ht/~jeffh/cfs/cli"
+	"git.sr.ht/~jeffh/cfs/ninep"
+)
+
+func main() {
+	var path string
+
+	flag.Usage = func() {
+		fmt.Fprintf(flag.CommandLine.Output(), "touch for CFS\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [OPTIONS] ADDR [PATH]\n", os.Args[0])
+		flag.PrintDefaults()
+	}
+
+	cli.MainClient(func(c *ninep.Client, fs ninep.FileSystem) error {
+		if flag.NArg() == 1 {
+			path = ""
+		} else {
+			path = flag.Arg(1)
+		}
+
+		path = flag.Arg(1)
+		_, err := fs.Stat(path)
+
+		if os.IsNotExist(err) {
+			h, err := fs.CreateFile(path, ninep.OREAD, 0666)
+			if err != nil {
+				return err
+			}
+			h.Close()
+		} else if err != nil {
+			return err
+		}
+
+		stat := ninep.SyncStat()
+		now := uint32(time.Now().Unix())
+		stat.SetMtime(now)
+		stat.SetAtime(now)
+
+		err = fs.WriteStat(path, stat)
+		return err
+	})
+}

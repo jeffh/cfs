@@ -196,7 +196,7 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 			handle, err := h.Auth.Auth(ctx, w.RemoteAddr(), m.Uname(), m.Aname())
 			if err != nil {
 				h.Tracef("local: Tattach: reject auth request: authorizer error: %s", err)
-				w.Rerrorf("reject: %s", err)
+				w.Rerror(err)
 				return
 			}
 
@@ -401,7 +401,7 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 		info, err := h.Fs.Stat(fullPath)
 		if err != nil {
 			h.Errorf("local: Tstat: failed to call stat on %v: %s", fullPath, err)
-			w.Rerrorf("file does not exist: %s", fullPath)
+			w.Rerror(err)
 			return
 		}
 		qid := session.PutQid(fil.Name, ModeFromOS(info.Mode()).QidType(), versionFromFileInfo(info))
@@ -441,7 +441,7 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 				return
 			}
 			h.Errorf("local: Tread: error: fid %d couldn't read: %s", m.Fid(), err)
-			w.Rerrorf("failed to read: %s", err)
+			w.Rerror(err)
 			return
 		} else if err != nil && err != io.EOF {
 			h.Tracef("local: Tread: warn: %s couldn't read full buffer (only %d bytes): %s", m.Fid(), n, err)
@@ -524,7 +524,7 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 
 			if err := h.Fs.MakeDir(fullPath, m.Perm()); err != nil {
 				h.Errorf("local: Tcreate: failed to create dir: %s", err)
-				w.Rerrorf("dir cannot be created: %s", err)
+				w.Rerror(err)
 				return
 			}
 			fil.Flag = m.Mode()
@@ -539,7 +539,7 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 			f, err := h.Fs.CreateFile(fullPath, m.Mode(), m.Perm())
 			if err != nil || f == nil {
 				h.Tracef("local: Tcreate: error creating file %v %v: %s", fullPath, m.Perm().ToOsMode(), err)
-				w.Rerrorf("cannot create: %s", err)
+				w.Rerror(err)
 				return
 			}
 			fil.Flag = m.Mode()
@@ -613,7 +613,7 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 			if fil.H != nil {
 				if err := fil.H.Sync(); err != nil {
 					h.Errorf("local: Twstat: failed to fsync %v: %s", fullPath, err)
-					w.Rerrorf("failed syncing stat for %s: %s", fullPath, err)
+					w.Rerror(err)
 					return
 				}
 			}
@@ -638,7 +638,7 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 			}
 
 			if !stat.DevNoTouch() {
-				h.Errorf("local: Twstat: client failed: deny attempt to change dev (%d)", stat.Dev())
+				h.Errorf("local: Twstat: client failed: deny attempt to change dev (%d != %d)", stat.Dev(), NoTouchU32)
 				w.Rerrorf("wstat: attempted to change dev")
 				return
 			}
@@ -664,7 +664,7 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 			err := h.Fs.WriteStat(fullPath, stat)
 			if err != nil {
 				h.Errorf("local: Twstat: failed for %v: %s", fullPath, err)
-				w.Rerrorf("failed writing stat for %s: %s", fullPath, err)
+				w.Rerror(err)
 				return
 			}
 		}

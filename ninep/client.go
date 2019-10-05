@@ -160,6 +160,28 @@ func (c *Client) release(t *cltTransaction) {
 	c.txns <- t
 }
 
+var mappedErrors []error = []error{
+	os.ErrInvalid,
+	os.ErrPermission,
+	os.ErrExist,
+	os.ErrNotExist,
+	os.ErrClosed,
+	os.ErrNoDeadline,
+}
+
+func (c *Client) asError(r Rerror) error {
+	msg := r.Ename()
+	// we want to preserve equality of errors to native os-styled errors
+	for _, e := range mappedErrors {
+		if msg == e.Error() {
+			return e
+		}
+	}
+	// else
+	err := errors.New(msg)
+	return err
+}
+
 func (c *Client) Auth(afid Fid, user, mnt string) (Qid, error) {
 	txn := <-c.txns
 	defer c.release(txn)
@@ -180,7 +202,7 @@ func (c *Client) Auth(afid Fid, user, mnt string) (Qid, error) {
 		c.Tracef("Rauth")
 		return r.Aqid(), nil
 	case Rerror:
-		err := errors.New(r.Ename())
+		err := c.asError(r)
 		c.Errorf("Expected Rauth from server, got error: %s", err)
 		return nil, err
 	default:
@@ -210,7 +232,7 @@ func (c *Client) Attach(fd, afid Fid, user, mnt string) (Qid, error) {
 		c.Tracef("Rattach: %s", r.Qid())
 		return r.Qid(), nil
 	case Rerror:
-		err := errors.New(r.Ename())
+		err := c.asError(r)
 		c.Errorf("Expected Rattach from server, got error: %s", err)
 		return nil, err
 	default:
@@ -241,7 +263,7 @@ func (c *Client) Walk(f, newF Fid, path []string) ([]Qid, error) {
 		size := int(r.NumWqid())
 
 		if size != len(path) {
-			return nil, ErrInvalidPath
+			return nil, os.ErrNotExist
 		}
 		var qids []Qid
 		if size > 0 {
@@ -254,7 +276,7 @@ func (c *Client) Walk(f, newF Fid, path []string) ([]Qid, error) {
 		}
 		return qids, nil
 	case Rerror:
-		err := errors.New(r.Ename())
+		err := c.asError(r)
 		c.Errorf("Expected Rattach from server, got error: %s", err)
 		return nil, err
 	default:
@@ -285,7 +307,7 @@ func (c *Client) Stat(f Fid) (Stat, error) {
 		st := r.Stat().Clone()
 		return st, nil
 	case Rerror:
-		err := errors.New(r.Ename())
+		err := c.asError(r)
 		c.Errorf("Expected Rstat from server, got error: %s", err)
 		return nil, err
 	default:
@@ -314,7 +336,7 @@ func (c *Client) WriteStat(f Fid, s Stat) error {
 		c.Tracef("Rwstat")
 		return nil
 	case Rerror:
-		err := errors.New(r.Ename())
+		err := c.asError(r)
 		c.Errorf("Expected Rwstat from server, got error: %s", err)
 		return err
 	default:
@@ -346,7 +368,7 @@ func (c *Client) Read(f Fid, p []byte, offset uint64) (int, error) {
 		copy(p, dat)
 		return len(dat), nil
 	case Rerror:
-		err := errors.New(r.Ename())
+		err := c.asError(r)
 		c.Errorf("Expected Rread from server, got error: %s", err)
 		return 0, err
 	default:
@@ -375,7 +397,7 @@ func (c *Client) Clunk(f Fid) error {
 		c.Tracef("Rclunk %s", f)
 		return nil
 	case Rerror:
-		err := errors.New(r.Ename())
+		err := c.asError(r)
 		c.Errorf("Expected Rclunk from server, got error: %s", err)
 		return nil
 	default:
@@ -404,7 +426,7 @@ func (c *Client) Remove(f Fid) error {
 		c.Tracef("Rremove")
 		return nil
 	case Rerror:
-		err := errors.New(r.Ename())
+		err := c.asError(r)
 		c.Errorf("Expected Rremove from server, got error: %s", err)
 		return err
 	default:
@@ -441,7 +463,7 @@ func (c *Client) Write(f Fid, data []byte, offset uint64) (uint32, error) {
 		n := r.Count()
 		return n, nil
 	case Rerror:
-		err := errors.New(r.Ename())
+		err := c.asError(r)
 		c.Errorf("Expected Rwrite from server, got error: %s", err)
 		return 0, err
 	default:
@@ -472,7 +494,7 @@ func (c *Client) Open(f Fid, m OpenMode) (q Qid, iounit uint32, err error) {
 		iounit = r.Iounit()
 		return
 	case Rerror:
-		err = errors.New(r.Ename())
+		err = c.asError(r)
 		c.Errorf("Expected Ropen from server, got error: %s", err)
 		return
 	default:
@@ -503,7 +525,7 @@ func (c *Client) Create(f Fid, name string, perm Mode, mode OpenMode) (q Qid, io
 		iounit = r.Iounit()
 		return
 	case Rerror:
-		err = errors.New(r.Ename())
+		err = c.asError(r)
 		c.Errorf("Expected Rcreate from server, got error: %s", err)
 		return
 	default:

@@ -12,8 +12,7 @@ import (
 )
 
 var (
-	ErrBadFormat   = errors.New("Unrecognized 9P protocol")
-	ErrInvalidPath = errors.New("Path does not exist")
+	ErrBadFormat = errors.New("Unrecognized 9P protocol")
 )
 
 const (
@@ -569,7 +568,7 @@ func (s Stat) Bytes() []byte { return s[:s.Size()+2] }
 
 func (s Stat) String() string {
 	return fmt.Sprintf(
-		"Stat{\n\tSize: %#v,\n\tQid: %#v,\n\tMode: %#v,\n\tAtime: %#v,\n\tMtime: %#v,\n\tLength: %#v,\n\tName: %#v,\n\tUid: %#v,\n\tGid: %#v,\n\tMuid: %#v,\n} => RAW: %#v",
+		"Stat{\n\tSize: %#v,\n\tQid: %#v,\n\tMode: %#v,\n\tAtime: %#v,\n\tMtime: %#v,\n\tLength: %#v,\n\tName: %#v,\n\tUid: %#v,\n\tGid: %#v,\n\tMuid: %#v,\n\tType: %#v,\n\tDev: %#v,\n} => RAW: %#v",
 		s.Size(),
 		s.Qid(),
 		s.Mode(),
@@ -580,6 +579,8 @@ func (s Stat) String() string {
 		s.Uid(),
 		s.Gid(),
 		s.Muid(),
+		s.Type(),
+		s.Dev(),
 		s.Bytes(),
 	)
 }
