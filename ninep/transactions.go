@@ -5,6 +5,12 @@ import (
 	"io"
 )
 
+func zero(b []byte) {
+	for i := range b {
+		b[i] = 0
+	}
+}
+
 type srvTransaction struct {
 	inMsg  []byte
 	outMsg []byte
@@ -65,12 +71,8 @@ func (t *srvTransaction) writeReply(wr io.Writer) error {
 }
 
 func (t *srvTransaction) reset() {
-	for i := range t.inMsg {
-		t.inMsg[i] = 0
-	}
-	for i := range t.outMsg {
-		t.outMsg[i] = 0
-	}
+	zero(t.inMsg)
+	zero(t.outMsg)
 	t.handled = false
 	t.disconnect = false
 }
@@ -237,21 +239,28 @@ func (t *srvTransaction) Rerrorf(format string, values ...interface{}) {
 
 ////////////////////////////////////////////////////////////////////////
 
-type cltTransaction struct {
-	inMsg  []byte
+type cltRequest struct {
 	outMsg []byte
 	tag    Tag
 }
 
-func createClientTransaction(tag Tag, maxMsgSize uint32) cltTransaction {
-	return cltTransaction{
-		inMsg:  make([]byte, int(maxMsgSize)),
+type cltResponse struct {
+	inMsg []byte
+}
+
+func createClientRequest(tag Tag, maxMsgSize uint32) cltRequest {
+	return cltRequest{
 		outMsg: make([]byte, int(maxMsgSize)),
 		tag:    tag,
 	}
 }
+func createClientResponse(maxMsgSize uint32) cltResponse {
+	return cltResponse{
+		inMsg: make([]byte, int(maxMsgSize)),
+	}
+}
 
-func (t *cltTransaction) readReply(rdr io.Reader) error {
+func (t *cltResponse) readReply(rdr io.Reader) error {
 	// read size
 	_, err := readUpTo(rdr, t.inMsg[:4])
 	if err != nil {
@@ -272,7 +281,7 @@ func (t *cltTransaction) readReply(rdr io.Reader) error {
 	return nil
 }
 
-func (t *cltTransaction) writeRequest(wr io.Writer) error {
+func (t *cltRequest) writeRequest(wr io.Writer) error {
 	b := MsgBase(t.outMsg).Bytes()
 	for len(b) > 0 {
 		n, err := wr.Write(b)
@@ -286,21 +295,15 @@ func (t *cltTransaction) writeRequest(wr io.Writer) error {
 	return nil
 }
 
-func (t *cltTransaction) reset() {
-	for i := range t.inMsg {
-		t.inMsg[i] = 0
-	}
-	for i := range t.outMsg {
-		t.outMsg[i] = 0
-	}
-}
+func (t *cltRequest) reset()  { zero(t.outMsg) }
+func (t *cltResponse) reset() { zero(t.inMsg) }
 
-func (t *cltTransaction) requestType() MsgType {
-	mb := MsgBase(t.inMsg)
+func (t *cltRequest) requestType() MsgType {
+	mb := MsgBase(t.outMsg)
 	return mb.Type()
 }
 
-func (t *cltTransaction) Request() Message {
+func (t *cltRequest) Request() Message {
 	mb := MsgBase(t.outMsg)
 	// fmt.Printf("recv: %s\n", mb.Type())
 	switch mb.Type() {
@@ -335,7 +338,7 @@ func (t *cltTransaction) Request() Message {
 	}
 }
 
-func (t *cltTransaction) Reply() Message {
+func (t *cltResponse) Reply() Message {
 	mb := MsgBase(t.inMsg)
 	switch mb.Type() {
 	case msgRversion:
@@ -371,62 +374,61 @@ func (t *cltTransaction) Reply() Message {
 	}
 }
 
-func (t *cltTransaction) reqTag() Tag {
-	return t.tag
-}
+func (t *cltRequest) reqTag() Tag  { return t.tag }
+func (t *cltResponse) reqTag() Tag { return MsgBase(t.inMsg).Tag() }
 
-func (t *cltTransaction) Tversion(msgSize uint32, version string) {
+func (t *cltRequest) Tversion(msgSize uint32, version string) {
 	Tversion(t.outMsg).fill(t.reqTag(), msgSize, version)
 }
 
-func (t *cltTransaction) Tauth(afid Fid, uname, aname string) {
+func (t *cltRequest) Tauth(afid Fid, uname, aname string) {
 	Tauth(t.outMsg).fill(t.reqTag(), afid, uname, aname)
 }
 
-func (t *cltTransaction) Tattach(fid, afid Fid, uname, aname string) {
+func (t *cltRequest) Tattach(fid, afid Fid, uname, aname string) {
 	Tattach(t.outMsg).fill(t.reqTag(), fid, afid, uname, aname)
 }
 
-func (t *cltTransaction) Topen(f Fid, om OpenMode) {
+func (t *cltRequest) Topen(f Fid, om OpenMode) {
 	Topen(t.outMsg).fill(t.reqTag(), f, om)
 }
 
-func (t *cltTransaction) Twalk(inF, outF Fid, path []string) {
+func (t *cltRequest) Twalk(inF, outF Fid, path []string) {
 	Twalk(t.outMsg).fill(t.reqTag(), inF, outF, path)
 }
 
-func (t *cltTransaction) Tstat(f Fid) {
+func (t *cltRequest) Tstat(f Fid) {
 	Tstat(t.outMsg).fill(t.reqTag(), f)
 }
 
-func (t *cltTransaction) Twstat(f Fid, s Stat) {
+func (t *cltRequest) Twstat(f Fid, s Stat) {
 	Twstat(t.outMsg).fill(t.reqTag(), f, s)
 }
 
-func (t *cltTransaction) Tread(f Fid, offset uint64, count uint32) {
+func (t *cltRequest) Tread(f Fid, offset uint64, count uint32) {
 	Tread(t.outMsg).fill(t.reqTag(), f, offset, count)
 }
 
-func (t *cltTransaction) Tclunk(f Fid) {
+func (t *cltRequest) Tclunk(f Fid) {
 	Tclunk(t.outMsg).fill(t.reqTag(), f)
 }
 
-func (t *cltTransaction) Tremove(f Fid) {
+func (t *cltRequest) Tremove(f Fid) {
 	Tremove(t.outMsg).fill(t.reqTag(), f)
 }
 
-func (t *cltTransaction) Tcreate(f Fid, name string, perm uint32, om OpenMode) {
+func (t *cltRequest) Tcreate(f Fid, name string, perm uint32, om OpenMode) {
 	Tcreate(t.outMsg).fill(t.reqTag(), f, name, perm, om)
 }
 
-func (t *cltTransaction) TwriteBuffer() []byte {
+func (t *cltRequest) TwriteBuffer() []byte {
 	return Twrite(t.outMsg).Data()
 }
 
-func (t *cltTransaction) Twrite(f Fid, offset uint64, count uint32) {
+func (t *cltRequest) Twrite(f Fid, offset uint64, count uint32) {
 	Twrite(t.outMsg).fill(t.reqTag(), f, offset, count)
 }
 
-func (t *cltTransaction) Tflush(tagToCancel Tag) {
+func (t *cltRequest) Tflush(tagToCancel Tag) {
 	Tflush(t.outMsg).fill(t.reqTag(), tagToCancel)
 }

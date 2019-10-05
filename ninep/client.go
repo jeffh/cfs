@@ -12,18 +12,60 @@ import (
 	"time"
 )
 
+type cltTransaction struct {
+	req *cltRequest
+	res *cltResponse
+	ch  chan cltChResponse
+}
+
+type cltChResponse struct {
+	res *cltResponse
+	err error
+}
+
 // A 9P client that supports low-level operations and higher-level functionality
 type Client struct {
-	rwc  net.Conn
-	txns chan *cltTransaction
+	rwc          net.Conn
+	requestPool  chan *cltRequest
+	responsePool chan *cltResponse
+
+	mut       sync.Mutex
+	tagToTxns map[Tag]cltTransaction
 
 	Authorizee Authorizee
+
+	readCancel context.CancelFunc
 
 	Timeout                 time.Duration
 	MaxMsgSize              uint32
 	MaxSimultaneousRequests uint
 
 	Loggable
+}
+
+func (c *Client) getTransaction(t Tag) (cltTransaction, bool) {
+	c.mut.Lock()
+	txn, ok := c.tagToTxns[t]
+	c.mut.Unlock()
+	return txn, ok
+}
+
+func (c *Client) putTransaction(t Tag, txn cltTransaction) {
+	c.mut.Lock()
+	c.tagToTxns[t] = txn
+	c.mut.Unlock()
+}
+
+func (c *Client) sendRequest(txn *cltTransaction) <-chan cltChResponse {
+	// TODO: pool create these channels?
+	txn.ch = make(chan cltChResponse, 1)
+	c.putTransaction(txn.req.tag, *txn)
+	if err := c.writeRequest(txn.req); err != nil {
+		txn.ch <- cltChResponse{err: err}
+		close(txn.ch)
+	}
+	// reader loop will send on the channle
+	return txn.ch
 }
 
 // Returns an interface that conforms to the file system interface
@@ -77,12 +119,28 @@ func (c *Client) Connect(addr string) error {
 }
 
 func (c *Client) Close() error {
+	if c.readCancel != nil {
+		c.readCancel()
+		c.readCancel = nil
+	}
 	err := c.rwc.Close()
 	c.rwc = nil
 	return err
 }
 
 func (c *Client) connect() error {
+	{
+		// cleanup / initialization
+		if c.readCancel != nil {
+			c.readCancel()
+			c.readCancel = nil
+		}
+
+		c.mut.Lock()
+		c.tagToTxns = make(map[Tag]cltTransaction)
+		c.mut.Unlock()
+	}
+
 	{ // set default values
 		if c.MaxMsgSize < MIN_MESSAGE_SIZE {
 			c.MaxMsgSize = DEFAULT_MAX_MESSAGE_SIZE
@@ -94,27 +152,44 @@ func (c *Client) connect() error {
 	}
 
 	{ // version exchange
-		verTxn := createClientTransaction(NO_TAG, c.MaxMsgSize)
+		req := createClientRequest(NO_TAG, c.MaxMsgSize)
+		res := createClientResponse(c.MaxMsgSize)
+		verTxn := cltTransaction{
+			req: &req,
+			res: &res,
+		}
 		if err := c.acceptRversion(&verTxn, c.MaxMsgSize); err != nil {
 			return err
 		}
 	}
 
 	{ // initialization
-		c.txns = make(chan *cltTransaction, c.MaxSimultaneousRequests)
+		c.requestPool = make(chan *cltRequest, c.MaxSimultaneousRequests)
+		c.responsePool = make(chan *cltResponse, c.MaxSimultaneousRequests)
 		go func() {
 			for i := uint(0); i < c.MaxSimultaneousRequests; i++ {
-				t := createClientTransaction(Tag(i), c.MaxMsgSize)
-				c.txns <- &t
+				t := createClientRequest(Tag(i), c.MaxMsgSize)
+				c.requestPool <- &t
+			}
+			for i := uint(0); i < c.MaxSimultaneousRequests; i++ {
+				t := createClientResponse(c.MaxMsgSize)
+				c.responsePool <- &t
 			}
 		}()
+	}
+
+	// start bg reader
+	{
+		ctx, cancel := context.WithCancel(context.Background())
+		c.readCancel = cancel
+		go c.readLoop(ctx)
 	}
 
 	// we're ready to talk
 	return nil
 }
 
-func (c *Client) writeRequest(t *cltTransaction) error {
+func (c *Client) writeRequest(t *cltRequest) error {
 	now := time.Now()
 	c.rwc.SetReadDeadline(now.Add(c.Timeout))
 	c.rwc.SetWriteDeadline(now.Add(c.Timeout))
@@ -123,20 +198,20 @@ func (c *Client) writeRequest(t *cltTransaction) error {
 
 func (c *Client) acceptRversion(txn *cltTransaction, maxMsgSize uint32) error {
 	c.Tracef("Tversion(%d, %s)", maxMsgSize, VERSION_9P2000)
-	txn.Tversion(maxMsgSize, VERSION_9P2000)
-	if err := c.writeRequest(txn); err != nil {
+	txn.req.Tversion(maxMsgSize, VERSION_9P2000)
+	if err := c.writeRequest(txn.req); err != nil {
 		c.Errorf("failed to write version: %s", err)
 		return err
 	}
 
-	if err := txn.readReply(c.rwc); err != nil {
+	if err := txn.res.readReply(c.rwc); err != nil {
 		c.Errorf("failed to read version: %s", err)
 		return err
 	}
 
-	request, ok := txn.Reply().(Rversion)
+	request, ok := txn.res.Reply().(Rversion)
 	if !ok {
-		c.Errorf("failed to negotiate version: unexpected message type: %d", txn.requestType())
+		c.Errorf("failed to negotiate version: unexpected message type: %d", txn.req.requestType())
 		return ErrBadFormat
 	}
 
@@ -155,9 +230,58 @@ func (c *Client) acceptRversion(txn *cltTransaction, maxMsgSize uint32) error {
 	return nil
 }
 
-func (c *Client) release(t *cltTransaction) {
-	t.reset()
-	c.txns <- t
+func (c *Client) allocTxn() cltTransaction {
+	req := <-c.requestPool
+	txn := cltTransaction{
+		req: req,
+	}
+	c.mut.Lock()
+	c.tagToTxns[req.tag] = txn
+	c.mut.Unlock()
+	return txn
+}
+
+func (c *Client) release(t Tag) {
+	c.mut.Lock()
+	txn, ok := c.tagToTxns[t]
+	delete(c.tagToTxns, t)
+	c.mut.Unlock()
+
+	if ok {
+		txn.req.reset()
+		c.requestPool <- txn.req
+		if txn.res != nil {
+			txn.res.reset()
+			c.responsePool <- txn.res
+		}
+	}
+}
+
+func (c *Client) readLoop(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case res := <-c.responsePool:
+			err := res.readReply(c.rwc)
+			if err != nil {
+				c.Errorf("Error reading from server: %s", err)
+				// quit? or continue?
+				continue
+			}
+
+			txn, ok := c.getTransaction(res.reqTag())
+			if !ok {
+				c.Errorf("Server returned unrecognized tag: %d", res.reqTag())
+				continue
+			}
+			c.Tracef("Server tag: %d", res.Reply().Tag())
+			txn.res = res
+			c.putTransaction(res.reqTag(), txn)
+			txn.ch <- cltChResponse{res: res}
+			close(txn.ch)
+		}
+	}
 }
 
 var mappedErrors []error = []error{
@@ -183,21 +307,17 @@ func (c *Client) asError(r Rerror) error {
 }
 
 func (c *Client) Auth(afid Fid, user, mnt string) (Qid, error) {
-	txn := <-c.txns
-	defer c.release(txn)
+	txn := c.allocTxn()
+	defer c.release(txn.req.tag)
 
-	txn.Tauth(afid, user, mnt)
-	if err := c.writeRequest(txn); err != nil {
-		c.Errorf("Tauth: Failed to write request: %s", err)
-		return nil, err
+	txn.req.Tauth(afid, user, mnt)
+	res := <-c.sendRequest(&txn)
+	if res.err != nil {
+		c.Errorf("Tauth: Failed requesting: %s", res.err)
+		return nil, res.err
 	}
 
-	if err := txn.readReply(c.rwc); err != nil {
-		c.Errorf("failed to read version: %s", err)
-		return nil, err
-	}
-
-	switch r := txn.Reply().(type) {
+	switch r := res.res.Reply().(type) {
 	case Rauth:
 		c.Tracef("Rauth")
 		return r.Aqid(), nil
@@ -212,22 +332,18 @@ func (c *Client) Auth(afid Fid, user, mnt string) (Qid, error) {
 }
 
 func (c *Client) Attach(fd, afid Fid, user, mnt string) (Qid, error) {
-	txn := <-c.txns
-	defer c.release(txn)
+	txn := c.allocTxn()
+	defer c.release(txn.req.tag)
 
 	c.Tracef("Tattach(%d, %d, %#v, %#v)", fd, afid, user, mnt)
-	txn.Tattach(fd, afid, user, mnt)
-	if err := c.writeRequest(txn); err != nil {
-		c.Errorf("Tattach: Failed to write request: %s", err)
-		return Qid{}, err
+	txn.req.Tattach(fd, afid, user, mnt)
+	res := <-c.sendRequest(&txn)
+	if res.err != nil {
+		c.Errorf("Tattach: Failed to write request: %s", res.err)
+		return Qid{}, res.err
 	}
 
-	if err := txn.readReply(c.rwc); err != nil {
-		c.Errorf("failed to read version: %s", err)
-		return nil, err
-	}
-
-	switch r := txn.Reply().(type) {
+	switch r := res.res.Reply().(type) {
 	case Rattach:
 		c.Tracef("Rattach: %s", r.Qid())
 		return r.Qid(), nil
@@ -242,22 +358,18 @@ func (c *Client) Attach(fd, afid Fid, user, mnt string) (Qid, error) {
 }
 
 func (c *Client) Walk(f, newF Fid, path []string) ([]Qid, error) {
-	txn := <-c.txns
-	defer c.release(txn)
+	txn := c.allocTxn()
+	defer c.release(txn.req.tag)
 
-	txn.Twalk(f, newF, path)
-	if err := c.writeRequest(txn); err != nil {
+	txn.req.Twalk(f, newF, path)
+	res := <-c.sendRequest(&txn)
+	if err := res.err; err != nil {
 		c.Errorf("Twalk: Failed to write request: %s", err)
 		return nil, err
 	}
 	c.Tracef("Twalk %s -> %s %#v", f, newF, path)
 
-	if err := txn.readReply(c.rwc); err != nil {
-		c.Errorf("failed to read version: %s", err)
-		return nil, err
-	}
-
-	switch r := txn.Reply().(type) {
+	switch r := res.res.Reply().(type) {
 	case Rwalk:
 		c.Tracef("Rwalk %d", r.NumWqid())
 		size := int(r.NumWqid())
@@ -286,22 +398,18 @@ func (c *Client) Walk(f, newF Fid, path []string) ([]Qid, error) {
 }
 
 func (c *Client) Stat(f Fid) (Stat, error) {
-	txn := <-c.txns
-	defer c.release(txn)
+	txn := c.allocTxn()
+	defer c.release(txn.req.tag)
 
-	txn.Tstat(f)
-	if err := c.writeRequest(txn); err != nil {
+	txn.req.Tstat(f)
+	res := <-c.sendRequest(&txn)
+	if err := res.err; err != nil {
 		c.Errorf("Tstat: Failed to write request: %s", err)
 		return nil, err
 	}
 	c.Tracef("Tstat %s", f)
 
-	if err := txn.readReply(c.rwc); err != nil {
-		c.Errorf("failed to read version: %s", err)
-		return nil, err
-	}
-
-	switch r := txn.Reply().(type) {
+	switch r := res.res.Reply().(type) {
 	case Rstat:
 		c.Tracef("Rstat %s", r.Stat())
 		st := r.Stat().Clone()
@@ -317,21 +425,17 @@ func (c *Client) Stat(f Fid) (Stat, error) {
 }
 
 func (c *Client) WriteStat(f Fid, s Stat) error {
-	txn := <-c.txns
-	defer c.release(txn)
+	txn := c.allocTxn()
+	defer c.release(txn.req.tag)
 
-	txn.Twstat(f, s)
-	if err := c.writeRequest(txn); err != nil {
+	txn.req.Twstat(f, s)
+	res := <-c.sendRequest(&txn)
+	if err := res.err; err != nil {
 		c.Errorf("Twstat: Failed to write request: %s", err)
 		return err
 	}
 
-	if err := txn.readReply(c.rwc); err != nil {
-		c.Errorf("failed to read version: %s", err)
-		return err
-	}
-
-	switch r := txn.Reply().(type) {
+	switch r := res.res.Reply().(type) {
 	case Rwstat:
 		c.Tracef("Rwstat")
 		return nil
@@ -346,22 +450,18 @@ func (c *Client) WriteStat(f Fid, s Stat) error {
 }
 
 func (c *Client) Read(f Fid, p []byte, offset uint64) (int, error) {
-	txn := <-c.txns
-	defer c.release(txn)
+	txn := c.allocTxn()
+	defer c.release(txn.req.tag)
 
 	c.Tracef("Read(%s, []byte(%d), %v)", f, len(p), offset)
-	txn.Tread(f, offset, uint32(len(p)))
-	if err := c.writeRequest(txn); err != nil {
+	txn.req.Tread(f, offset, uint32(len(p)))
+	res := <-c.sendRequest(&txn)
+	if err := res.err; err != nil {
 		c.Errorf("Tread: Failed to write request: %s", err)
 		return 0, err
 	}
 
-	if err := txn.readReply(c.rwc); err != nil {
-		c.Errorf("failed to read version: %s", err)
-		return 0, err
-	}
-
-	switch r := txn.Reply().(type) {
+	switch r := res.res.Reply().(type) {
 	case Rread:
 		dat := r.Data()
 		c.Tracef("Rread -> %d", len(dat))
@@ -378,21 +478,17 @@ func (c *Client) Read(f Fid, p []byte, offset uint64) (int, error) {
 }
 
 func (c *Client) Clunk(f Fid) error {
-	txn := <-c.txns
-	defer c.release(txn)
+	txn := c.allocTxn()
+	defer c.release(txn.req.tag)
 
-	txn.Tclunk(f)
-	if err := c.writeRequest(txn); err != nil {
+	txn.req.Tclunk(f)
+	res := <-c.sendRequest(&txn)
+	if err := res.err; err != nil {
 		c.Errorf("Tclunk: Failed to write request: %s", err)
 		return err
 	}
 
-	if err := txn.readReply(c.rwc); err != nil {
-		c.Errorf("failed to read version: %s", err)
-		return err
-	}
-
-	switch r := txn.Reply().(type) {
+	switch r := res.res.Reply().(type) {
 	case Rclunk:
 		c.Tracef("Rclunk %s", f)
 		return nil
@@ -407,21 +503,17 @@ func (c *Client) Clunk(f Fid) error {
 }
 
 func (c *Client) Remove(f Fid) error {
-	txn := <-c.txns
-	defer c.release(txn)
+	txn := c.allocTxn()
+	defer c.release(txn.req.tag)
 
-	txn.Tremove(f)
-	if err := c.writeRequest(txn); err != nil {
+	txn.req.Tremove(f)
+	res := <-c.sendRequest(&txn)
+	if err := res.err; err != nil {
 		c.Errorf("Tremove: Failed to write request: %s", err)
 		return err
 	}
 
-	if err := txn.readReply(c.rwc); err != nil {
-		c.Errorf("failed to read version: %s", err)
-		return err
-	}
-
-	switch r := txn.Reply().(type) {
+	switch r := res.res.Reply().(type) {
 	case Rremove:
 		c.Tracef("Rremove")
 		return nil
@@ -436,28 +528,24 @@ func (c *Client) Remove(f Fid) error {
 }
 
 func (c *Client) Write(f Fid, data []byte, offset uint64) (uint32, error) {
-	txn := <-c.txns
-	defer c.release(txn)
+	txn := c.allocTxn()
+	defer c.release(txn.req.tag)
 
 	size := len(data)
-	buf := txn.TwriteBuffer()
+	buf := txn.req.TwriteBuffer()
 	if size > len(buf) {
 		size = len(buf)
 	}
 	copy(buf, data[:size])
 
-	txn.Twrite(f, offset, uint32(size))
-	if err := c.writeRequest(txn); err != nil {
+	txn.req.Twrite(f, offset, uint32(size))
+	res := <-c.sendRequest(&txn)
+	if err := res.err; err != nil {
 		c.Errorf("Twrite: Failed to write request: %s", err)
 		return 0, err
 	}
 
-	if err := txn.readReply(c.rwc); err != nil {
-		c.Errorf("failed to read version: %s", err)
-		return 0, err
-	}
-
-	switch r := txn.Reply().(type) {
+	switch r := res.res.Reply().(type) {
 	case Rwrite:
 		c.Tracef("Rwrite")
 		n := r.Count()
@@ -473,21 +561,17 @@ func (c *Client) Write(f Fid, data []byte, offset uint64) (uint32, error) {
 }
 
 func (c *Client) Open(f Fid, m OpenMode) (q Qid, iounit uint32, err error) {
-	txn := <-c.txns
-	defer c.release(txn)
+	txn := c.allocTxn()
+	defer c.release(txn.req.tag)
 
-	txn.Topen(f, m)
-	if err = c.writeRequest(txn); err != nil {
+	txn.req.Topen(f, m)
+	res := <-c.sendRequest(&txn)
+	if err = res.err; err != nil {
 		c.Errorf("Topen: Failed to write request: %s", err)
 		return
 	}
 
-	if err = txn.readReply(c.rwc); err != nil {
-		c.Errorf("failed to read version: %s", err)
-		return
-	}
-
-	switch r := txn.Reply().(type) {
+	switch r := res.res.Reply().(type) {
 	case Ropen:
 		c.Tracef("Ropen")
 		q = r.Qid().Clone()
@@ -504,21 +588,17 @@ func (c *Client) Open(f Fid, m OpenMode) (q Qid, iounit uint32, err error) {
 }
 
 func (c *Client) Create(f Fid, name string, perm Mode, mode OpenMode) (q Qid, iounit uint32, err error) {
-	txn := <-c.txns
-	defer c.release(txn)
+	txn := c.allocTxn()
+	defer c.release(txn.req.tag)
 
-	txn.Tcreate(f, name, uint32(perm), mode)
-	if err = c.writeRequest(txn); err != nil {
+	txn.req.Tcreate(f, name, uint32(perm), mode)
+	res := <-c.sendRequest(&txn)
+	if err = res.err; err != nil {
 		c.Errorf("Tcreate: Failed to write request: %s", err)
 		return
 	}
 
-	if err = txn.readReply(c.rwc); err != nil {
-		c.Errorf("failed to read version: %s", err)
-		return
-	}
-
-	switch r := txn.Reply().(type) {
+	switch r := res.res.Reply().(type) {
 	case Rcreate:
 		c.Tracef("Rcreate")
 		q = r.Qid().Clone()
