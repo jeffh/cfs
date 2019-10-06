@@ -136,3 +136,25 @@ func (f *fileInfoWithUsers) Sys() interface{}   { return f.fi.Sys() }
 func (f *fileInfoWithUsers) Uid() string        { return f.uid }
 func (f *fileInfoWithUsers) Gid() string        { return f.gid }
 func (f *fileInfoWithUsers) Muid() string       { return f.muid }
+
+/////////////////////////////////////////////////
+
+type handleReaderWriter struct {
+	h      FileHandle
+	offset int64
+}
+
+func (r *handleReaderWriter) Read(p []byte) (int, error) {
+	n, err := r.h.ReadAt(p, r.offset)
+	r.offset += int64(n)
+	return n, err
+}
+
+func (r *handleReaderWriter) Write(p []byte) (int, error) {
+	n, err := r.h.WriteAt(p, r.offset)
+	r.offset += int64(n)
+	return n, err
+}
+
+func Reader(h FileHandle) io.Reader { return &handleReaderWriter{h, 0} }
+func Writer(h FileHandle) io.Writer { return &handleReaderWriter{h, 0} }
