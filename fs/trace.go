@@ -3,7 +3,7 @@ package fs
 import (
 	"os"
 
-	ninep "git.sr.ht/~jeffh/cfs/ninep"
+	ninep "github.com/jeffh/cfs/ninep"
 )
 
 // Loggable

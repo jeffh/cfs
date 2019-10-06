@@ -1,3 +1,3 @@
-module git.sr.ht/~jeffh/cfs
+module github.com/jeffh/cfs
 
 go 1.13

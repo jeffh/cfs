@@ -5,8 +5,8 @@ import (
 	"log"
 	"os"
 
-	"git.sr.ht/~jeffh/cfs/fs"
-	"git.sr.ht/~jeffh/cfs/ninep"
+	"github.com/jeffh/cfs/fs"
+	"github.com/jeffh/cfs/ninep"
 
 	"fmt"
 )

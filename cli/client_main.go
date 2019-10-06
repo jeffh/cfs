@@ -8,7 +8,7 @@ import (
 	"os/user"
 	"time"
 
-	"git.sr.ht/~jeffh/cfs/ninep"
+	"github.com/jeffh/cfs/ninep"
 )
 
 func MainClient(fn func(c *ninep.Client, fs ninep.FileSystem) error) {

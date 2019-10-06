@@ -1,9 +1,9 @@
 package main
 
 import (
-	"git.sr.ht/~jeffh/cfs/cli"
-	"git.sr.ht/~jeffh/cfs/fs"
-	"git.sr.ht/~jeffh/cfs/ninep"
+	"github.com/jeffh/cfs/cli"
+	"github.com/jeffh/cfs/fs"
+	"github.com/jeffh/cfs/ninep"
 )
 
 func main() {

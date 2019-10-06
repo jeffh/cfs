@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 
-	"git.sr.ht/~jeffh/cfs/cli"
-	"git.sr.ht/~jeffh/cfs/ninep"
+	"github.com/jeffh/cfs/cli"
+	"github.com/jeffh/cfs/ninep"
 )
 
 func main() {

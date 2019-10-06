@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	ninep "git.sr.ht/~jeffh/cfs/ninep"
+	ninep "github.com/jeffh/cfs/ninep"
 )
 
 // Provides an easy struct to conform to os.FileInfo
