@@ -1,10 +1,10 @@
-.PHONY: test test_race all all_race clean
+.PHONY: clean
 
 CMDS := $(shell ls cmd)
 
 all: $(CMDS)
 
-$(CMDS):
+$(CMDS): $(find . -type '*.go')
 	go build $(GOARGS) -o ./bin/$@ ./cmd/$@
 
 test:
