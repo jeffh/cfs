@@ -623,7 +623,7 @@ type FileProxy struct {
 
 func (f *FileProxy) ReadAt(p []byte, offset int64) (int, error) {
 	size, err := f.fs.c.Read(f.fid, p, uint64(offset))
-	if size != len(p) && err == nil {
+	if size == 0 && err == nil {
 		err = io.EOF
 	}
 	return int(size), err

@@ -37,43 +37,7 @@ func main() {
 		defer h.Close()
 
 		rdr := ninep.Reader(h)
-		if numlines == 0 {
-			io.Copy(os.Stdout, rdr)
-		} else {
-			buf := make([]byte, 128*1024)
-			line := 0
-			for {
-				_, err := io.ReadFull(rdr, buf)
-				b := buf
-				for i, r := range b {
-					if r == '\n' {
-						_, err := os.Stdout.Write(b[:i+1])
-						if err != nil {
-							return err
-						}
-						b = b[i+1:]
-						line++
-
-						if line >= numlines {
-							return nil
-						}
-					}
-				}
-
-				_, err = os.Stdout.Write(b)
-				if err != nil {
-					return err
-				}
-				b = nil
-
-				if err != nil {
-					if err == io.EOF {
-						err = nil
-					}
-					return err
-				}
-			}
-		}
+		io.Copy(os.Stdout, rdr)
 
 		return nil
 	})
