@@ -12,12 +12,12 @@ import (
 
 func main() {
 	var path string
-	var numlines int
+	var nostdout bool
 
-	flag.IntVar(&numlines, "n", 0, "number of lines to print")
+	flag.BoolVar(&nostdout, "s", false, "Don't print to stdout, only write to file")
 
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "cat for CFS\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "tee for CFS\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [OPTIONS] ADDR [PATH]\n", os.Args[0])
 		flag.PrintDefaults()
 	}
@@ -30,15 +30,22 @@ func main() {
 		}
 
 		path = flag.Arg(1)
-		h, err := fs.OpenFile(path, ninep.OREAD)
+		h, err := fs.CreateFile(path, ninep.OWRITE, 0664)
+		if os.IsExist(err) {
+			h, err = fs.OpenFile(path, ninep.OWRITE)
+		}
 		if err != nil {
 			return err
 		}
 		defer h.Close()
 
-		rdr := ninep.Reader(h)
-		io.Copy(os.Stdout, rdr)
-
+		wtr := ninep.Writer(h)
+		if nostdout {
+			io.Copy(wtr, os.Stdin)
+		} else {
+			rdr := io.TeeReader(os.Stdin, wtr)
+			io.Copy(os.Stdout, rdr)
+		}
 		return nil
 	})
 }

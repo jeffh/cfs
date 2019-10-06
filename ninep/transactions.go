@@ -422,7 +422,7 @@ func (t *cltRequest) Tcreate(f Fid, name string, perm uint32, om OpenMode) {
 }
 
 func (t *cltRequest) TwriteBuffer() []byte {
-	return Twrite(t.outMsg).Data()
+	return Twrite(t.outMsg).DataNoLimit()
 }
 
 func (t *cltRequest) Twrite(f Fid, offset uint64, count uint32) {

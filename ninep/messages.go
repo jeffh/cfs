@@ -1083,6 +1083,9 @@ func (r Twrite) Offset() uint64 { return bo.Uint64(r[msgOffset+4 : msgOffset+12]
 func (r Twrite) Count() uint32  { return bo.Uint32(r[msgOffset+12 : msgOffset+16]) }
 func (r Twrite) Data() []byte   { return r[msgOffset+16 : msgOffset+16+int(r.Count())] }
 
+// Returns slice of bytes to write to (ignores message's count)
+func (r Twrite) DataNoLimit() []byte { return r[msgOffset+16:] }
+
 /////////////////////////////////////
 // size[4] Rwrite tag[2] count[4]
 type Rwrite []byte

@@ -501,9 +501,9 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 		}
 		fullPath := filepath.Join(fil.Name, cleanPath(m.Name()))
 		info, err := h.Fs.Stat(fullPath)
-		if !os.IsNotExist(err) || err == nil {
+		if os.IsExist(err) {
 			h.Errorf("local: Tcreate: file exists %v: %s", fullPath, err)
-			w.Rerrorf("file exists: %s", fullPath)
+			w.Rerror(err)
 			return
 		}
 		isDir := m.Perm()&M_DIR != 0
