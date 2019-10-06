@@ -652,12 +652,6 @@ type FileSystemProxy struct {
 	usedFids map[Fid]bool
 }
 
-func (fs *FileSystemProxy) splitPath(path string) []string {
-	if path == "" {
-		return nil
-	}
-	return strings.Split(path, "/")
-}
 func (fs *FileSystemProxy) allocFid() Fid {
 	f := Fid(0)
 	fs.mut.Lock()
@@ -681,7 +675,7 @@ func (fs *FileSystemProxy) releaseFid(f Fid) {
 }
 
 func (fs *FileSystemProxy) walk(fid Fid, path string) error {
-	_, err := fs.c.Walk(fs.rootF, fid, fs.splitPath(path))
+	_, err := fs.c.Walk(fs.rootF, fid, PathSplit(path))
 	if err != nil {
 		// Best attempt to notify server that we're dropping this fid
 		fs.c.Clunk(fid)

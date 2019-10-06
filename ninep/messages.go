@@ -1207,3 +1207,12 @@ func (r Rwstat) fill(t Tag) {
 func (r Rwstat) Bytes() []byte { return MsgBase(r).Bytes() }
 func (r Rwstat) Size() uint32  { return MsgBase(r).Size() }
 func (r Rwstat) Tag() Tag      { return MsgBase(r).Tag() }
+
+///////////////////////////////////////////
+
+func PathSplit(path string) []string {
+	if path == "" {
+		return []string{""}
+	}
+	return strings.Split(path, "/")
+}

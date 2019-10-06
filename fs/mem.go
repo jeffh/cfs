@@ -3,7 +3,6 @@ package fs
 import (
 	"fmt"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -150,7 +149,7 @@ func (m *Mem) traverseFile(parts []string) (node *memNode, parent *memNode, err 
 }
 
 func (m *Mem) MakeDir(path string, mode ninep.Mode) error {
-	parts := strings.Split(path, "/")
+	parts := ninep.PathSplit(path)
 	last := len(parts) - 1
 	n, err := m.traverse(parts[:last-1])
 	if err != nil {
@@ -166,7 +165,7 @@ func (m *Mem) MakeDir(path string, mode ninep.Mode) error {
 }
 
 func (m *Mem) CreateFile(path string, flag ninep.OpenMode, mode ninep.Mode) (ninep.FileHandle, error) {
-	parts := strings.Split(path, "/")
+	parts := ninep.PathSplit(path)
 	n, parent, err := m.traverseFile(parts)
 	if !os.IsNotExist(err) && err != nil {
 		return nil, err
@@ -188,7 +187,7 @@ func (m *Mem) CreateFile(path string, flag ninep.OpenMode, mode ninep.Mode) (nin
 }
 
 func (m *Mem) OpenFile(path string, flag ninep.OpenMode) (ninep.FileHandle, error) {
-	parts := strings.Split(path, "/")
+	parts := ninep.PathSplit(path)
 	last := len(parts) - 1
 	n, err := m.traverse(parts[:last-1])
 	if err != nil {
@@ -225,7 +224,7 @@ func (m *Mem) stat(n *memNode) *MemFileInfo {
 }
 
 func (m *Mem) ListDir(path string) ([]os.FileInfo, error) {
-	parts := strings.Split(path, "/")
+	parts := ninep.PathSplit(path)
 	n, err := m.traverse(parts)
 	if err != nil {
 		return nil, err
@@ -240,7 +239,7 @@ func (m *Mem) ListDir(path string) ([]os.FileInfo, error) {
 }
 
 func (m *Mem) Stat(path string) (os.FileInfo, error) {
-	parts := strings.Split(path, "/")
+	parts := ninep.PathSplit(path)
 	child, _, err := m.traverseFile(parts)
 	if err != nil {
 		return nil, err
@@ -252,7 +251,7 @@ func (m *Mem) Stat(path string) (os.FileInfo, error) {
 }
 
 func (m *Mem) WriteStat(path string, s ninep.Stat) error {
-	parts := strings.Split(path, "/")
+	parts := ninep.PathSplit(path)
 	last := len(parts) - 1
 	n, err := m.traverse(parts[:last-1])
 	if err != nil {
@@ -344,7 +343,7 @@ func (m *Mem) WriteStat(path string, s ninep.Stat) error {
 }
 
 func (m *Mem) Delete(path string) error {
-	parts := strings.Split(path, "/")
+	parts := ninep.PathSplit(path)
 	last := len(parts) - 1
 	n, err := m.traverse(parts[:last-1])
 	if err != nil {
