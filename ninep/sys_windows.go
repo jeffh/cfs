@@ -37,6 +37,10 @@ func FileId(info os.FileInfo) (fileId uint64, ok bool) {
 
 // TODO: add windows support
 func FileUsers(info os.FileInfo) (uid, gid, muid string, err error) {
-	err = ErrUnsupported
+	if s, ok := info.Sys().(Stat); ok {
+		return s.fileUsers()
+	} else {
+		err = ErrUnsupported
+	}
 	return
 }

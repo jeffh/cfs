@@ -56,6 +56,8 @@ func FileUsers(info os.FileInfo) (uid, gid, muid string, err error) {
 		// unix do not support last modified user
 		muid = ""
 
+	} else if s, ok := info.Sys().(Stat); ok {
+		return s.fileUsers()
 	} else {
 		err = ErrUnsupported
 	}

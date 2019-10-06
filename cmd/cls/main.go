@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"text/tabwriter"
 
 	"git.sr.ht/~jeffh/cfs/cli"
 	"git.sr.ht/~jeffh/cfs/ninep"
@@ -11,6 +12,9 @@ import (
 
 func main() {
 	var path string
+	var list bool
+
+	flag.BoolVar(&list, "l", false, "list long format stats about each file")
 
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "ls for CFS\n")
@@ -31,8 +35,17 @@ func main() {
 			return err
 		}
 
-		for _, info := range infos {
-			fmt.Println(info.Name())
+		if list {
+			w := tabwriter.NewWriter(os.Stdout, 2, 1, 1, ' ', tabwriter.AlignRight|tabwriter.DiscardEmptyColumns)
+			for _, info := range infos {
+				usr, gid, muid, _ := ninep.FileUsers(info)
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%s\t %s\n", info.Mode(), usr, gid, muid, info.Size(), info.ModTime(), info.Name())
+			}
+			w.Flush()
+		} else {
+			for _, info := range infos {
+				fmt.Println(info.Name())
+			}
 		}
 		return nil
 	})

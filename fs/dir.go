@@ -35,21 +35,40 @@ func (d Dir) OpenFile(path string, flag ninep.OpenMode) (ninep.FileHandle, error
 
 func (d Dir) ListDir(path string) ([]os.FileInfo, error) {
 	fullPath := filepath.Join(string(d), path)
-	return ioutil.ReadDir(fullPath)
+	infos, err := ioutil.ReadDir(fullPath)
+	if err != nil {
+		return nil, err
+	}
+	for i, info := range infos {
+		uid, gid, muid, err := ninep.FileUsers(info)
+		if err != nil {
+			return nil, err
+		}
+
+		if fullPath == string(d) {
+			info = ninep.FileInfoWithName(info, "")
+		}
+
+		info = ninep.FileInfoWithUsers(info, uid, gid, muid)
+
+		infos[i] = info
+	}
+	return infos, nil
 }
 
 func (d Dir) Stat(path string) (os.FileInfo, error) {
 	fullPath := filepath.Join(string(d), path)
 	info, err := os.Stat(fullPath)
 	if err == nil {
-		if fullPath == string(d) {
-			info = ninep.FileInfoWithName(info, "")
-		}
-
 		uid, gid, muid, err := ninep.FileUsers(info)
 		if err != nil {
 			return nil, err
 		}
+
+		if fullPath == string(d) {
+			info = ninep.FileInfoWithName(info, "")
+		}
+
 		info = ninep.FileInfoWithUsers(info, uid, gid, muid)
 	}
 	return info, err

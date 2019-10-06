@@ -653,6 +653,10 @@ func (s Stat) Clone() Stat {
 	return st
 }
 
+func (s Stat) fileUsers() (uid, gid, muid string, err error) {
+	return s.Uid(), s.Gid(), s.Muid(), nil
+}
+
 // os.FileInfo interface
 
 type StatFileInfo struct {
