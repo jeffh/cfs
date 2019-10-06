@@ -20,11 +20,15 @@ jobs:
       uses: actions/checkout@v1
 
     - name: Build
-      run: GOARGS=-v make all
+      run: make all
+      env:
+        GOARGS: -v
 
     - name: Test
       run: make test
   
     - name: Race
-      run: GOARGS=-race make all test
+      run: make all test
+      env:
+        GOARGS: -race
 
