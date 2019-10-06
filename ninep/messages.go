@@ -847,7 +847,7 @@ func (r Twalk) fill(t Tag, fid, newfid Fid, wnames []string) {
 	bo.PutUint16(r[msgOffset+8:msgOffset+10], uint16(len(wnames)))
 	off := msgOffset + 10
 	for _, n := range wnames {
-		off = msgString(r[off:]).SetStringAndLen(n)
+		off += msgString(r[off:]).SetStringAndLen(n)
 	}
 }
 
@@ -861,11 +861,14 @@ func (r Twalk) NewFid() Fid { return Fid(bo.Uint32(r[msgOffset+4 : msgOffset+8])
 func (r Twalk) NumWname() uint16 { return bo.Uint16(r[msgOffset+8 : msgOffset+10]) }
 
 func (r Twalk) wname(i int) msgString {
-	off := msgString(r[msgOffset+10:])
-	for j := 0; j < i; i++ {
-		off = msgString(off[off.Nbytes():])
+	if i >= int(r.NumWname()) {
+		panic("Out of bounds")
 	}
-	return off
+	off := msgOffset + 10
+	for j := 0; j < i; j++ {
+		off += msgString(r[off:]).Nbytes()
+	}
+	return msgString(r[off:])
 }
 func (r Twalk) Wname(i int) string { return r.wname(i).String() }
 

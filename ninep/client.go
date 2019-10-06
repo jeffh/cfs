@@ -232,6 +232,7 @@ func (c *Client) acceptRversion(txn *cltTransaction, maxMsgSize uint32) error {
 
 func (c *Client) allocTxn() cltTransaction {
 	req := <-c.requestPool
+	req.reset()
 	txn := cltTransaction{
 		req: req,
 	}
@@ -263,6 +264,7 @@ func (c *Client) readLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case res := <-c.responsePool:
+			res.reset()
 			err := res.readReply(c.rwc)
 			if err != nil {
 				c.Errorf("Error reading from server: %s", err)
@@ -362,12 +364,12 @@ func (c *Client) Walk(f, newF Fid, path []string) ([]Qid, error) {
 	defer c.release(txn.req.tag)
 
 	txn.req.Twalk(f, newF, path)
+	c.Tracef("Twalk %s -> %s %#v %d", f, newF, path, txn.req.Request().(interface{ Size() uint32 }).Size())
 	res := <-c.sendRequest(&txn)
 	if err := res.err; err != nil {
 		c.Errorf("Twalk: Failed to write request: %s", err)
 		return nil, err
 	}
-	c.Tracef("Twalk %s -> %s %#v", f, newF, path)
 
 	switch r := res.res.Reply().(type) {
 	case Rwalk:
