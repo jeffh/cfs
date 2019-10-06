@@ -30,9 +30,9 @@ func main() {
 		}
 
 		path = flag.Arg(1)
-		h, err := fs.CreateFile(path, ninep.OWRITE, 0664)
+		h, err := fs.CreateFile(path, ninep.OWRITE|ninep.OTRUNC, 0664)
 		if os.IsExist(err) {
-			h, err = fs.OpenFile(path, ninep.OWRITE)
+			h, err = fs.OpenFile(path, ninep.OWRITE|ninep.OTRUNC)
 		}
 		if err != nil {
 			return err
