@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"os"
 	"strings"
@@ -23,28 +22,6 @@ const (
 
 	NoQidVersion = NoTouchU32
 )
-
-func readUpTo(r io.Reader, p []byte) (int, error) {
-	var err error
-	n := 0
-	b := p
-
-	for len(b) > 0 {
-		m, e := r.Read(b)
-		n += m
-		err = e
-		b = b[m:]
-		if IsTimeoutErr(e) {
-			return 0, err
-		} else if IsTemporaryErr(e) {
-			continue
-		}
-		if m == len(b) || e != nil {
-			break
-		}
-	}
-	return n, err
-}
 
 type Message interface {
 	Tag() Tag
