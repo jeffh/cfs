@@ -179,6 +179,7 @@ func (h *DefaultHandler) Connected(addr string) {
 }
 
 func (h *DefaultHandler) Disconnected(addr string) {
+	h.Tracef("local: disconnect: %s", addr)
 	h.st.Remove(addr)
 }
 

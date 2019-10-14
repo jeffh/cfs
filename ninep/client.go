@@ -51,6 +51,16 @@ func (c *Client) dial(network, addr string) (net.Conn, error) {
 	return c.Dialer.Dial(network, addr)
 }
 
+func (c *Client) abortTransactions(err error) {
+	c.mut.Lock()
+	for _, txn := range c.tagToTxns {
+		txn.ch <- cltChResponse{err: err}
+	}
+	c.tagToTxns = make(map[Tag]cltTransaction)
+	c.mut.Unlock()
+	return
+}
+
 func (c *Client) getTransaction(t Tag) (cltTransaction, bool) {
 	c.mut.Lock()
 	txn, ok := c.tagToTxns[t]
@@ -72,7 +82,7 @@ func (c *Client) sendRequest(txn *cltTransaction) <-chan cltChResponse {
 		txn.ch <- cltChResponse{err: err}
 		close(txn.ch)
 	}
-	// reader loop will send on the channle
+	// reader loop will send on the channel
 	return txn.ch
 }
 
@@ -128,7 +138,7 @@ func (c *Client) Connect(addr string) error {
 
 func (c *Client) Close() error {
 	if c.readCancel != nil {
-		c.readCancel()
+		go c.readCancel()
 		c.readCancel = nil
 	}
 	err := c.rwc.Close()
@@ -269,10 +279,17 @@ func (c *Client) readLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			c.abortTransactions(ctx.Err())
 			return
 		case res := <-c.responsePool:
 			res.reset()
 			err := res.readReply(c.rwc)
+			// TODO: we rely on underlying locking behavior (for AAN) to
+			// early-quit blocked reads/writes, but that means we have a chance
+			// to receive this error.
+			if IsClosedSocket(err) {
+				return
+			}
 			if err != nil {
 				c.Errorf("Error reading from server: %s", err)
 				// quit? or continue?
@@ -722,11 +739,11 @@ func (fs *FileSystemProxy) statsFromReader(maxMsgSize uint32, r io.ReaderAt) ([]
 			offset += n
 		}
 
-		if n == 0 {
-			break
-		} else if err == io.EOF {
+		if err == io.EOF {
 			err = nil
 			break
+		} else if n == 0 {
+			return res, err
 		} else if err != nil {
 			return res, err
 		}
