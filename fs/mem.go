@@ -28,6 +28,9 @@ func (f *MemFileInfo) Sys() interface{}   { return f.FISys }
 
 ////////////////////////////////////////////////
 
+type MemNode interface {
+}
+
 // Implements a basic file system in memory only
 // Also, not a particularly efficient implementation
 type Mem struct {

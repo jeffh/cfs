@@ -47,7 +47,7 @@ type Handler interface {
 
 const (
 	DefaultInitialTimeout = 1 * time.Second
-	DefaultReadTimeout    = 5 * time.Second //5 * time.Minute
+	DefaultReadTimeout    = 30 * time.Minute
 	DefaultWriteTimeout   = 15 * time.Second
 
 	// max number of requests a session can make
@@ -151,19 +151,25 @@ func (s *Server) Serve(l net.Listener) error {
 	}
 }
 
-func (s *Server) ListenAndServe(addr string) error {
+func (s *Server) ListenAndServe(addr string, d Dialer) error {
+	if d == nil {
+		d = &TCPDialer{}
+	}
 	if addr == "" {
 		addr = ":9pfs"
 	}
-	ln, err := net.Listen("tcp", addr)
+	ln, err := d.Listen("tcp", addr)
 	if err != nil {
 		return err
 	}
 	return s.Serve(ln)
 }
 
-func (s *Server) ListenAndServeTLS(addr string, certFile, keyFile string) error {
-	ln, err := net.Listen("tcp", addr)
+func (s *Server) ListenAndServeTLS(addr string, certFile, keyFile string, d Dialer) error {
+	if d == nil {
+		d = &TLSDialer{}
+	}
+	ln, err := d.Listen("tcp", addr)
 	if err != nil {
 		return err
 	}
@@ -202,8 +208,12 @@ func (s *serverConn) errorf(f string, values ...interface{}) {
 
 func (s *serverConn) prepareDeadlines() {
 	now := time.Now()
-	s.rwc.SetReadDeadline(now.Add(s.srv.ReadTimeout))
-	s.rwc.SetWriteDeadline(now.Add(s.srv.WriteTimeout))
+	if s.srv.ReadTimeout > 0 {
+		s.rwc.SetReadDeadline(now.Add(s.srv.ReadTimeout))
+	}
+	if s.srv.WriteTimeout > 0 {
+		s.rwc.SetWriteDeadline(now.Add(s.srv.WriteTimeout))
+	}
 }
 
 func (s *serverConn) acceptTversion(txn *srvTransaction) bool {

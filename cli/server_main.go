@@ -4,6 +4,7 @@ import (
 	"flag"
 	"log"
 	"os"
+	"time"
 
 	"github.com/jeffh/cfs/fs"
 	"github.com/jeffh/cfs/ninep"
@@ -21,6 +22,10 @@ func BasicServerMain(createfs func() ninep.FileSystem) {
 		certFile string
 		keyFile  string
 
+		useAan bool
+
+		readTimeout int
+
 		err error
 	)
 
@@ -28,8 +33,10 @@ func BasicServerMain(createfs func() ninep.FileSystem) {
 	flag.BoolVar(&trace, "trace", false, "Print trace of 9p server to stdout")
 	flag.BoolVar(&tracefs, "tracefs", false, "Print trace of 9p FileSystem interface to stdout")
 	flag.BoolVar(&errLog, "err", false, "Print errors of 9p server to stderr")
+	flag.BoolVar(&useAan, "p", false, "Use AAN to perform automatic reconnects for flaky networks")
 	flag.StringVar(&certFile, "certfile", "", "Accept only TLS wrapped connections. Also needs to specify keyfile flag.")
 	flag.StringVar(&keyFile, "keyfile", "", "Accept only TLS wrapped connections. Also needs to specify certfile flag.")
+	flag.IntVar(&readTimeout, "timeout", 0, "Timeout for reading from client connections in seconds. Defaults to 30 minutes")
 
 	flag.Parse()
 
@@ -52,10 +59,18 @@ func BasicServerMain(createfs func() ninep.FileSystem) {
 	}
 
 	srv := ninep.NewServer(fsys, errLogger, traceLogger)
+	srv.ReadTimeout = time.Duration(readTimeout) * time.Second
+	var d ninep.Dialer
+	if useAan {
+		if traceLogger != nil {
+			traceLogger.Printf("Always Available Network is on")
+		}
+		d = &ninep.AANDialer{}
+	}
 	if certFile != "" && keyFile != "" {
-		err = srv.ListenAndServeTLS(addr, certFile, keyFile)
+		err = srv.ListenAndServeTLS(addr, certFile, keyFile, d)
 	} else {
-		err = srv.ListenAndServe(addr)
+		err = srv.ListenAndServe(addr, d)
 	}
 	fmt.Printf("Error: %s", err)
 }

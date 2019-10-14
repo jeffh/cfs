@@ -39,8 +39,16 @@ type Client struct {
 	Timeout                 time.Duration
 	MaxMsgSize              uint32
 	MaxSimultaneousRequests uint
+	Dialer                  Dialer
 
 	Loggable
+}
+
+func (c *Client) dial(network, addr string) (net.Conn, error) {
+	if c.Dialer == nil {
+		return net.Dial(network, addr)
+	}
+	return c.Dialer.Dial(network, addr)
 }
 
 func (c *Client) getTransaction(t Tag) (cltTransaction, bool) {
@@ -108,7 +116,7 @@ func (c *Client) ConnectTLS(addr string, tlsCfg *tls.Config) error {
 
 func (c *Client) Connect(addr string) error {
 	var err error
-	c.rwc, err = net.Dial("tcp", addr)
+	c.rwc, err = c.dial("tcp", addr)
 	if err != nil {
 		return err
 	}
@@ -124,7 +132,6 @@ func (c *Client) Close() error {
 		c.readCancel = nil
 	}
 	err := c.rwc.Close()
-	c.rwc = nil
 	return err
 }
 

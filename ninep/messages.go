@@ -34,7 +34,9 @@ func readUpTo(r io.Reader, p []byte) (int, error) {
 		n += m
 		err = e
 		b = b[m:]
-		if IsTemporaryErr(e) {
+		if IsTimeoutErr(e) {
+			return 0, err
+		} else if IsTemporaryErr(e) {
 			continue
 		}
 		if m == len(b) || e != nil {

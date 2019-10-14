@@ -14,6 +14,7 @@ var (
 	ErrWriteNotAllowed = errors.New("not allowed to write")
 	ErrSeekNotAllowed  = errors.New("seeking is not allowed")
 	ErrUnsupported     = errors.New("unsupported")
+	ErrNotImplemented  = errors.New("not implemented")
 
 	ErrChangeUidNotAllowed = errors.New("changing uid is not allowed by protocol")
 	ErrBufferTooSmall      = errors.New("buffer too small")

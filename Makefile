@@ -5,7 +5,7 @@ CMDS := $(shell ls cmd)
 all: $(CMDS)
 
 $(CMDS): $(find . -type '*.go')
-	go build $(GOARGS) -o ./bin/$@ ./cmd/$@
+	go build --ldflags="-s -w" $(GOARGS) -o ./bin/$@ ./cmd/$@
 
 test:
 	go test $(GOARGS) ./...
