@@ -30,26 +30,21 @@ func IsTemporaryErr(err error) bool {
 }
 
 func IsAanRecoverableErr(err error) bool {
-	return err == io.EOF || IsTimeoutErr(err) || IsTemporaryErr(err)
+	return err == io.EOF || IsTimeoutErr(err) || IsTemporaryErr(err) || err == io.ErrUnexpectedEOF
 }
 
 func readUpTo(r io.Reader, p []byte) (int, error) {
 	var err error
 	n := 0
-	b := p
-	for len(b) > 0 && err == nil {
-		m, e := r.Read(b)
+	for n < len(p) && err == nil {
+		m, e := r.Read(p[n:])
 		n += m
-		err = e
-		b = b[m:]
 		if IsTimeoutErr(e) {
 			return 0, err
 		} else if IsTemporaryErr(e) {
 			continue
 		}
-		if m == len(b) {
-			break
-		}
+		err = e
 	}
 	return n, err
 }

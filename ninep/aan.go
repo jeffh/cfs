@@ -6,35 +6,28 @@ import (
 	"io"
 	"net"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
 
-var ErrAanBadSlice = errors.New("byte slice is too small")
+var ErrAanConnClosed = errors.New("connection already closed")
 
-type aanHeader struct {
-	numBytes, msg, ack uint32
-}
+const (
+	aanSyncMsg = ^uint32(0)
+)
 
-func (h *aanHeader) pack(b []byte) error {
-	if len(b) < 12 {
-		return ErrAanBadSlice
-	}
-	bo.PutUint32(b, h.numBytes)
-	bo.PutUint32(b[4:], h.msg)
-	bo.PutUint32(b[8:], h.ack)
-	return nil
-}
+type aanHeader []byte
 
-func (h *aanHeader) unpack(b []byte) error {
-	if len(b) < 12 {
-		return ErrAanBadSlice
-	}
-	h.numBytes = bo.Uint32(b)
-	h.msg = bo.Uint32(b[4:])
-	h.ack = bo.Uint32(b[8:])
-	return nil
-}
+func newAanHeader() aanHeader            { return aanHeader(make([]byte, 4*3)) }
+func (h aanHeader) numBytes() uint32     { return bo.Uint32(h) }
+func (h aanHeader) setNumBytes(v uint32) { bo.PutUint32(h, v) }
+func (h aanHeader) msg() uint32          { return bo.Uint32(h[4:]) }
+func (h aanHeader) setMsg(v uint32)      { bo.PutUint32(h[4:], v) }
+func (h aanHeader) ack() uint32          { return bo.Uint32(h[8:]) }
+func (h aanHeader) setAck(v uint32)      { bo.PutUint32(h[8:], v) }
+
+func (h aanHeader) isEOF() bool { return h.numBytes() == 0 }
 
 type aanPayload struct {
 	n   int
@@ -50,6 +43,8 @@ type aanConn struct {
 	outbox chan aanPayload // requests to write
 	reconn chan chan error
 	rwc    net.Conn
+
+	acks uint32
 
 	Timeout          time.Duration
 	network, address string
@@ -140,8 +135,33 @@ func ListenAan(network, address string) (net.Listener, error) {
 func (c *aanConn) isServer() bool { return c.ln != nil }
 
 func (c *aanConn) processInbox() {
-	reconnReply := make(chan error)
+	const readTimeout = 20 * time.Millisecond
 
+	read := func(c *aanConn, b []byte) (int, error) {
+		c.m.RLock()
+		if c.rwc == nil {
+			c.m.RUnlock()
+			return 0, ErrAanConnClosed
+		}
+		// c.rwc.SetReadDeadline(time.Now().Add(readTimeout))
+		n, err := c.rwc.Read(b)
+		c.m.RUnlock()
+		c.Tracef("aan: read %v, %v", n, err)
+		return n, err
+	}
+
+	reconnect := func(c *aanConn, err error, reconnReply chan error) error {
+		c.m.RLock()
+		c.reconn <- reconnReply
+		c.m.RUnlock()
+		err = <-reconnReply
+		c.Tracef("aan: read reconnect: %v", err)
+		return err
+	}
+
+	hdr := newAanHeader()
+	reconnReply := make(chan error)
+	rem := []byte(nil)
 	for {
 		p, ok := <-c.inbox
 		if !ok {
@@ -150,63 +170,151 @@ func (c *aanConn) processInbox() {
 		p.err = nil
 		p.n = 0
 
-		b := p.b
-		for p.err == nil && len(b) != 0 {
-			c.m.RLock()
-			c.rwc.SetReadDeadline(time.Now().Add(20 * time.Millisecond))
-			n, err := c.rwc.Read(b)
-			c.m.RUnlock()
-			b = b[n:]
-			if IsTimeoutErr(err) || IsTemporaryErr(err) {
-				c.m.RLock()
-				c.reconn <- reconnReply
-				c.m.RUnlock()
-				err = <-reconnReply
+		pb := p.b
+		var (
+			n   int
+			err error
+			b   []byte
 
-				if err == nil {
-					continue
-				}
+			acks uint32
+			size int
+		)
+
+		if len(rem) > 0 {
+			size = copy(pb, rem)
+			rem = rem[size:]
+			pb = pb[size:]
+
+			if len(pb) == 0 {
+				goto returnMsg
 			}
-			p.n += n
+		}
+
+	retryHeaderRead:
+		n, err = read(c, hdr)
+		if IsAanRecoverableErr(err) {
+			err = reconnect(c, err, reconnReply)
+			if err == nil {
+				goto retryHeaderRead
+			}
+		}
+
+		acks = atomic.LoadUint32(&c.acks)
+		if hdr.isEOF() {
+			c.Tracef("aan: EOF header")
+			p.n = 0
+			p.err = io.EOF
+			goto returnMsg
+		} else if hdr.msg() <= acks {
+			c.Tracef("aan: skipping dup msg of %d (< %d)", hdr.msg(), acks)
+			goto retryHeaderRead // we already saw this message
+		}
+
+		// TODO(jeff): use fixed buf size, but support subsequent reads
+		rem = make([]byte, hdr.numBytes())
+		b = rem
+		for p.err == nil && len(b) != 0 {
+			n, err = read(c, b)
+			b = b[n:]
+			if IsAanRecoverableErr(err) {
+				err = reconnect(c, err, reconnReply)
+			}
 			p.err = err
 		}
+		size = copy(pb, rem)
+		rem = rem[size:]
+		pb = pb[size:]
+		for atomic.AddUint32(&c.acks, 1) == aanSyncMsg {
+		}
+
+	returnMsg:
+		p.n = len(p.b) - len(pb)
 		c.Tracef("aan: read(%d): %d %v %#v", len(p.b), p.n, p.b, p.err)
 		p.reply <- p
 	}
 }
 func (c *aanConn) processOutbox() {
+	const writeTimeout = 20 * time.Millisecond
+
+	write := func(c *aanConn, b []byte) (int, error) {
+		c.m.RLock()
+		if c.rwc == nil {
+			c.m.RUnlock()
+			return 0, ErrAanConnClosed
+		}
+		c.rwc.SetWriteDeadline(time.Now().Add(writeTimeout))
+		n, err := c.rwc.Write(b)
+		c.m.RUnlock()
+		c.Tracef("aan: wrote %v, %v", n, err)
+		return n, err
+	}
+
+	reconnect := func(c *aanConn, err error, reconnReply chan error) error {
+		c.m.RLock()
+		c.reconn <- reconnReply
+		c.m.RUnlock()
+		c.Tracef("aan: write reconnect")
+		return <-reconnReply
+	}
+
 	reconnReply := make(chan error)
+	syncTimer := time.NewTimer(8 * time.Second)
+	defer syncTimer.Stop()
+
+	hdr := newAanHeader()
+	syncHdr := newAanHeader()
+	syncHdr.setMsg(aanSyncMsg)
+	nwritten := uint32(1)
 
 	for {
-		p, ok := <-c.outbox
-		if !ok {
-			return // quit
-		}
-		p.err = nil
-		p.n = 0
+		select {
+		case p, ok := <-c.outbox:
+			if !ok {
+				return // quit
+			}
+			p.err = nil
+			p.n = 0
 
-		b := p.b
-		for p.err == nil && len(b) != 0 {
-			c.m.RLock()
-			c.rwc.SetWriteDeadline(time.Now().Add(20 * time.Millisecond))
-			n, err := c.rwc.Write(b)
-			c.m.RUnlock()
-			b = b[n:]
-			if IsTimeoutErr(err) || IsTemporaryErr(err) {
-				c.m.RLock()
-				c.reconn <- reconnReply
-				c.m.RUnlock()
-				err = <-reconnReply
+			var (
+				n   int
+				err error
+				b   []byte
+			)
 
+			hdr.setNumBytes(uint32(len(p.b)))
+			hdr.setMsg(nwritten)
+		retryHeaderWrite:
+			hdr.setAck(atomic.LoadUint32(&c.acks))
+			_, err = write(c, hdr)
+			if IsAanRecoverableErr(err) {
+				err = reconnect(c, err, reconnReply)
 				if err == nil {
-					continue
+					goto retryHeaderWrite
 				}
 			}
-			p.n += n
-			p.err = err
+
+			b = p.b
+			for p.err == nil && len(b) != 0 {
+				n, err = write(c, b)
+				b = b[n:]
+				p.n += n
+				if IsAanRecoverableErr(err) {
+					err = reconnect(c, err, reconnReply)
+				}
+				p.err = err
+			}
+			nwritten++
+			c.Tracef("aan: write(%d): %d %v %s", len(p.b), p.n, p.b, p.err)
+			p.reply <- p
+
+		case <-syncTimer.C:
+			// syncHdr.setAck(atomic.LoadUint32(&c.acks))
+			// _, err := write(c, syncHdr)
+			// if IsAanRecoverableErr(err) {
+			// 	err = reconnect(c, err, reconnReply)
+			// }
+			// c.Tracef("aan: sync")
 		}
-		c.Tracef("aan: write(%d): %d %v %s", len(p.b), p.n, p.b, p.err)
-		p.reply <- p
 	}
 }
 
@@ -291,64 +399,11 @@ func (c *aanConn) reconnect() error {
 }
 
 func (c *aanConn) synchronize() error {
+	// TODO: GROT
+	// based on the code in aan.c, this seems like a copy(chan, chan) behavior
+	// that we don't need since we're being more wasteful and separating our
+	// read + writes into separate goroutines.
 	return nil
-	/*
-		hdrBuf := [aanHeaderSize]byte{}
-		hdr := hdrBuf[:]
-
-		timeout := 5 * time.Second
-
-		for {
-			c.Tracef("synchronize")
-			c.rwc.SetDeadline(time.Now().Add(timeout))
-			_, err := io.ReadFull(c.rwc, hdr)
-
-			if err, ok := err.(*net.AddrError); ok {
-				if err.Timeout() {
-					c.Tracef("aan: timeout error: %s", err)
-					return err
-				}
-				if err.Temporary() {
-					c.Tracef("aan: temporary error: %s", err)
-					continue
-				}
-			}
-
-			if err != nil {
-				return err
-			}
-
-			break
-		}
-
-		buf.Hdr.numBytes = bo.Uint32(hdr[:4])
-		buf.Hdr.msgN = bo.Uint32(hdr[4:8])
-		buf.Hdr.acked = bo.Uint32(hdr[8:12])
-
-		for {
-			c.rwc.SetDeadline(time.Now().Add(timeout))
-			_, err := io.ReadFull(c.rwc, buf.Buf[:])
-
-			if err, ok := err.(*net.AddrError); ok {
-				if err.Timeout() {
-					c.Tracef("aan: timeout error: %s", err)
-					return err
-				}
-				if err.Temporary() {
-					c.Tracef("aan: temporary error: %s", err)
-					continue
-				}
-			}
-
-			if err != nil {
-				return err
-			}
-
-			break
-		}
-
-		return nil
-	*/
 }
 
 func (c *aanConn) timeout() time.Duration {
@@ -359,7 +414,11 @@ func (c *aanConn) timeout() time.Duration {
 }
 
 func (c *aanConn) Read(b []byte) (n int, err error) {
-	reply := make(chan aanPayload)
+	c.Tracef("aan: read req(%d)", len(b))
+	if len(b) == 0 {
+		return 0, nil
+	}
+	reply := make(chan aanPayload, 1)
 	p := aanPayload{b: b, reply: reply}
 	c.m.RLock()
 	defer c.m.RUnlock()
@@ -369,10 +428,15 @@ func (c *aanConn) Read(b []byte) (n int, err error) {
 	c.inbox <- p
 	p = <-reply
 	n, err = p.n, p.err
+	c.Tracef("aan: read req(%d) -> %v, %v", len(b), n, err)
 	return
 }
 func (c *aanConn) Write(b []byte) (n int, err error) {
-	reply := make(chan aanPayload)
+	c.Tracef("aan: write req(%v)", b)
+	if len(b) == 0 {
+		return 0, nil
+	}
+	reply := make(chan aanPayload, 1)
 	p := aanPayload{b: b, reply: reply}
 	c.m.RLock()
 	defer c.m.RUnlock()
@@ -382,6 +446,7 @@ func (c *aanConn) Write(b []byte) (n int, err error) {
 	c.outbox <- p
 	p = <-reply
 	n, err = p.n, p.err
+	c.Tracef("aan: written req(%v) -> %v, %v", b, n, err)
 	return
 }
 func (c *aanConn) Close() error {
@@ -394,14 +459,16 @@ func (c *aanConn) Close() error {
 		err = c.rwc.Close()
 		c.rwc = nil
 	}
-	// close(c.inbox)
-	// close(c.outbox)
-	// close(c.reconn)
+	close(c.inbox)
+	close(c.outbox)
+	close(c.reconn)
 	c.m.Unlock()
 	return err
 }
 func (c *aanConn) LocalAddr() net.Addr                { return c.rwc.LocalAddr() }
 func (c *aanConn) RemoteAddr() net.Addr               { return c.rwc.RemoteAddr() }
 func (c *aanConn) SetDeadline(t time.Time) error      { return c.rwc.SetDeadline(t) }
-func (c *aanConn) SetReadDeadline(t time.Time) error  { return c.rwc.SetReadDeadline(t) }
+func (c *aanConn) SetReadDeadline(t time.Time) error  { return nil }
 func (c *aanConn) SetWriteDeadline(t time.Time) error { return c.rwc.SetWriteDeadline(t) }
+
+// func (c *aanConn) SetReadDeadline(t time.Time) error  { return c.rwc.SetReadDeadline(t) }
