@@ -1,5 +1,13 @@
 package ninep
 
+// Always Available Network (AAN)
+//
+// Not a complete implementation. Needs the following:
+//
+// [ ] A synchronize message (^uint32(0)) that allows unacked messages to be resent.
+// [ ] Support SetDeadline, SetReadDeadline, and SetWriteDeadline
+// [ ] Exponential backoff for reconnects
+
 import (
 	"context"
 	"errors"
@@ -44,7 +52,8 @@ type aanConn struct {
 	reconn chan chan error
 	rwc    net.Conn
 
-	acks uint32
+	nwritten uint32
+	acks     uint32
 
 	Timeout          time.Duration
 	network, address string
@@ -139,13 +148,13 @@ func (c *aanConn) processInbox() {
 
 	read := func(c *aanConn, b []byte) (int, error) {
 		c.m.RLock()
+		rwc := c.rwc
+		c.m.RUnlock()
 		if c.rwc == nil {
-			c.m.RUnlock()
 			return 0, ErrAanConnClosed
 		}
 		// c.rwc.SetReadDeadline(time.Now().Add(readTimeout))
-		n, err := c.rwc.Read(b)
-		c.m.RUnlock()
+		n, err := rwc.Read(b)
 		c.Tracef("aan: read %v, %v", n, err)
 		return n, err
 	}
@@ -238,13 +247,14 @@ func (c *aanConn) processOutbox() {
 
 	write := func(c *aanConn, b []byte) (int, error) {
 		c.m.RLock()
-		if c.rwc == nil {
+		rwc := c.rwc
+		c.m.RUnlock()
+		if rwc == nil {
 			c.m.RUnlock()
 			return 0, ErrAanConnClosed
 		}
 		c.rwc.SetWriteDeadline(time.Now().Add(writeTimeout))
-		n, err := c.rwc.Write(b)
-		c.m.RUnlock()
+		n, err := rwc.Write(b)
 		c.Tracef("aan: wrote %v, %v", n, err)
 		return n, err
 	}
@@ -264,7 +274,7 @@ func (c *aanConn) processOutbox() {
 	hdr := newAanHeader()
 	syncHdr := newAanHeader()
 	syncHdr.setMsg(aanSyncMsg)
-	nwritten := uint32(1)
+	atomic.StoreUint32(&c.nwritten, 1)
 
 	for {
 		select {
@@ -282,7 +292,7 @@ func (c *aanConn) processOutbox() {
 			)
 
 			hdr.setNumBytes(uint32(len(p.b)))
-			hdr.setMsg(nwritten)
+			hdr.setMsg(atomic.LoadUint32(&c.nwritten))
 		retryHeaderWrite:
 			hdr.setAck(atomic.LoadUint32(&c.acks))
 			_, err = write(c, hdr)
@@ -303,7 +313,8 @@ func (c *aanConn) processOutbox() {
 				}
 				p.err = err
 			}
-			nwritten++
+			for atomic.AddUint32(&c.nwritten, 1) == aanSyncMsg {
+			}
 			c.Tracef("aan: write(%d): %d %v %s", len(p.b), p.n, p.b, p.err)
 			p.reply <- p
 
@@ -398,6 +409,16 @@ func (c *aanConn) reconnect() error {
 	}
 }
 
+func (c *aanConn) unsafeWriteClose() error {
+	hdr := newAanHeader()
+	hdr.setNumBytes(0)
+	hdr.setMsg(atomic.LoadUint32(&c.nwritten))
+	hdr.setAck(atomic.LoadUint32(&c.acks))
+	c.rwc.SetWriteDeadline(time.Now().Add(50 * time.Millisecond))
+	_, err := c.rwc.Write(hdr)
+	return err
+}
+
 func (c *aanConn) synchronize() error {
 	// TODO: GROT
 	// based on the code in aan.c, this seems like a copy(chan, chan) behavior
@@ -421,8 +442,9 @@ func (c *aanConn) Read(b []byte) (n int, err error) {
 	reply := make(chan aanPayload, 1)
 	p := aanPayload{b: b, reply: reply}
 	c.m.RLock()
-	defer c.m.RUnlock()
-	if c.rwc == nil {
+	rwc := c.rwc
+	c.m.RUnlock()
+	if rwc == nil {
 		return 0, io.EOF
 	}
 	c.inbox <- p
@@ -439,8 +461,9 @@ func (c *aanConn) Write(b []byte) (n int, err error) {
 	reply := make(chan aanPayload, 1)
 	p := aanPayload{b: b, reply: reply}
 	c.m.RLock()
-	defer c.m.RUnlock()
-	if c.rwc == nil {
+	rwc := c.rwc
+	c.m.RUnlock()
+	if rwc == nil {
 		return 0, io.EOF
 	}
 	c.outbox <- p
@@ -456,6 +479,7 @@ func (c *aanConn) Close() error {
 		c.ln.forget(c.rwc.RemoteAddr().String())
 	}
 	if c.rwc != nil {
+		c.unsafeWriteClose()
 		err = c.rwc.Close()
 		c.rwc = nil
 	}
@@ -463,6 +487,7 @@ func (c *aanConn) Close() error {
 	close(c.outbox)
 	close(c.reconn)
 	c.m.Unlock()
+	c.Tracef("aan: close")
 	return err
 }
 func (c *aanConn) LocalAddr() net.Addr                { return c.rwc.LocalAddr() }

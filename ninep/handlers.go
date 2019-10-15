@@ -65,7 +65,7 @@ func (h *directoryHandle) ReadAt(p []byte, offset int64) (int, error) {
 	size := next.Nbytes()
 	if len(p) < size {
 		fmt.Printf("%d < %d\n", len(p), size)
-		// TODO: returnn nil one time to indicate too small of a read
+		// TODO: return nil one time to indicate too small of a read
 		return 0, ErrBufferTooSmall
 	}
 	copy(p, next.Bytes())

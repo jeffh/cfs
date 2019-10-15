@@ -25,16 +25,16 @@ type cltChResponse struct {
 
 // A 9P client that supports low-level operations and higher-level functionality
 type Client struct {
+	m            sync.Mutex
 	rwc          net.Conn
 	requestPool  chan *cltRequest
 	responsePool chan *cltResponse
+	readCancel   context.CancelFunc
 
 	mut       sync.Mutex
 	tagToTxns map[Tag]cltTransaction
 
 	Authorizee Authorizee
-
-	readCancel context.CancelFunc
 
 	Timeout                 time.Duration
 	MaxMsgSize              uint32
@@ -119,6 +119,7 @@ func (c *Client) ConnectTLS(addr string, tlsCfg *tls.Config) error {
 		return err
 	}
 	if err = c.connect(); err != nil {
+		c.rwc.Close()
 		return err
 	}
 	return nil
@@ -131,12 +132,15 @@ func (c *Client) Connect(addr string) error {
 		return err
 	}
 	if err = c.connect(); err != nil {
+		c.rwc.Close()
 		return err
 	}
 	return nil
 }
 
 func (c *Client) Close() error {
+	c.m.Lock()
+	defer c.m.Unlock()
 	if c.readCancel != nil {
 		go c.readCancel()
 		c.readCancel = nil

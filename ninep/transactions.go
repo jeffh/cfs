@@ -270,7 +270,7 @@ func (t *cltResponse) readReply(rdr io.Reader) error {
 	size := MsgBase(t.inMsg).Size()
 
 	if size > uint32(len(t.inMsg)) {
-		return fmt.Errorf("CltRes: Message too large (%d > %d)", size, len(t.inMsg))
+		return fmt.Errorf("Clt: Message too large (%d > %d)", size, len(t.inMsg))
 	}
 
 	_, err = readUpTo(rdr, t.inMsg[4:size])
