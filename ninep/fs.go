@@ -158,3 +158,80 @@ func (r *handleReaderWriter) Write(p []byte) (int, error) {
 
 func Reader(h FileHandle) io.Reader { return &handleReaderWriter{h, 0} }
 func Writer(h FileHandle) io.Writer { return &handleReaderWriter{h, 0} }
+
+/////////////////////////////////////////////////
+
+// Implements a basic, in-memory struct that conforms to os.FileInfo
+type SimpleFileInfo struct {
+	FIName    string
+	FISize    int64
+	FIMode    os.FileMode
+	FIModTime time.Time
+	FISys     interface{}
+}
+
+func (f *SimpleFileInfo) Name() string       { return f.FIName }
+func (f *SimpleFileInfo) Size() int64        { return f.FISize }
+func (f *SimpleFileInfo) Mode() os.FileMode  { return f.FIMode }
+func (f *SimpleFileInfo) ModTime() time.Time { return f.FIModTime }
+func (f *SimpleFileInfo) IsDir() bool        { return f.FIMode&os.ModeDir != 0 }
+func (f *SimpleFileInfo) Sys() interface{}   { return f.FISys }
+
+////////////////////////////////////////////////
+
+// A simple interface for a file. File Systems may use this to easily structure
+// a file system in memory
+type File interface {
+	Info() (os.FileInfo, error)
+	Open() (FileHandle, error)
+}
+
+// Simple file implements os.FileInfo and FileHandle operations
+type SimpleFile struct {
+	SimpleFileInfo
+	OpenFn func() (FileHandle, error)
+}
+
+func NewReadOnlySimpleFile(name string, mode os.FileMode, modTime time.Time, contents []byte) *SimpleFile {
+	return &SimpleFile{
+		SimpleFileInfo{
+			FIName:    name,
+			FISize:    int64(len(contents)),
+			FIMode:    mode | 0444,
+			FIModTime: modTime,
+			FISys:     nil,
+		},
+		ReadOnlyHandle(contents),
+	}
+}
+
+func (f *SimpleFile) Open() (FileHandle, error) {
+	if f.OpenFn == nil {
+		return nil, ErrUnsupported
+	}
+	return f.OpenFn()
+}
+
+////////////////////////////////////////////////
+
+func ReadOnlyHandle(b []byte) func() (FileHandle, error) {
+	return func() (FileHandle, error) {
+		return &ReadOnlyMemoryFileHandle{b}, nil
+	}
+}
+
+type ReadOnlyMemoryFileHandle struct {
+	Contents []byte
+}
+
+func (h *ReadOnlyMemoryFileHandle) ReadAt(p []byte, off int64) (n int, err error) {
+	if off >= int64(len(h.Contents)) || off < 0 {
+		return 0, io.EOF
+	}
+	return copy(p, h.Contents[off:]), nil
+}
+func (h *ReadOnlyMemoryFileHandle) WriteAt(p []byte, off int64) (n int, err error) {
+	return 0, ErrUnsupported
+}
+func (h *ReadOnlyMemoryFileHandle) Sync() error  { return nil }
+func (h *ReadOnlyMemoryFileHandle) Close() error { return nil }

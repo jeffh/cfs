@@ -103,7 +103,7 @@ func (f TraceFileSystem) OpenFile(path string, flag ninep.OpenMode) (ninep.FileH
 
 func (f TraceFileSystem) ListDir(path string) ([]os.FileInfo, error) {
 	infos, err := f.Fs.ListDir(path)
-	f.Tracef("FS.ListDir(%v) => (%v, %s)", infos, err)
+	f.Tracef("FS.ListDir(%v) => (%v, %s)", path, infos, err)
 	if err != nil {
 		f.Errorf("FS.ListDir(%v) => (_, %s)", path, err)
 	}

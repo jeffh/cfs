@@ -202,7 +202,7 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 				return
 			}
 
-			fil := File{
+			fil := serverFile{
 				Name: fmt.Sprintf(".auth.%v", m.Afid()),
 				User: m.Uname(),
 				Flag: ORDWR | ORCLOSE,
@@ -259,7 +259,7 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 
 		// associate fid to root
 		h.Tracef("local: Tattach: %s", m.Fid())
-		session.PutFid(m.Fid(), File{
+		session.PutFid(m.Fid(), serverFile{
 			Name: "/",
 			User: m.Uname(),
 			Flag: OREAD,
@@ -374,7 +374,7 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 			if fil.H != nil {
 				fil.H.Close()
 			}
-			fil = File{
+			fil = serverFile{
 				Name: path,
 				Mode: ModeFromOS(info.Mode()),
 			}

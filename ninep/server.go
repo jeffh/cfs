@@ -453,7 +453,7 @@ func (s *serverConn) dispatch(ctx context.Context, txn *srvTransaction) {
 
 ///////////////////////////////////////////////////////
 
-type File struct {
+type serverFile struct {
 	Name     string
 	User     string
 	Flag     OpenMode
@@ -462,11 +462,11 @@ type File struct {
 	RefCount int32
 }
 
-func (f *File) IncRef() {
+func (f *serverFile) IncRef() {
 	atomic.AddInt32(&f.RefCount, 1)
 }
 
-func (f *File) DecRef() bool {
+func (f *serverFile) DecRef() bool {
 	return atomic.AddInt32(&f.RefCount, -1) == 0
 }
 
@@ -478,12 +478,12 @@ type Session struct {
 	qidsToHandle map[uint64]FileHandle
 }
 
-func (s *Session) FileForFid(f Fid) (fil File, found bool) {
+func (s *Session) FileForFid(f Fid) (fil serverFile, found bool) {
 	fil, ok := s.fids.Get(f)
 	return fil, ok
 }
-func (s *Session) DeleteFid(f Fid)          { s.fids.Delete(f) }
-func (s *Session) PutFid(f Fid, h File) Fid { return s.fids.Put(f, h) }
+func (s *Session) DeleteFid(f Fid)                { s.fids.Delete(f) }
+func (s *Session) PutFid(f Fid, h serverFile) Fid { return s.fids.Put(f, h) }
 func (s *Session) PutQid(name string, t QidType, version uint32) Qid {
 	return s.qids.Put(name, t, version)
 }
@@ -537,7 +537,7 @@ func (st *SessionTracker) Add(addr string) *Session {
 	s, ok := st.sess[addr]
 	if !ok {
 		s = &Session{
-			fids:         FidTracker{fids: make(map[Fid]File)},
+			fids:         FidTracker{fids: make(map[Fid]serverFile)},
 			qids:         st.qids,
 			qidsToHandle: make(map[uint64]FileHandle),
 		}
@@ -575,17 +575,17 @@ func (st *SessionTracker) Remove(addr string) {
 
 type FidTracker struct {
 	m    sync.Mutex
-	fids map[Fid]File
+	fids map[Fid]serverFile
 }
 
-func (t *FidTracker) Get(f Fid) (h File, found bool) {
+func (t *FidTracker) Get(f Fid) (h serverFile, found bool) {
 	t.m.Lock()
 	h, found = t.fids[f]
 	t.m.Unlock()
 	return
 }
 
-func (t *FidTracker) Put(f Fid, h File) Fid {
+func (t *FidTracker) Put(f Fid, h serverFile) Fid {
 	t.m.Lock()
 	t.fids[f] = h
 	t.m.Unlock()
