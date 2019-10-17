@@ -291,13 +291,14 @@ func (c *Client) readLoop(ctx context.Context) {
 			// TODO: we rely on underlying locking behavior (for AAN) to
 			// early-quit blocked reads/writes, but that means we have a chance
 			// to receive this error.
-			if IsClosedSocket(err) {
-				return
-			}
+			// if IsClosedSocket(err) {
+			// 	txn.ch <- cltChResponse{err: err}
+			// 	return
+			// }
 			if err != nil {
 				c.Errorf("Error reading from server: %s", err)
-				// quit? or continue?
-				continue
+				c.abortTransactions(err)
+				return
 			}
 
 			txn, ok := c.getTransaction(res.reqTag())

@@ -3,6 +3,7 @@ package ninep
 import (
 	"crypto/tls"
 	"net"
+	"time"
 )
 
 type Dialer interface {
@@ -10,11 +11,51 @@ type Dialer interface {
 	Listen(network, address string) (net.Listener, error)
 }
 
-type TCPDialer struct{}
+type tcpListenerWithKeepAlive struct {
+	net.Listener
+	KeepAlivePeriod time.Duration
+}
 
-func (d *TCPDialer) Dial(network, addr string) (net.Conn, error) { return net.Dial(network, addr) }
+func (ln *tcpListenerWithKeepAlive) Accept() (net.Conn, error) {
+	tcp, err := ln.Listener.(*net.TCPListener).AcceptTCP()
+	if err != nil {
+		return nil, err
+	}
+	if ln.KeepAlivePeriod != 0 {
+		if err = tcp.SetKeepAlive(true); err != nil {
+			return nil, err
+		}
+		if err = tcp.SetKeepAlivePeriod(ln.KeepAlivePeriod); err != nil {
+			return nil, err
+		}
+	}
+	return tcp, err
+}
+
+type TCPDialer struct {
+	KeepAlivePeriod time.Duration
+}
+
+func (d *TCPDialer) Dial(network, addr string) (net.Conn, error) {
+	conn, err := net.Dial(network, addr)
+	if err == nil {
+		if tcp, ok := conn.(*net.TCPConn); ok && d.KeepAlivePeriod != 0 {
+			if err = tcp.SetKeepAlive(true); err != nil {
+				return nil, err
+			}
+			if err = tcp.SetKeepAlivePeriod(d.KeepAlivePeriod); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return conn, err
+}
 func (d *TCPDialer) Listen(network, addr string) (net.Listener, error) {
-	return net.Listen(network, addr)
+	ln, err := net.Listen(network, addr)
+	if err != nil {
+		return nil, err
+	}
+	return &tcpListenerWithKeepAlive{ln, d.KeepAlivePeriod}, err
 }
 
 type TLSDialer struct {
