@@ -1,0 +1,13 @@
+[Unit]
+Description=Monitor and Manage Local Processes via Plan9 9P protocol
+Requires=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/p9
+ExecStart=procfs -addr localhost:6101 -err
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
