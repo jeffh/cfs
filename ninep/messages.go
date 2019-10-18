@@ -428,6 +428,7 @@ func (q Qid) Type() QidType       { return QidType(q[0]) }
 func (q Qid) Version() uint32     { return bo.Uint32(q[1:5]) }
 func (q Qid) SetVersion(v uint32) { bo.PutUint32(q[1:5], v) }
 func (q Qid) Path() uint64        { return bo.Uint64(q[5 : 5+8]) }
+func (q Qid) SetPath(v uint64)    { bo.PutUint64(q[5:5+8], v) } // not recommended to use unless you know the impact of this
 func (q Qid) IsNoTouch() bool {
 	for _, v := range q.Bytes() {
 		if v != 0xff {

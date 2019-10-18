@@ -12,7 +12,10 @@ import (
 	"time"
 )
 
-var ErrListingOnNonDir = errors.New("cannot list files for path that's not a directory")
+var (
+	ErrListingOnNonDir   = errors.New("cannot list files for path that's not a directory")
+	ErrOpenDirNotAllowed = errors.New("cannot open directories")
+)
 
 type cltTransaction struct {
 	req *cltRequest
@@ -765,9 +768,15 @@ func (fs *FileSystemProxy) OpenFile(path string, flag OpenMode) (FileHandle, err
 		return nil, err
 	}
 	var h FileHandle
-	_, _, err := fs.c.Open(fid, flag)
+	qid, _, err := fs.c.Open(fid, flag)
 	if err == nil {
-		h = &FileProxy{fs, fid}
+		if qid.Type().IsDir() {
+			fs.c.Clunk(fid)
+			fs.releaseFid(fid)
+			err = ErrOpenDirNotAllowed
+		} else {
+			h = &FileProxy{fs, fid}
+		}
 	} else {
 		fs.c.Clunk(fid)
 		fs.releaseFid(fid)
@@ -837,21 +846,11 @@ func (fs *FileSystemProxy) ListDir(path string) (FileInfoIterator, error) {
 		return nil, err
 	}
 
-	st, err := fs.c.Stat(fid)
-	if err != nil {
-		fs.releaseFid(fid)
-		return nil, err
-	}
-	if st.Mode().IsDir() {
-		fs.releaseFid(fid)
-		return nil, ErrListingOnNonDir
-	}
-
 	itr := &fileSystemProxyIterator{fp: &FileProxy{fs, fid}}
 
 	qid, _, err := fs.c.Open(fid, OREAD)
 	if err == nil {
-		if qid.Type().IsDir() {
+		if !qid.Type().IsDir() {
 			itr.Close()
 			return nil, ErrListingOnNonDir
 		} else {

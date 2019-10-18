@@ -33,6 +33,17 @@ type FileInfoMode9P interface{ Mode9P() Mode }
 // version number changes.
 type FileInfoVersion interface{ Version() uint32 }
 
+// return os.FileInfo from FileSystem can implement this if they want more
+// precisely control the Qid path, which should change every time the there's a
+// different file in the file system. Two files with the same exact filepath can have different paths if:
+//
+// - Create file // Qid with Path A
+// - Delete file
+// - Create file // Qid with Path B
+//
+// Similiar to Linux Inodes.
+type FileInfoPath interface{ Path() uint64 }
+
 // if this file info supports plan9 usernames for files
 type FileInfoUid interface{ Uid() string }
 
@@ -89,13 +100,13 @@ func (itr *fileInfoSliceIterator) NextFileInfo() (os.FileInfo, error) {
 	return itr.Infos[idx], nil
 }
 
-func FileInfoSliceFromIterator(itr FileInfoIterator) ([]os.FileInfo, error) {
+func FileInfoSliceFromIterator(itr FileInfoIterator, max int) ([]os.FileInfo, error) {
 	if it, ok := itr.(*fileInfoSliceIterator); ok {
 		return it.Infos, nil
 	}
 
-	items := make([]os.FileInfo, 16)
-	for {
+	items := make([]os.FileInfo, 0, 16)
+	for max < 0 || len(items) < max {
 		fi, err := itr.NextFileInfo()
 		if fi != nil {
 			items = append(items, fi)
@@ -106,6 +117,7 @@ func FileInfoSliceFromIterator(itr FileInfoIterator) ([]os.FileInfo, error) {
 			return items, err
 		}
 	}
+	return items, nil
 }
 
 ///////////////////////////////////////////////////////////////
@@ -257,6 +269,20 @@ func NewReadOnlySimpleFile(name string, mode os.FileMode, modTime time.Time, con
 	}
 }
 
+func NewSimpleFile(name string, mode os.FileMode, modTime time.Time, open func() (FileHandle, error)) *SimpleFile {
+	return &SimpleFile{
+		SimpleFileInfo{
+			FIName:    name,
+			FISize:    0,
+			FIMode:    mode | 0444,
+			FIModTime: modTime,
+			FISys:     nil,
+		},
+		open,
+	}
+}
+
+func (f *SimpleFile) Info() os.FileInfo { return f }
 func (f *SimpleFile) Open() (FileHandle, error) {
 	if f.OpenFn == nil {
 		return nil, ErrUnsupported

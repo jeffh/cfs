@@ -10,6 +10,8 @@ import (
 	"time"
 
 	ninep "github.com/jeffh/cfs/ninep"
+	cpu "github.com/shirou/gopsutil/cpu"
+	psnet "github.com/shirou/gopsutil/net"
 	"github.com/shirou/gopsutil/process"
 )
 
@@ -37,6 +39,14 @@ func (f *Proc) pidDir(proc *process.Process) ([]os.FileInfo, error) {
 			/proc/<pid>/status.json - returns general process stats as json
 			/proc/<pid>/uids - returns uids and usernames
 			/proc/<pid>/gids - returns gids and group names
+			/proc/<pid>/rlimit - returns process limits
+			/proc/<pid>/rlimit.json - returns process limits as json
+			/proc/<pid>/fd - returns open file descriptors
+			/proc/<pid>/fd.json - returns open file descriptors as json
+			/proc/<pid>/net - returns open network connections
+			/proc/<pid>/net.json - returns open network connections as json
+			/proc/<pid>/threads - returns thread information
+			/proc/<pid>/threads.json - returns thread information as json
 
 			/proc/<pid>/ctl
 			/proc/<pid>/fd
@@ -53,55 +63,68 @@ func (f *Proc) pidDir(proc *process.Process) ([]os.FileInfo, error) {
 			/proc/<pid>/text
 			/proc/<pid>/wait
 	*/
-	{
-		cwd, err := proc.Cwd()
-		if err != nil {
-			cwd = fmt.Sprintf("error: %s", err.Error())
-		}
-		cwd = cwd + "\n"
-		files = append(files, ninep.NewReadOnlySimpleFile("cwd", 0, now, []byte(cwd)))
-	}
-	{
-		uids, err := proc.Uids()
-		if err != nil {
-			panic(err)
-			files = append(files, ninep.NewReadOnlySimpleFile("uids", 0, now, []byte(fmt.Sprintf("error: %s", err.Error()))))
-		} else {
-			uidstr := make([]string, 0, len(uids)*2)
-			for _, uid := range uids {
-				uid_str := strconv.Itoa(int(uid))
-				var username string
-				usr, err := user.LookupId(uid_str)
-				if err != nil {
-					panic(err)
-					username = fmt.Sprintf("error: %s", err.Error())
-				} else {
-					username = usr.Username
-				}
-				uidstr = append(uidstr, fmt.Sprintf("%s %s", uid_str, username))
-			}
-			files = append(files, ninep.NewReadOnlySimpleFile("uids", 0, now, []byte(strings.Join(uidstr, "\n"))))
+	runs := func(f func() ([]byte, error)) func() (ninep.FileHandle, error) {
+		return func() (ninep.FileHandle, error) {
+			b, err := f()
+			return &ninep.ReadOnlyMemoryFileHandle{b}, err
 		}
 	}
+
 	{
-		gids, err := proc.Gids()
-		if err != nil {
-			files = append(files, ninep.NewReadOnlySimpleFile("gids", 0, now, []byte(fmt.Sprintf("error: %s", err.Error()))))
-		} else {
-			gidstr := make([]string, 0, len(gids)*2)
-			for _, gid := range gids {
-				gid_str := strconv.Itoa(int(gid))
-				var username string
-				usr, err := user.LookupGroupId(gid_str)
-				if err != nil {
-					username = fmt.Sprintf("error: %s", err.Error())
-				} else {
-					username = usr.Name
+		files = append(files, ninep.NewSimpleFile("cwd", 0, now, runs(func() ([]byte, error) {
+			cwd, err := proc.Cwd()
+			return []byte(cwd + "\n"), err
+		})))
+	}
+	{
+		files = append(files, ninep.NewSimpleFile("uids", 0, now, runs(func() ([]byte, error) {
+			uids, err := proc.Uids()
+			if err != nil {
+				return nil, err
+			} else {
+				uidstr := make([]string, 0, len(uids)*2)
+				for _, uid := range uids {
+					uid_str := strconv.Itoa(int(uid))
+					var username string
+					usr, err := user.LookupId(uid_str)
+					if err != nil {
+						username = fmt.Sprintf("error: %s", err.Error())
+					} else {
+						username = usr.Username
+					}
+					uidstr = append(uidstr, fmt.Sprintf("%s %s", uid_str, username))
 				}
-				gidstr = append(gidstr, fmt.Sprintf("%s %s", gid_str, username))
+				return []byte(strings.Join(uidstr, "\n")), nil
 			}
-			files = append(files, ninep.NewReadOnlySimpleFile("gids", 0, now, []byte(strings.Join(gidstr, "\n"))))
-		}
+		})))
+	}
+	{
+		files = append(files, ninep.NewSimpleFile("gids", 0, now, runs(func() ([]byte, error) {
+			gids, err := proc.Gids()
+			if err != nil {
+				return nil, err
+			} else {
+				gidstr := make([]string, 0, len(gids)*2)
+				for _, gid := range gids {
+					gid_str := strconv.Itoa(int(gid))
+					var username string
+					usr, err := user.LookupGroupId(gid_str)
+					if err != nil {
+						username = fmt.Sprintf("error: %s", err.Error())
+					} else {
+						username = usr.Name
+					}
+					gidstr = append(gidstr, fmt.Sprintf("%s %s", gid_str, username))
+				}
+				return []byte(strings.Join(gidstr, "\n")), nil
+			}
+		})))
+	}
+	{
+		files = append(files, ninep.NewSimpleFile("cmdline", 0, now, runs(func() ([]byte, error) {
+			cmd, err := proc.Cmdline()
+			return []byte(cmd), err
+		})))
 	}
 	{
 		type ProcStats struct {
@@ -114,95 +137,208 @@ func (f *Proc) pidDir(proc *process.Process) ([]os.FileInfo, error) {
 			MemVMS  uint64   `json:"memory_vms"`     // bytes
 			MemSwap uint64   `json:"memory_swap"`    // bytes
 		}
-		var (
-			stat ProcStats
+		Stats := func() (ProcStats, error) {
+			var (
+				stat ProcStats
 
-			err error
-		)
-		{
-			cmd, err := proc.CmdlineSlice()
-			if err != nil {
-				cmd = []string{fmt.Sprintf("error: %s", err)}
+				err      error
+				finalErr error
+			)
+			{
+				cmd, err := proc.CmdlineSlice()
+				if err != nil {
+					finalErr = err
+				}
+				stat.Name = cmd[0]
+				stat.Args = cmd[1:]
 			}
-			files = append(files, ninep.NewReadOnlySimpleFile("cmdline", 0, now, []byte(strings.Join(cmd, " "))))
-			stat.Name = cmd[0]
-			stat.Args = cmd[1:]
-		}
-		{
-			var status string
-			status, err = proc.Status()
-			if err != nil {
-				status = fmt.Sprintf("error: %s", err.Error())
-			} else {
-				fmt.Printf("Status: %s", status)
-				switch status[0] {
-				case 'R':
-					status = "running"
-				case 'S':
-					status = "sleeping"
-				case 'T':
-					status = "stopped"
-				case 'I':
-					status = "idle"
-				case 'Z':
-					status = "zombied"
-				case 'W':
-					status = "waiting"
-				case 'L':
-					status = "locked"
-				default:
-					status = "unknown"
+			{
+				var status string
+				status, err = proc.Status()
+				if err != nil {
+					finalErr = err
+				} else {
+					switch status[0] {
+					case 'R':
+						status = "running"
+					case 'S':
+						status = "sleeping"
+					case 'T':
+						status = "stopped"
+					case 'I':
+						status = "idle"
+					case 'Z':
+						status = "zombied"
+					case 'W':
+						status = "waiting"
+					case 'L':
+						status = "locked"
+					default:
+						status = "unknown"
+					}
+				}
+				stat.Status = status
+			}
+			{
+				cpu, err := proc.CPUPercent()
+				if err != nil {
+					cpu = -1
+					finalErr = err
+				}
+				stat.CPU = cpu
+			}
+			{
+				mem, err := proc.MemoryPercent()
+				if err != nil {
+					mem = -1
+					finalErr = err
+				}
+				stat.Mem = mem
+			}
+			{
+				mem, err := proc.MemoryInfo()
+				if err != nil {
+					stat.MemRSS = 0
+					stat.MemVMS = 0
+					stat.MemSwap = 0
+					finalErr = err
+				} else {
+					stat.MemRSS = mem.RSS
+					stat.MemVMS = mem.VMS
+					stat.MemSwap = mem.Swap
 				}
 			}
-			stat.Status = status + "\n"
+			return stat, finalErr
 		}
 		{
-			cpu, err := proc.CPUPercent()
-			if err != nil {
-				cpu = -1
-			}
-			stat.CPU = cpu
-		}
-		{
-			mem, err := proc.MemoryPercent()
-			if err != nil {
-				mem = -1
-			}
-			stat.Mem = mem
-		}
-		{
-			mem, err := proc.MemoryInfo()
-			if err != nil {
-				stat.MemRSS = 0
-				stat.MemVMS = 0
-				stat.MemSwap = 0
-			} else {
-				stat.MemRSS = mem.RSS
-				stat.MemVMS = mem.VMS
-				stat.MemSwap = mem.Swap
-			}
-		}
-		{
-			txt := fmt.Sprintf(
-				"%s\n%s\n%s\ncpu%% %f\nmem%% %f\nrss %d\nvms %d\nswap %d\n",
-				stat.Name,
-				strings.Join(stat.Args, " "),
-				stat.Status,
-				stat.CPU,
-				stat.Mem,
-				stat.MemRSS,
-				stat.MemVMS,
-				stat.MemSwap,
-			)
+			files = append(files, ninep.NewSimpleFile("status", 0, now, runs(func() ([]byte, error) {
+				stat, err := Stats()
+				txt := fmt.Sprintf(
+					"%s\n%s\n%s\ncpu%% %f\nmem%% %f\nrss %d\nvms %d\nswap %d\n",
+					stat.Name,
+					strings.Join(stat.Args, " "),
+					stat.Status,
+					stat.CPU,
+					stat.Mem,
+					stat.MemRSS,
+					stat.MemVMS,
+					stat.MemSwap,
+				)
+				return []byte(txt), err
+			})))
 
-			files = append(files, ninep.NewReadOnlySimpleFile("status", 0, now, []byte(txt)))
+			files = append(files, ninep.NewSimpleFile("status.json", 0, now, runs(func() ([]byte, error) {
+				stat, err := Stats()
+				finalErr := err
+				encodedJson, err := json.Marshal(stat)
+				if finalErr == nil {
+					finalErr = err
+				}
+				return encodedJson, finalErr
+			})))
+		}
+		{
+			files = append(files, ninep.NewSimpleFile("rlimit", 0, now, runs(func() ([]byte, error) {
+				var contents []string
+				rlimit, err := proc.Rlimit()
+				for _, r := range rlimit {
+					contents = append(contents, fmt.Sprintf("resource %d\nsoft%d\nhard %d\nused %d\n", r.Resource, r.Soft, r.Hard, r.Used))
+				}
+				return []byte(strings.Join(contents, "\n")), err
+			})))
 
-			encodedJson, err := json.Marshal(stat)
-			if err != nil {
-				panic(err)
-				return nil, err
-			}
-			files = append(files, ninep.NewReadOnlySimpleFile("status.json", 0, now, encodedJson))
+			files = append(files, ninep.NewSimpleFile("rlimit.json", 0, now, runs(func() ([]byte, error) {
+				rlimit, err := proc.Rlimit()
+				finalErr := err
+
+				type Res struct {
+					Limits []process.RlimitStat `json:"limits"`
+				}
+
+				encodedJson, err := json.Marshal(Res{rlimit})
+				if finalErr == nil {
+					finalErr = err
+				}
+				return encodedJson, finalErr
+			})))
+		}
+		{
+			files = append(files, ninep.NewSimpleFile("fd", 0, now, runs(func() ([]byte, error) {
+				var contents []string
+				fds, err := proc.OpenFiles()
+				for _, fd := range fds {
+					contents = append(contents, fmt.Sprintf("%d %s", fd.Fd, fd.Path))
+				}
+				return []byte(strings.Join(contents, "\n")), err
+			})))
+
+			files = append(files, ninep.NewSimpleFile("fd.json", 0, now, runs(func() ([]byte, error) {
+				fds, err := proc.OpenFiles()
+
+				type Res struct {
+					Fds []process.OpenFilesStat `json:"fds"`
+				}
+
+				encodedJson, err := json.Marshal(Res{fds})
+				return encodedJson, err
+			})))
+		}
+		{
+			files = append(files, ninep.NewSimpleFile("net", 0, now, runs(func() ([]byte, error) {
+				var contents []string
+				conns, err := proc.Connections()
+				for _, c := range conns {
+					contents = append(contents, fmt.Sprintf(
+						"%d %d %d %s:%d %s:%d %s %d", c.Fd, c.Family, c.Type, c.Laddr.IP, c.Laddr.Port, c.Raddr.IP, c.Raddr.Port, c.Status, c.Pid,
+					))
+				}
+
+				return []byte(strings.Join(contents, "\n")), err
+			})))
+
+			files = append(files, ninep.NewSimpleFile("net.json", 0, now, runs(func() ([]byte, error) {
+				conns, err := proc.Connections()
+				finalErr := err
+				type Res struct {
+					Connections []psnet.ConnectionStat `json:"connections"`
+				}
+
+				encodedJson, err := json.Marshal(Res{conns})
+				if finalErr == nil {
+					finalErr = err
+				}
+
+				return encodedJson, err
+			})))
+		}
+		{
+			files = append(files, ninep.NewSimpleFile("threads", 0, now, runs(func() ([]byte, error) {
+				var contents []string
+				threads, err := proc.Threads()
+				contents = append(contents, "tid cpu user sys idle nice iowait irq softirq steal guest guestNice")
+				for tid, t := range threads {
+					contents = append(contents, fmt.Sprintf(
+						"%d %s %f %f %f %f %f %f %f %f %f", tid, t.CPU, t.User, t.System, t.Nice, t.Iowait, t.Irq, t.Softirq, t.Steal, t.Guest, t.GuestNice,
+					))
+				}
+
+				return []byte(strings.Join(contents, "\n")), err
+			})))
+
+			files = append(files, ninep.NewSimpleFile("threads.json", 0, now, runs(func() ([]byte, error) {
+				threads, err := proc.Threads()
+				finalErr := err
+				type Res struct {
+					Threads map[int32]*cpu.TimesStat `json:"threads"`
+				}
+
+				encodedJson, err := json.Marshal(Res{threads})
+				if finalErr == nil {
+					finalErr = err
+				}
+
+				return encodedJson, err
+			})))
 		}
 	}
 	return files, nil

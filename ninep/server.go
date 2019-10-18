@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -484,8 +485,20 @@ func (s *Session) FileForFid(f Fid) (fil serverFile, found bool) {
 }
 func (s *Session) DeleteFid(f Fid)                { s.fids.Delete(f) }
 func (s *Session) PutFid(f Fid, h serverFile) Fid { return s.fids.Put(f, h) }
+func (s *Session) PutQidInfo(name string, info os.FileInfo) Qid {
+	var q Qid
+	if in, ok := info.(FileInfoPath); ok {
+		q = s.PutQidDirect(name, in.Path(), ModeFromFileInfo(info).QidType(), versionFromFileInfo(info))
+	} else {
+		q = s.PutQid(name, ModeFromFileInfo(info).QidType(), versionFromFileInfo(info))
+	}
+	return q
+}
 func (s *Session) PutQid(name string, t QidType, version uint32) Qid {
 	return s.qids.Put(name, t, version)
+}
+func (s *Session) PutQidDirect(name string, path uint64, t QidType, version uint32) Qid {
+	return s.qids.PutDirect(name, path, t, version)
 }
 func (s *Session) TouchQid(name string, t QidType) Qid {
 	return s.qids.Touch(name, t, 1)
@@ -654,6 +667,27 @@ func (p *QidPool) Put(name string, t QidType, version uint32) Qid {
 		}
 		qid = NewQid().Fill(t, version, p.nextPath)
 		p.nextPath++
+		p.pool[name] = qid
+	}
+	p.m.Unlock()
+	return qid
+}
+
+func (p *QidPool) PutDirect(name string, path uint64, t QidType, version uint32) Qid {
+	var qid Qid
+	p.m.Lock()
+	if existing, ok := p.pool[name]; ok {
+		qid = existing
+		if version != NoQidVersion {
+			qid.SetVersion(version)
+			qid.SetPath(path)
+			p.pool[name] = qid
+		}
+	} else {
+		if version == NoQidVersion {
+			version = 0
+		}
+		qid = NewQid().Fill(t, version, path)
 		p.pool[name] = qid
 	}
 	p.m.Unlock()
