@@ -58,6 +58,58 @@ type Authorizee interface {
 	Prove(ctx context.Context, user, access string) error
 }
 
+///////////////////////////////////////////////////////////////
+
+type FileInfoIterator interface {
+	// returns io.EOF with os.FileInfo = nil on end
+	NextFileInfo() (os.FileInfo, error)
+	// resets the reading of the file infos
+	Reset() error
+	// must be called to free iterator resources
+	Close() error
+}
+
+type fileInfoSliceIterator struct {
+	Infos []os.FileInfo
+	Index int
+}
+
+func FileInfoSliceIterator(fi []os.FileInfo) FileInfoIterator {
+	return &fileInfoSliceIterator{fi, 0}
+}
+
+func (itr *fileInfoSliceIterator) Close() error { return nil }
+func (itr *fileInfoSliceIterator) Reset() error { itr.Index = 0; return nil }
+func (itr *fileInfoSliceIterator) NextFileInfo() (os.FileInfo, error) {
+	idx := itr.Index
+	if idx >= len(itr.Infos) {
+		return nil, io.EOF
+	}
+	itr.Index++
+	return itr.Infos[idx], nil
+}
+
+func FileInfoSliceFromIterator(itr FileInfoIterator) ([]os.FileInfo, error) {
+	if it, ok := itr.(*fileInfoSliceIterator); ok {
+		return it.Infos, nil
+	}
+
+	items := make([]os.FileInfo, 16)
+	for {
+		fi, err := itr.NextFileInfo()
+		if fi != nil {
+			items = append(items, fi)
+		}
+		if err == io.EOF {
+			return items, nil
+		} else if err != nil {
+			return items, err
+		}
+	}
+}
+
+///////////////////////////////////////////////////////////////
+
 // A higher-level interface to the Plan9 file system protocol (9P2000)
 //
 // The following assumptions are part of the interface:
@@ -70,7 +122,7 @@ type FileSystem interface {
 	// Opens an existing file for reading/writing
 	OpenFile(path string, flag OpenMode) (FileHandle, error)
 	// Lists directories and files in a given path. Does not include '.' or '..'
-	ListDir(path string) ([]os.FileInfo, error)
+	ListDir(path string) (FileInfoIterator, error)
 	// Lists stats about a given file or directory.
 	Stat(path string) (os.FileInfo, error)
 	// Writes stats about a given file or directory. Implementations perform an all-or-nothing write.

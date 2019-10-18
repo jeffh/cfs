@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"text/tabwriter"
 
@@ -34,17 +35,34 @@ func main() {
 		if err != nil {
 			return err
 		}
+		defer infos.Close()
 
 		if list {
 			w := tabwriter.NewWriter(os.Stdout, 2, 1, 1, ' ', tabwriter.AlignRight|tabwriter.DiscardEmptyColumns)
-			for _, info := range infos {
-				usr, gid, muid, _ := ninep.FileUsers(info)
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%s\t %s\n", info.Mode(), usr, gid, muid, info.Size(), info.ModTime(), info.Name())
+			for {
+				info, err := infos.NextFileInfo()
+				if info != nil {
+					usr, gid, muid, _ := ninep.FileUsers(info)
+					fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%s\t %s\n", info.Mode(), usr, gid, muid, info.Size(), info.ModTime(), info.Name())
+				}
+				if err == io.EOF {
+					break
+				} else if err != nil {
+					return err
+				}
 			}
 			w.Flush()
 		} else {
-			for _, info := range infos {
-				fmt.Println(info.Name())
+			for {
+				info, err := infos.NextFileInfo()
+				if info != nil {
+					fmt.Println(info.Name())
+				}
+				if err == io.EOF {
+					break
+				} else if err != nil {
+					return err
+				}
 			}
 		}
 		return nil

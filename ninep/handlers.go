@@ -45,17 +45,28 @@ func (h *directoryHandle) ReadAt(p []byte, offset int64) (int, error) {
 		return 0, ErrSeekNotAllowed
 	}
 	if !h.fetched {
-		entries, err := h.fs.ListDir(h.path)
+		// TODO: stream this value
+		it, err := h.fs.ListDir(h.path)
 		if err != nil {
 			return 0, err
 		}
-		h.allFiles = make([]Stat, len(entries))
-		for i, info := range entries {
-			subpath := filepath.Join(h.path, info.Name())
-			q := h.session.PutQid(subpath, ModeFromFileInfo(info).QidType(), versionFromFileInfo(info))
-			st := fileInfoToStat(q, info)
-			h.allFiles[i] = st
+		h.allFiles = make([]Stat, 0, 16)
+		for {
+			info, err := it.NextFileInfo()
+			if info != nil {
+				subpath := filepath.Join(h.path, info.Name())
+				q := h.session.PutQid(subpath, ModeFromFileInfo(info).QidType(), versionFromFileInfo(info))
+				st := fileInfoToStat(q, info)
+				h.allFiles = append(h.allFiles, st)
+			}
+			if err == io.EOF {
+				break
+			} else if err != nil {
+				it.Close()
+				return 0, err
+			}
 		}
+		it.Close()
 		h.fetched = true
 	}
 	if h.index >= len(h.allFiles) {

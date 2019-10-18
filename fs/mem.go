@@ -226,7 +226,7 @@ func (m *Mem) stat(n *memNode) *MemFileInfo {
 	}
 }
 
-func (m *Mem) ListDir(path string) ([]os.FileInfo, error) {
+func (m *Mem) ListDir(path string) (ninep.FileInfoIterator, error) {
 	parts := ninep.PathSplit(path)
 	n, err := m.traverse(parts)
 	if err != nil {
@@ -238,7 +238,7 @@ func (m *Mem) ListDir(path string) ([]os.FileInfo, error) {
 		infos[i] = m.stat(&n.children[i])
 	}
 
-	return infos, nil
+	return ninep.FileInfoSliceIterator(infos), nil
 }
 
 func (m *Mem) Stat(path string) (os.FileInfo, error) {

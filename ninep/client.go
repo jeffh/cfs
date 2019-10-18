@@ -12,6 +12,8 @@ import (
 	"time"
 )
 
+var ErrListingOnNonDir = errors.New("cannot list files for path that's not a directory")
+
 type cltTransaction struct {
 	req *cltRequest
 	res *cltResponse
@@ -713,50 +715,6 @@ func (fs *FileSystemProxy) walk(fid Fid, path string) error {
 	return nil
 }
 
-func (fs *FileSystemProxy) statsFromReader(maxMsgSize uint32, r io.ReaderAt) ([]Stat, error) {
-	res := []Stat{}
-	offset := 0
-	buf := make([]byte, fs.c.MaxMsgSize)
-
-	readStat := func(b []byte) (Stat, []byte, error) {
-		st := Stat(b)
-		size := st.Size()
-		if int(size) > len(b) {
-			fs.c.Errorf("Invalid format while reading dir: (wanted: %d bytes, had: %d bytes)", size, len(b))
-			return nil, b, ErrBadFormat
-		}
-		st = Stat(b[:size+2])
-		return st, b[2+size:], nil
-	}
-
-	for {
-		n, err := r.ReadAt(buf, int64(offset))
-		if n > 0 {
-			rst := buf[:n]
-			for len(rst) > 0 {
-				var st Stat
-				st, rst, err = readStat(rst)
-				if err != nil {
-					return nil, err
-				}
-				res = append(res, st.Clone())
-			}
-			offset += n
-		}
-
-		if err == io.EOF {
-			err = nil
-			break
-		} else if n == 0 {
-			return res, err
-		} else if err != nil {
-			return res, err
-		}
-	}
-
-	return res, nil
-}
-
 //////////
 
 func (fs *FileSystemProxy) MakeDir(path string, mode Mode) error {
@@ -816,24 +774,93 @@ func (fs *FileSystemProxy) OpenFile(path string, flag OpenMode) (FileHandle, err
 	}
 	return h, err
 }
-func (fs *FileSystemProxy) ListDir(path string) ([]os.FileInfo, error) {
-	fid := fs.allocFid()
-	defer fs.releaseFid(fid)
-	fs.c.Tracef("ListDir(%#v) %s", path, fid)
-	if err := fs.walk(fid, path); err != nil {
-		return nil, err
-	}
-	defer fs.c.Clunk(fid)
-	var infos []os.FileInfo
-	_, _, err := fs.c.Open(fid, OREAD)
-	if err == nil {
-		stats, err := fs.statsFromReader(fs.c.MaxMsgSize, &FileProxy{fs, fid})
-		if err != nil {
+
+type fileSystemProxyIterator struct {
+	fp     *FileProxy
+	rst    []byte
+	buf    []byte
+	offset int
+}
+
+func (it *fileSystemProxyIterator) Reset() error {
+	it.rst = nil
+	it.buf = make([]byte, it.fp.fs.c.MaxMsgSize)
+	it.offset = 0
+	return nil
+}
+
+func (it *fileSystemProxyIterator) NextFileInfo() (os.FileInfo, error) {
+	if it.buf == nil {
+		if err := it.Reset(); err != nil {
 			return nil, err
 		}
-		infos = FileInfosFromStats(stats)
 	}
-	return infos, err
+	readStat := func(fs *FileSystemProxy, b []byte) (Stat, []byte, error) {
+		st := Stat(b)
+		size := st.Size()
+		if int(size) > len(b) {
+			fs.c.Errorf("Invalid format while reading dir: (wanted: %d bytes, had: %d bytes)", size, len(b))
+			return nil, b, ErrBadFormat
+		}
+		st = Stat(b[:size+2])
+		return st, b[2+size:], nil
+	}
+
+	var fi os.FileInfo
+	n, err := it.fp.ReadAt(it.buf, int64(it.offset))
+	// TODO: support reading more than one stat
+	if n > 0 {
+		it.rst = it.buf[:n]
+		for len(it.rst) > 0 {
+			var st Stat
+			st, it.rst, err = readStat(it.fp.fs, it.rst)
+			if err != nil {
+				return nil, err
+			}
+			fi = StatFileInfo{st.Clone()}
+		}
+		it.offset += n
+	}
+
+	it.fp.fs.c.Tracef("NextFileInfo() -> %#v, %v", fi, err)
+
+	return fi, err
+}
+func (it *fileSystemProxyIterator) Close() error { return it.fp.Close() }
+
+func (fs *FileSystemProxy) ListDir(path string) (FileInfoIterator, error) {
+
+	fid := fs.allocFid()
+	fs.c.Tracef("ListDir(%#v) %s", path, fid)
+	if err := fs.walk(fid, path); err != nil {
+		fs.releaseFid(fid)
+		return nil, err
+	}
+
+	st, err := fs.c.Stat(fid)
+	if err != nil {
+		fs.releaseFid(fid)
+		return nil, err
+	}
+	if st.Mode().IsDir() {
+		fs.releaseFid(fid)
+		return nil, ErrListingOnNonDir
+	}
+
+	itr := &fileSystemProxyIterator{fp: &FileProxy{fs, fid}}
+
+	qid, _, err := fs.c.Open(fid, OREAD)
+	if err == nil {
+		if qid.Type().IsDir() {
+			itr.Close()
+			return nil, ErrListingOnNonDir
+		} else {
+			return itr, nil
+		}
+	} else {
+		itr.Close()
+		return nil, err
+	}
 }
 func (fs *FileSystemProxy) Stat(path string) (os.FileInfo, error) {
 	fid := fs.allocFid()

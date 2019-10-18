@@ -101,13 +101,19 @@ func (f TraceFileSystem) OpenFile(path string, flag ninep.OpenMode) (ninep.FileH
 	return h, err
 }
 
-func (f TraceFileSystem) ListDir(path string) ([]os.FileInfo, error) {
-	infos, err := f.Fs.ListDir(path)
-	f.Tracef("FS.ListDir(%v) => (%v, %s)", path, infos, err)
+func (f TraceFileSystem) ListDir(path string) (ninep.FileInfoIterator, error) {
+	itr, err := f.Fs.ListDir(path)
+	v, _ := ninep.FileInfoSliceFromIterator(itr)
+	itr.Reset()
+	if len(v) > 50 {
+		f.Tracef("FS.ListDir(%v) => (%#v..., %s)", path, v[:50], err)
+	} else {
+		f.Tracef("FS.ListDir(%v) => (%#v, %s)", path, v, err)
+	}
 	if err != nil {
 		f.Errorf("FS.ListDir(%v) => (_, %s)", path, err)
 	}
-	return infos, err
+	return itr, err
 }
 
 func (f TraceFileSystem) Stat(path string) (os.FileInfo, error) {

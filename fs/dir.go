@@ -33,7 +33,7 @@ func (d Dir) OpenFile(path string, flag ninep.OpenMode) (ninep.FileHandle, error
 	return os.OpenFile(fullPath, flag.ToOsFlag(), 0)
 }
 
-func (d Dir) ListDir(path string) ([]os.FileInfo, error) {
+func (d Dir) ListDir(path string) (ninep.FileInfoIterator, error) {
 	fullPath := filepath.Join(string(d), path)
 	infos, err := ioutil.ReadDir(fullPath)
 	if err != nil {
@@ -53,7 +53,7 @@ func (d Dir) ListDir(path string) ([]os.FileInfo, error) {
 
 		infos[i] = info
 	}
-	return infos, nil
+	return ninep.FileInfoSliceIterator(infos), nil
 }
 
 func (d Dir) Stat(path string) (os.FileInfo, error) {

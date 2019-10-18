@@ -4,39 +4,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/user"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	ninep "github.com/jeffh/cfs/ninep"
 	"github.com/shirou/gopsutil/process"
 )
 
-type Proc struct {
-	CacheTTL time.Duration
-
-	m         sync.Mutex
-	fetchTime time.Time
-	cache     []*process.Process
-}
-
-func (f *Proc) fetch() ([]*process.Process, error) {
-	now := time.Now()
-	if f.CacheTTL == 0 || now.Sub(f.fetchTime) > f.CacheTTL {
-		ps, err := process.Processes()
-		if err == nil {
-			f.fetchTime = now
-			f.m.Lock()
-			f.cache = ps
-			f.m.Unlock()
-		}
-	}
-	f.m.Lock()
-	cache := f.cache
-	f.m.Unlock()
-	return cache, nil
-}
+type Proc struct{}
 
 func (f *Proc) findPid(pid int32) (*process.Process, error) {
 	proc, err := process.NewProcess(pid)
@@ -49,6 +26,7 @@ func (f *Proc) findPid(pid int32) (*process.Process, error) {
 func (f *Proc) pidDir(proc *process.Process) ([]os.FileInfo, error) {
 	// for thread safety, recreate the process struct
 	files := make([]os.FileInfo, 0, 4)
+	now := time.Now()
 	/*
 		Note: this method assumes we're in /proc/<pid>/
 
@@ -57,6 +35,8 @@ func (f *Proc) pidDir(proc *process.Process) ([]os.FileInfo, error) {
 			/proc/<pid>/cwd - current working directory of the process
 			/proc/<pid>/status - returns general process stats, separated by newlines
 			/proc/<pid>/status.json - returns general process stats as json
+			/proc/<pid>/uids - returns uids and usernames
+			/proc/<pid>/gids - returns gids and group names
 
 			/proc/<pid>/ctl
 			/proc/<pid>/fd
@@ -79,7 +59,49 @@ func (f *Proc) pidDir(proc *process.Process) ([]os.FileInfo, error) {
 			cwd = fmt.Sprintf("error: %s", err.Error())
 		}
 		cwd = cwd + "\n"
-		files = append(files, ninep.NewReadOnlySimpleFile("cwd", 0, f.fetchTime, []byte(cwd)))
+		files = append(files, ninep.NewReadOnlySimpleFile("cwd", 0, now, []byte(cwd)))
+	}
+	{
+		uids, err := proc.Uids()
+		if err != nil {
+			panic(err)
+			files = append(files, ninep.NewReadOnlySimpleFile("uids", 0, now, []byte(fmt.Sprintf("error: %s", err.Error()))))
+		} else {
+			uidstr := make([]string, 0, len(uids)*2)
+			for _, uid := range uids {
+				uid_str := strconv.Itoa(int(uid))
+				var username string
+				usr, err := user.LookupId(uid_str)
+				if err != nil {
+					panic(err)
+					username = fmt.Sprintf("error: %s", err.Error())
+				} else {
+					username = usr.Username
+				}
+				uidstr = append(uidstr, fmt.Sprintf("%s %s", uid_str, username))
+			}
+			files = append(files, ninep.NewReadOnlySimpleFile("uids", 0, now, []byte(strings.Join(uidstr, "\n"))))
+		}
+	}
+	{
+		gids, err := proc.Gids()
+		if err != nil {
+			files = append(files, ninep.NewReadOnlySimpleFile("gids", 0, now, []byte(fmt.Sprintf("error: %s", err.Error()))))
+		} else {
+			gidstr := make([]string, 0, len(gids)*2)
+			for _, gid := range gids {
+				gid_str := strconv.Itoa(int(gid))
+				var username string
+				usr, err := user.LookupGroupId(gid_str)
+				if err != nil {
+					username = fmt.Sprintf("error: %s", err.Error())
+				} else {
+					username = usr.Name
+				}
+				gidstr = append(gidstr, fmt.Sprintf("%s %s", gid_str, username))
+			}
+			files = append(files, ninep.NewReadOnlySimpleFile("gids", 0, now, []byte(strings.Join(gidstr, "\n"))))
+		}
 	}
 	{
 		type ProcStats struct {
@@ -102,7 +124,7 @@ func (f *Proc) pidDir(proc *process.Process) ([]os.FileInfo, error) {
 			if err != nil {
 				cmd = []string{fmt.Sprintf("error: %s", err)}
 			}
-			files = append(files, ninep.NewReadOnlySimpleFile("cmdline", 0, f.fetchTime, []byte(strings.Join(cmd, " "))))
+			files = append(files, ninep.NewReadOnlySimpleFile("cmdline", 0, now, []byte(strings.Join(cmd, " "))))
 			stat.Name = cmd[0]
 			stat.Args = cmd[1:]
 		}
@@ -173,14 +195,14 @@ func (f *Proc) pidDir(proc *process.Process) ([]os.FileInfo, error) {
 				stat.MemSwap,
 			)
 
-			files = append(files, ninep.NewReadOnlySimpleFile("status", 0, f.fetchTime, []byte(txt)))
+			files = append(files, ninep.NewReadOnlySimpleFile("status", 0, now, []byte(txt)))
 
 			encodedJson, err := json.Marshal(stat)
 			if err != nil {
 				panic(err)
 				return nil, err
 			}
-			files = append(files, ninep.NewReadOnlySimpleFile("status.json", 0, f.fetchTime, encodedJson))
+			files = append(files, ninep.NewReadOnlySimpleFile("status.json", 0, now, encodedJson))
 		}
 	}
 	return files, nil
@@ -219,17 +241,17 @@ func (f *Proc) OpenFile(path string, flag ninep.OpenMode) (ninep.FileHandle, err
 	}
 	return nil, os.ErrNotExist
 }
-func (f *Proc) ListDir(path string) ([]os.FileInfo, error) {
+func (f *Proc) ListDir(path string) (ninep.FileInfoIterator, error) {
 	if path == "/" {
-		procs, err := f.fetch()
+		pids, err := process.Pids()
 		if err != nil {
 			return nil, err
 		}
-		pids := make([]os.FileInfo, len(procs))
-		for i, proc := range procs {
-			pids[i] = processPid{proc, f.fetchTime}
+		infos := make([]os.FileInfo, len(pids))
+		for i, pid := range pids {
+			infos[i] = processPid{pid, time.Now()}
 		}
-		return pids, nil
+		return ninep.FileInfoSliceIterator(infos), nil
 	} else {
 		parts := ninep.PathSplit(path)[1:]
 		pid, err := strconv.Atoi(parts[0])
@@ -244,7 +266,8 @@ func (f *Proc) ListDir(path string) ([]os.FileInfo, error) {
 		parts = parts[1:]
 
 		if len(parts) == 0 {
-			return f.pidDir(proc)
+			infos, err := f.pidDir(proc)
+			return ninep.FileInfoSliceIterator(infos), err
 		} else {
 			return nil, os.ErrNotExist
 		}
@@ -256,7 +279,7 @@ func (f *Proc) Stat(path string) (os.FileInfo, error) {
 			FIName:    "/",
 			FISize:    0,
 			FIMode:    os.ModeDir | 0555,
-			FIModTime: f.fetchTime,
+			FIModTime: time.Now(),
 		}
 		return info, nil
 	} else {
@@ -277,7 +300,7 @@ func (f *Proc) Stat(path string) (os.FileInfo, error) {
 				FIName:    strconv.Itoa(pid),
 				FISize:    0,
 				FIMode:    os.ModeDir | 0555,
-				FIModTime: f.fetchTime,
+				FIModTime: time.Now(),
 			}
 			return info, nil
 		} else {
@@ -304,13 +327,13 @@ func (f *Proc) Delete(path string) error                  { return ninep.ErrUnsu
 //////////////////////////////////////
 
 type processPid struct {
-	P       *process.Process
+	Pid     int32
 	modTime time.Time
 }
 
-func (f processPid) Name() string       { return strconv.Itoa(int(f.P.Pid)) }
+func (f processPid) Name() string       { return strconv.Itoa(int(f.Pid)) }
 func (f processPid) Size() int64        { return 0 }
 func (f processPid) Mode() os.FileMode  { return os.ModeDir }
 func (f processPid) ModTime() time.Time { return f.modTime }
 func (f processPid) IsDir() bool        { return true }
-func (f processPid) Sys() interface{}   { return f.P }
+func (f processPid) Sys() interface{}   { return nil }

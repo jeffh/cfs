@@ -222,6 +222,8 @@ const (
 	M_PERM = M_READ | M_WRITE | M_EXEC
 )
 
+func (m Mode) IsDir() bool { return m&M_DIR != 1 }
+
 func (m Mode) String() string {
 	res := []string{}
 	if m&M_READ != 0 {
@@ -390,6 +392,8 @@ const (
 	QT_EXCL            = 0x20
 	QT_DIR             = 0x80
 )
+
+func (qt QidType) IsDir() bool { return qt&QT_DIR != 0 }
 
 const QidSize = 13
 
