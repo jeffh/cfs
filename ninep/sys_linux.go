@@ -15,14 +15,16 @@ func GetBlockSize() (int64, error) {
 	if err := syscall.Statfs(".", &s); err != nil {
 		return 0, err
 	}
-	return s.Bsize, nil
+	// need cast for 32-bit ARM linux
+	return int64(s.Bsize), nil
 }
 
 func Atime(info os.FileInfo) (t time.Time, ok bool) {
 	var statT *syscall.Stat_t
 	statT, ok = info.Sys().(*syscall.Stat_t)
 	if ok {
-		t = time.Unix(statT.Atim.Sec, statT.Atim.Nsec)
+		// need cast for 32-bit ARM linux
+		t = time.Unix(int64(statT.Atim.Sec), int64(statT.Atim.Nsec))
 	}
 	return
 }

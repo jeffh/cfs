@@ -43,14 +43,14 @@ const (
 var DEFAULT_MAX_MESSAGE_SIZE uint32
 
 func init() {
-	s := os.Getpagesize()
+	s := uint32(os.Getpagesize())
 	if s > math.MaxUint32 {
 		s = math.MaxUint32
 	}
 	if uint32(s) < MIN_MESSAGE_SIZE {
-		s = int(MIN_MESSAGE_SIZE)
+		s = MIN_MESSAGE_SIZE
 	}
-	DEFAULT_MAX_MESSAGE_SIZE = uint32(s)
+	DEFAULT_MAX_MESSAGE_SIZE = s
 }
 
 type MsgType byte
@@ -1034,7 +1034,8 @@ func (r Tread) SetCount(v uint32) { bo.PutUint32(r[msgOffset+12:msgOffset+16], v
 type Rread []byte
 
 func (r Rread) fill(t Tag, data []byte) {
-	if len(data) > math.MaxUint32 {
+	// need len cast for raspberrypis
+	if uint64(len(data)) > math.MaxUint32 {
 		panic(fmt.Errorf("data is larger than allowed: %d", len(data)))
 	}
 	size := uint32(msgOffset + 4 + len(data))
