@@ -17,7 +17,6 @@ var (
 	ErrNotImplemented  = errors.New("not implemented")
 
 	ErrChangeUidNotAllowed = errors.New("changing uid is not allowed by protocol")
-	ErrBufferTooSmall      = errors.New("buffer too small")
 )
 
 ////////////////////////////////////////////////
@@ -77,7 +76,7 @@ func (h *directoryHandle) ReadAt(p []byte, offset int64) (int, error) {
 	if len(p) < size {
 		fmt.Printf("%d < %d\n", len(p), size)
 		// TODO: return nil one time to indicate too small of a read
-		return 0, ErrBufferTooSmall
+		return 0, io.ErrShortBuffer
 	}
 	copy(p, next.Bytes())
 

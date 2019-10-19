@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -265,7 +266,7 @@ func NewReadOnlySimpleFile(name string, mode os.FileMode, modTime time.Time, con
 			FIModTime: modTime,
 			FISys:     nil,
 		},
-		ReadOnlyHandle(contents),
+		func() (FileHandle, error) { return &ReadOnlyMemoryFileHandle{contents}, nil },
 	}
 }
 
@@ -292,12 +293,6 @@ func (f *SimpleFile) Open() (FileHandle, error) {
 
 ////////////////////////////////////////////////
 
-func ReadOnlyHandle(b []byte) func() (FileHandle, error) {
-	return func() (FileHandle, error) {
-		return &ReadOnlyMemoryFileHandle{b}, nil
-	}
-}
-
 type ReadOnlyMemoryFileHandle struct {
 	Contents []byte
 }
@@ -313,3 +308,37 @@ func (h *ReadOnlyMemoryFileHandle) WriteAt(p []byte, off int64) (n int, err erro
 }
 func (h *ReadOnlyMemoryFileHandle) Sync() error  { return nil }
 func (h *ReadOnlyMemoryFileHandle) Close() error { return nil }
+
+////////////////////////////////////////////////
+
+// Supports receiving writes up to the max size in Buf
+type WriteOnlyFileHandle struct {
+	m       sync.Mutex
+	Buf     []byte
+	OnWrite func(p []byte) (int, error)
+}
+
+func (h *WriteOnlyFileHandle) ReadAt(p []byte, off int64) (n int, err error) { return 0, ErrUnsupported }
+func (h *WriteOnlyFileHandle) WriteAt(p []byte, off int64) (n int, err error) {
+	h.m.Lock()
+	defer h.m.Unlock()
+	if int64(cap(h.Buf)) <= off {
+		return 0, io.ErrShortWrite
+	}
+	end := int64(len(p)) + off
+	for int64(len(h.Buf)) < end {
+		h.Buf = append(h.Buf, 0)
+	}
+	copied := copy(h.Buf[off:], p)
+
+	if h.OnWrite != nil {
+		n, err = h.OnWrite(h.Buf)
+		h.Buf = append(h.Buf[:0], h.Buf[n:]...)
+		n = copied
+	} else {
+		err = ErrUnsupported
+	}
+	return
+}
+func (h *WriteOnlyFileHandle) Sync() error  { return nil }
+func (h *WriteOnlyFileHandle) Close() error { return nil }
