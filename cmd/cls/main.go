@@ -14,8 +14,10 @@ import (
 func main() {
 	var path string
 	var list bool
+	var nocols bool
 
 	flag.BoolVar(&list, "l", false, "list long format stats about each file")
+	flag.BoolVar(&nocols, "nocols", false, "avoids printing in nice columns, useful to verify streaming behavior")
 
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "ls for CFS\n")
@@ -38,7 +40,14 @@ func main() {
 		defer infos.Close()
 
 		if list {
-			w := tabwriter.NewWriter(os.Stdout, 2, 1, 1, ' ', tabwriter.AlignRight|tabwriter.DiscardEmptyColumns)
+			var w io.Writer
+			if nocols {
+				w = os.Stdout
+			} else {
+				tw := tabwriter.NewWriter(os.Stdout, 2, 1, 1, ' ', tabwriter.AlignRight|tabwriter.DiscardEmptyColumns)
+				defer tw.Flush()
+				w = tw
+			}
 			for {
 				info, err := infos.NextFileInfo()
 				if info != nil {
@@ -51,7 +60,6 @@ func main() {
 					return err
 				}
 			}
-			w.Flush()
 		} else {
 			for {
 				info, err := infos.NextFileInfo()
