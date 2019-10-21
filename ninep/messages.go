@@ -1198,6 +1198,8 @@ func (r Rwstat) Tag() Tag      { return MsgBase(r).Tag() }
 func PathSplit(path string) []string {
 	if path == "" {
 		return []string{""}
+	} else if path == "/" {
+		return []string{""}
 	}
 	return strings.Split(path, "/")
 }

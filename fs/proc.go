@@ -2,21 +2,36 @@ package fs
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/user"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
+	"github.com/google/shlex"
 	ninep "github.com/jeffh/cfs/ninep"
 	cpu "github.com/shirou/gopsutil/cpu"
 	psnet "github.com/shirou/gopsutil/net"
 	"github.com/shirou/gopsutil/process"
 )
 
-type Proc struct{}
+type Proc struct {
+	ctl procCtlHandle
+
+	cache idCache
+}
+
+var procCtlStat = &ninep.SimpleFileInfo{
+	FIName: "ctl",
+	FISize: 0,
+	FIMode: os.ModeAppend | 0666,
+}
 
 func (f *Proc) findPid(pid int32) (*process.Process, error) {
 	proc, err := process.NewProcess(pid)
@@ -28,13 +43,13 @@ func (f *Proc) findPid(pid int32) (*process.Process, error) {
 
 func (f *Proc) pidDir(proc *process.Process) ([]os.FileInfo, error) {
 	// for thread safety, recreate the process struct
-	files := make([]os.FileInfo, 0, 4)
+	files := make([]os.FileInfo, 0, 15)
 	now := time.Now()
 	/*
 		Note: this method assumes we're in /proc/<pid>/
 
 		Files:
-			/proc/exec
+			/proc/ctl - run a command, separated by null terminator or newline
 			/proc/<pid>/cmdline - arguments that were called with the program
 			/proc/<pid>/cwd - current working directory of the process
 			/proc/<pid>/status - returns general process stats, separated by newlines
@@ -53,9 +68,7 @@ func (f *Proc) pidDir(proc *process.Process) ([]os.FileInfo, error) {
 			                     Use newline or null-terminated strings that are either signal integers or
 								 one of the following named signals: SIGHUP,
 								 SIGINT, SIGQUIT, SIGTRAP, SIGABRT, SIGKILL,
-								 SIGALRM, SIGTERM
-			/proc/<pid>/ctl
-			/proc/<pid>/wait
+								 SIGALRM, SIGTERM, SIGSTOP, SIGCONT
 	*/
 	readOnly := func(f func() ([]byte, error)) func() (ninep.FileHandle, error) {
 		return func() (ninep.FileHandle, error) {
@@ -346,10 +359,8 @@ func (f *Proc) pidDir(proc *process.Process) ([]os.FileInfo, error) {
 		}
 		{
 			files = append(files, ninep.NewSimpleFile("signal", os.ModeAppend|0222, now, writeOnly(512, func(b []byte) (int, error) {
-				fmt.Printf("SIGNAL: %#v\n", b)
 				sig, n, err := parseSignal(b)
 				if err != nil {
-					fmt.Printf("SIGNAL: parseSignal %v\n", err)
 					return n, err
 				}
 				if sig == 0 {
@@ -371,44 +382,53 @@ func (f *Proc) CreateFile(path string, flag ninep.OpenMode, mode ninep.Mode) (ni
 }
 func (f *Proc) OpenFile(path string, flag ninep.OpenMode) (ninep.FileHandle, error) {
 	parts := ninep.PathSplit(path)[1:]
-	if len(parts) != 2 {
-		return nil, os.ErrNotExist
-	}
-
-	pid, err := strconv.Atoi(parts[0])
-	if err != nil {
-		return nil, os.ErrNotExist
-	}
-	proc, err := f.findPid(int32(pid))
-	if err != nil {
-		return nil, os.ErrNotExist
-	}
-
-	parts = parts[1:]
-
-	infos, err := f.pidDir(proc)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, info := range infos {
-		if info.Name() == parts[0] {
-			return info.(*ninep.SimpleFile).Open()
+	switch len(parts) {
+	case 1:
+		if parts[0] == "ctl" {
+			return &f.ctl, nil
 		}
+	case 2:
+		pid, err := strconv.Atoi(parts[0])
+		if err != nil {
+			return nil, os.ErrNotExist
+		}
+		proc, err := f.findPid(int32(pid))
+		if err != nil {
+			return nil, os.ErrNotExist
+		}
+
+		infos, err := f.pidDir(proc)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, info := range infos {
+			if info.Name() == parts[1] {
+				return info.(*ninep.SimpleFile).Open()
+			}
+		}
+	default:
+		break
 	}
 	return nil, os.ErrNotExist
 }
+
 func (f *Proc) ListDir(path string) (ninep.FileInfoIterator, error) {
-	if path == "/" {
+	parts := ninep.PathSplit(path)[1:]
+	if len(parts) == 0 {
 		pids, err := process.Pids()
 		if err != nil {
 			return nil, err
 		}
-		infos := make([]os.FileInfo, len(pids))
+		infos := make([]os.FileInfo, len(pids)+1)
+		infos[0] = procCtlStat
+
 		for i, pid := range pids {
-			infos[i] = processPid{pid, time.Now()}
+			infos[i+1] = processPid{Pid: pid, modTime: time.Now(), cache: &f.cache}
 		}
 		return ninep.FileInfoSliceIterator(infos), nil
+	} else if parts[0] == "ctl" {
+		return nil, ninep.ErrListingOnNonDir
 	} else {
 		parts := ninep.PathSplit(path)[1:]
 		pid, err := strconv.Atoi(parts[0])
@@ -430,8 +450,10 @@ func (f *Proc) ListDir(path string) (ninep.FileInfoIterator, error) {
 		}
 	}
 }
+
 func (f *Proc) Stat(path string) (os.FileInfo, error) {
-	if path == "/" {
+	parts := ninep.PathSplit(path)[1:]
+	if len(parts) == 0 {
 		info := &ninep.SimpleFileInfo{
 			FIName:    "/",
 			FISize:    0,
@@ -439,8 +461,10 @@ func (f *Proc) Stat(path string) (os.FileInfo, error) {
 			FIModTime: time.Now(),
 		}
 		return info, nil
+	} else if parts[0] == "ctl" {
+		info := procCtlStat
+		return info, nil
 	} else {
-		parts := ninep.PathSplit(path)[1:]
 		pid, err := strconv.Atoi(parts[0])
 		if err != nil {
 			return nil, os.ErrNotExist
@@ -486,14 +510,51 @@ func (f *Proc) Delete(path string) error                  { return ninep.ErrUnsu
 type processPid struct {
 	Pid     int32
 	modTime time.Time
+
+	uid int32
+	gid int32
+
+	cache *idCache
 }
 
 func (f processPid) Name() string       { return strconv.Itoa(int(f.Pid)) }
 func (f processPid) Size() int64        { return 0 }
-func (f processPid) Mode() os.FileMode  { return os.ModeDir }
+func (f processPid) Mode() os.FileMode  { return os.ModeDir | 0777 }
 func (f processPid) ModTime() time.Time { return f.modTime }
 func (f processPid) IsDir() bool        { return true }
 func (f processPid) Sys() interface{}   { return nil }
+func (f processPid) Uid() string {
+	uid := atomic.LoadInt32(&f.uid)
+	if uid == 0 {
+		proc, err := process.NewProcess(f.Pid)
+		if err != nil {
+			return ""
+		}
+		uids, err := proc.Uids()
+		if err != nil || len(uids) == 0 {
+			return ""
+		}
+		uid = uids[0]
+		atomic.StoreInt32(&f.uid, uids[0])
+	}
+	return f.cache.Username(int(uid))
+}
+func (f processPid) Gid() string {
+	gid := atomic.LoadInt32(&f.gid)
+	if gid == 0 {
+		proc, err := process.NewProcess(f.Pid)
+		if err != nil {
+			return ""
+		}
+		gids, err := proc.Gids()
+		if err != nil || len(gids) == 0 {
+			return ""
+		}
+		gid = gids[0]
+		atomic.StoreInt32(&f.gid, gids[0])
+	}
+	return f.cache.Groupname(int(gid))
+}
 
 ///////////////////////////////////////
 
@@ -545,4 +606,71 @@ func parseSignal(b []byte) (syscall.Signal, int, error) {
 	sig = syscall.Signal(v)
 
 	return sig, len(p), err
+}
+
+///////////////////////////////////////
+
+type procCtlHandle struct {
+	m   sync.Mutex
+	in  []byte
+	out []byte
+}
+
+func (h *procCtlHandle) ReadAt(p []byte, off int64) (n int, err error) {
+	end := int64(len(p)) + off
+
+	h.m.Lock()
+	size := int64(len(h.out))
+	if off >= size {
+		h.m.Unlock()
+		return 0, io.EOF
+	}
+	if end >= size {
+		err = io.EOF
+		end = size
+	}
+	n = copy(p, h.out[off:end])
+	h.m.Unlock()
+	return n, err
+}
+
+func (h *procCtlHandle) WriteAt(p []byte, off int64) (n int, err error) {
+	// we're append only, ignore offset
+	n = len(p)
+	h.m.Lock()
+	h.in = append(h.in, p...)
+	for i, ch := range p {
+		if ch == '\n' || ch == 0 {
+			var pid int
+			pid, err = h.exec(h.in[:i])
+			h.in = append(h.in[:0], h.in[i:]...)
+			if pid > 0 {
+				h.out = append(h.out, []byte(fmt.Sprintf("%d\n", pid))...)
+			}
+			if err != nil {
+				n = i
+				goto exit
+			}
+		}
+	}
+exit:
+	h.m.Unlock()
+	return n, err
+}
+func (h *procCtlHandle) Sync() error  { return nil }
+func (h *procCtlHandle) Close() error { return nil }
+
+func (h *procCtlHandle) exec(cmd []byte) (pid int, err error) {
+	args, err := shlex.Split(string(cmd))
+	if err != nil {
+		return 0, err
+	}
+	if len(args) < 1 {
+		return 0, errors.New("No command given")
+	}
+	pattr := os.ProcAttr{
+		// TODO: expose these values
+	}
+	proc, err := os.StartProcess(args[0], args[1:], &pattr)
+	return proc.Pid, err
 }

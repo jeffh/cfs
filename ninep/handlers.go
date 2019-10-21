@@ -22,13 +22,17 @@ var (
 ////////////////////////////////////////////////
 
 type directoryHandle struct {
-	fs       FileSystem
-	offset   int64
-	index    int
-	allFiles []Stat
-	session  *Session
-	path     string
-	fetched  bool
+	offset int64
+	index  int
+	it     FileInfoIterator
+	buffer []Stat
+	rem    []Stat
+	eof    bool
+
+	// required for construction
+	fs      FileSystem
+	session *Session
+	path    string
 }
 
 func (h *directoryHandle) ReadAt(p []byte, offset int64) (int, error) {
@@ -37,41 +41,53 @@ func (h *directoryHandle) ReadAt(p []byte, offset int64) (int, error) {
 		// reset
 		h.offset = 0
 		h.index = 0
-		h.allFiles = h.allFiles[:0]
-		h.fetched = false
+		h.eof = false
+		h.rem = nil
+		if h.it != nil {
+			err := h.it.Reset()
+			if err != nil {
+				return 0, err
+			}
+		}
 	}
 	if h.offset != offset {
 		return 0, ErrSeekNotAllowed
 	}
-	if !h.fetched {
-		// TODO: stream this value
+	if h.it == nil {
 		it, err := h.fs.ListDir(h.path)
 		if err != nil {
 			return 0, err
 		}
-		h.allFiles = make([]Stat, 0, 16)
-		for {
-			info, err := it.NextFileInfo()
+		h.buffer = make([]Stat, 32)
+		h.rem = h.buffer[:0]
+		h.it = it
+	}
+	if len(h.rem) == 0 {
+		if h.eof {
+			return 0, io.EOF
+		}
+		h.rem = h.buffer[:0]
+		for i, c := 0, cap(h.buffer); i < c; i++ {
+			info, err := h.it.NextFileInfo()
 			if info != nil {
 				subpath := filepath.Join(h.path, info.Name())
 				q := h.session.PutQidInfo(subpath, info)
 				st := fileInfoToStat(q, info)
-				h.allFiles = append(h.allFiles, st)
+				h.rem = append(h.rem, st)
 			}
 			if err == io.EOF {
+				h.eof = true
+				if len(h.rem) == 0 {
+					return 0, io.EOF
+				}
 				break
 			} else if err != nil {
-				it.Close()
 				return 0, err
 			}
 		}
-		it.Close()
-		h.fetched = true
 	}
-	if h.index >= len(h.allFiles) {
-		return 0, io.EOF
-	}
-	next := h.allFiles[h.index]
+	next := h.rem[0]
+	h.rem = h.rem[1:]
 	size := next.Nbytes()
 	if len(p) < size {
 		fmt.Printf("%d < %d\n", len(p), size)
@@ -95,10 +111,14 @@ func (h *directoryHandle) Sync() error {
 
 func (h *directoryHandle) Close() error {
 	// reset
+	if h.it != nil {
+		h.it.Close()
+	}
 	h.offset = 0
 	h.index = 0
-	h.allFiles = nil
-	h.fetched = false
+	h.it = nil
+	h.rem = nil
+	h.buffer = nil
 	return nil
 }
 

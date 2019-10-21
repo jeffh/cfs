@@ -2,6 +2,7 @@ package ninep
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"sync"
@@ -82,8 +83,8 @@ type FileInfoIterator interface {
 }
 
 type fileInfoSliceIterator struct {
-	Infos []os.FileInfo
-	Index int
+	infos []os.FileInfo
+	index int
 }
 
 func FileInfoSliceIterator(fi []os.FileInfo) FileInfoIterator {
@@ -91,19 +92,23 @@ func FileInfoSliceIterator(fi []os.FileInfo) FileInfoIterator {
 }
 
 func (itr *fileInfoSliceIterator) Close() error { return nil }
-func (itr *fileInfoSliceIterator) Reset() error { itr.Index = 0; return nil }
+func (itr *fileInfoSliceIterator) Reset() error { itr.index = 0; return nil }
 func (itr *fileInfoSliceIterator) NextFileInfo() (os.FileInfo, error) {
-	idx := itr.Index
-	if idx >= len(itr.Infos) {
+	idx := itr.index
+	if idx >= len(itr.infos) {
 		return nil, io.EOF
 	}
-	itr.Index++
-	return itr.Infos[idx], nil
+	itr.index++
+	return itr.infos[idx], nil
 }
 
 func FileInfoSliceFromIterator(itr FileInfoIterator, max int) ([]os.FileInfo, error) {
+	if itr == nil {
+		return nil, errors.New("Internal error, no iterator returned, but got no error")
+	}
+
 	if it, ok := itr.(*fileInfoSliceIterator); ok {
-		return it.Infos, nil
+		return it.infos, nil
 	}
 
 	items := make([]os.FileInfo, 0, 16)
@@ -244,13 +249,6 @@ func (f *SimpleFileInfo) Sys() interface{}   { return f.FISys }
 
 ////////////////////////////////////////////////
 
-// A simple interface for a file. File Systems may use this to easily structure
-// a file system in memory
-type File interface {
-	Info() (os.FileInfo, error)
-	Open() (FileHandle, error)
-}
-
 // Simple file implements os.FileInfo and FileHandle operations
 type SimpleFile struct {
 	SimpleFileInfo
@@ -271,11 +269,14 @@ func NewReadOnlySimpleFile(name string, mode os.FileMode, modTime time.Time, con
 }
 
 func NewSimpleFile(name string, mode os.FileMode, modTime time.Time, open func() (FileHandle, error)) *SimpleFile {
+	if mode == 0 {
+		mode = 0444
+	}
 	return &SimpleFile{
 		SimpleFileInfo{
 			FIName:    name,
 			FISize:    0,
-			FIMode:    mode | 0444,
+			FIMode:    mode,
 			FIModTime: modTime,
 			FISys:     nil,
 		},
@@ -283,7 +284,8 @@ func NewSimpleFile(name string, mode os.FileMode, modTime time.Time, open func()
 	}
 }
 
-func (f *SimpleFile) Info() os.FileInfo { return f }
+func (f *SimpleFile) WriteInfo(in os.FileInfo) error { return ErrUnsupported }
+func (f *SimpleFile) Info() (os.FileInfo, error)     { return f, nil }
 func (f *SimpleFile) Open() (FileHandle, error) {
 	if f.OpenFn == nil {
 		return nil, ErrUnsupported
