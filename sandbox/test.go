@@ -1,4 +1,5 @@
 // +build darwin
+
 package main
 
 // #include <sys/sysctl.h>
