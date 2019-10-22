@@ -1203,3 +1203,19 @@ func PathSplit(path string) []string {
 	}
 	return strings.Split(path, "/")
 }
+
+func IsSubpath(path, parentPath string) bool {
+	parLen := len(parentPath)
+	if len(path) < parLen {
+		return false
+	}
+	if len(path) == parLen {
+		return strings.HasPrefix(path, parentPath)
+	}
+	for i, ch := range []byte(parentPath) {
+		if path[i] != ch {
+			return false
+		}
+	}
+	return parentPath[parLen-1] == '/' || path[parLen] == '/'
+}

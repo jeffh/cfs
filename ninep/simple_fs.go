@@ -4,12 +4,26 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 )
 
 type Node interface {
 	Info() (os.FileInfo, error)
 	WriteInfo(in os.FileInfo) error
+}
+
+type RenamedNode struct {
+	Node
+	NewName string
+}
+
+func (n *RenamedNode) Info() (os.FileInfo, error) {
+	info, err := n.Node.Info()
+	if err != nil {
+		return nil, err
+	}
+	return FileInfoWithName(info, n.NewName), nil
 }
 
 // A simple interface for a file. File Systems may use this to easily structure
@@ -27,6 +41,21 @@ type Dir interface {
 	Delete(name string) error
 }
 
+// Optionally support to walk to a specific node in a Dir. This can provide
+// better performance for directories that can be large.
+type StepDir interface {
+	Dir
+	Step(name string) (Node, error)
+}
+
+// Optionally support walking for Dirs. Unlike StepDir, this interface receives
+// the entire child path to the desired file. This can provide better
+// performance for directories that can be large through recursive paths.
+type WalkDir interface {
+	Dir
+	Walk(subpath []string) (Node, error)
+}
+
 type NodeIterator interface {
 	NextNode() (Node, error)
 	Reset() error
@@ -40,76 +69,7 @@ type SimpleFileSystem struct {
 }
 
 func (f *SimpleFileSystem) walk(path string, walkLast bool) (Node, string, error) {
-	currNode := f.Root
-	parts := PathSplit(path)[1:]
-	lastPart := parts[len(parts)-1]
-	dirParts := parts[:len(parts)-1]
-	for _, part := range dirParts {
-		itr, err := currNode.(Dir).List()
-		if err != nil {
-			return nil, lastPart, err
-		}
-		for {
-			node, err := itr.NextNode()
-			info, infoErr := node.Info()
-			if infoErr != nil {
-				itr.Close()
-				return nil, lastPart, infoErr
-			}
-
-			if info.Name() == part {
-				if !info.IsDir() {
-					itr.Close()
-					return nil, lastPart, os.ErrNotExist
-				}
-
-				currNode = node
-				break
-			}
-
-			if err == io.EOF {
-				itr.Close()
-				return nil, lastPart, os.ErrNotExist
-			} else if err != nil {
-				itr.Close()
-				return nil, lastPart, err
-			}
-		}
-		itr.Close()
-	}
-
-	if walkLast && lastPart != "" {
-		itr, err := currNode.(Dir).List()
-		if err != nil {
-			return nil, lastPart, err
-		}
-		for {
-			node, err := itr.NextNode()
-			if node != nil {
-				info, infoErr := node.Info()
-				if infoErr != nil {
-					itr.Close()
-					return nil, lastPart, infoErr
-				}
-
-				if info.Name() == lastPart {
-					currNode = node
-					break
-				}
-			}
-
-			if err == io.EOF {
-				itr.Close()
-				return nil, lastPart, os.ErrNotExist
-			} else if err != nil {
-				itr.Close()
-				return nil, lastPart, err
-			}
-		}
-		itr.Close()
-	}
-
-	return currNode, lastPart, nil
+	return Walk(f.Root, path, walkLast)
 }
 
 func (f *SimpleFileSystem) MakeDir(path string, mode Mode) error {
@@ -163,7 +123,7 @@ func (f *SimpleFileSystem) ListDir(path string) (FileInfoIterator, error) {
 		return nil, err
 	}
 
-	return &FileInfoNodeIterator{it}, nil
+	return &fileInfoNodeIterator{it}, nil
 }
 func (f *SimpleFileSystem) Stat(path string) (os.FileInfo, error) {
 	node, _, err := f.walk(path, true)
@@ -174,10 +134,12 @@ func (f *SimpleFileSystem) Stat(path string) (os.FileInfo, error) {
 }
 
 func (f *SimpleFileSystem) WriteStat(path string, s Stat) error {
-	node, _, err := f.walk(path, true)
+	node, name, err := f.walk(path, false)
 	if err != nil {
 		return err
 	}
+	// TODO: FIXME, need to pass along name
+	_ = name
 	info := StatFileInfo{s}
 	return node.WriteInfo(info)
 }
@@ -192,6 +154,32 @@ func (f *SimpleFileSystem) Delete(path string) error {
 		return os.ErrNotExist
 	}
 	return dir.Delete(name)
+}
+
+/////////////////////////////////////////////
+
+func FilterNodeIterator(it NodeIterator, filter func(Node) bool) NodeIterator {
+	return &nodeFilterIterator{it, filter}
+}
+
+type nodeFilterIterator struct {
+	it     NodeIterator
+	filter func(n Node) bool
+}
+
+func (itr *nodeFilterIterator) Close() error { return itr.it.Close() }
+func (itr *nodeFilterIterator) Reset() error { return itr.it.Reset() }
+func (itr *nodeFilterIterator) NextNode() (Node, error) {
+	for {
+		n, err := itr.it.NextNode()
+		if n != nil && itr.filter(n) {
+			return n, nil
+		}
+
+		if err != nil {
+			return nil, err
+		}
+	}
 }
 
 /////////////////////////////////////////////
@@ -218,11 +206,21 @@ func (itr *nodeSliceIterator) NextNode() (Node, error) {
 
 /////////////////////////////////////////////
 
-type FileInfoNodeIterator struct {
+func NodeToFileInfoIterator(it NodeIterator) FileInfoIterator {
+	return &fileInfoNodeIterator{it}
+}
+func PassNodeToFileInfoIterator(it NodeIterator, err error) (FileInfoIterator, error) {
+	if it == nil {
+		return nil, err
+	}
+	return &fileInfoNodeIterator{it}, err
+}
+
+type fileInfoNodeIterator struct {
 	it NodeIterator
 }
 
-func (i *FileInfoNodeIterator) NextFileInfo() (os.FileInfo, error) {
+func (i *fileInfoNodeIterator) NextFileInfo() (os.FileInfo, error) {
 	node, err := i.it.NextNode()
 	if err != nil {
 		return nil, err
@@ -230,8 +228,8 @@ func (i *FileInfoNodeIterator) NextFileInfo() (os.FileInfo, error) {
 	return node.Info()
 }
 
-func (i *FileInfoNodeIterator) Reset() error { return i.it.Reset() }
-func (i *FileInfoNodeIterator) Close() error { return i.it.Close() }
+func (i *fileInfoNodeIterator) Reset() error { return i.it.Reset() }
+func (i *fileInfoNodeIterator) Close() error { return i.it.Close() }
 
 /////////////////////////////////////////////
 
@@ -258,7 +256,7 @@ func StaticRootDir(children ...Node) *StaticReadOnlyDir {
 	return &StaticReadOnlyDir{
 		SimpleFileInfo: SimpleFileInfo{
 			FIName: "",
-			FIMode: os.ModeDir | 0222,
+			FIMode: os.ModeDir | 0777,
 		},
 		Children: children,
 	}
@@ -290,6 +288,92 @@ func (d *DynamicReadOnlyDir) CreateDir(name string, mode Mode) error {
 }
 
 /////////////////////////////////////////////
+
+// Creates a dynamic, readonly directory that can't be modified. Allows arbitrary nested paths.
+// Unlike normal directories, displays children as "top-level" children
+type DynamicReadOnlyDirTree struct {
+	SimpleFileInfo
+	GetFlatTree func() ([]Node, error)
+}
+
+func (d *DynamicReadOnlyDirTree) Info() (os.FileInfo, error)     { return d, nil }
+func (d *DynamicReadOnlyDirTree) WriteInfo(in os.FileInfo) error { return ErrUnsupported }
+func (d *DynamicReadOnlyDirTree) Delete(name string) error       { return ErrUnsupported }
+func (d *DynamicReadOnlyDirTree) List() (NodeIterator, error) {
+	nodes, err := d.GetFlatTree()
+	if err != nil {
+		return nil, err
+	}
+	return makeNodeSliceIterator(nodes), nil
+}
+func (d *DynamicReadOnlyDirTree) Walk(subpath []string) (Node, error) {
+	path := strings.Join(subpath, "/")
+	nodes, err := d.GetFlatTree()
+	if err != nil {
+		return nil, err
+	}
+	for _, n := range nodes {
+		info, err := n.Info()
+		if err != nil {
+			return nil, err
+		}
+		if info.Name() == path {
+			return n, nil
+		}
+	}
+
+	// fallback, try prefix matching
+	slash := 0
+	if len(path) > 0 && path[len(path)-1] != '/' {
+		slash += 1
+	}
+	var res []Node
+	for _, n := range nodes {
+		info, err := n.Info()
+		if err != nil {
+			return nil, err
+		}
+		name := info.Name()
+		if IsSubpath(name, path) {
+			res = append(res, &RenamedNode{n, name[len(path)+slash:]})
+		}
+	}
+	if len(res) > 0 {
+		fi := d.SimpleFileInfo
+		fi.FIName = path
+		dir := &DynamicReadOnlyDirTree{
+			SimpleFileInfo: fi,
+			GetFlatTree: func() ([]Node, error) {
+				return res, nil
+			},
+		}
+		return dir, nil
+	}
+
+	return nil, os.ErrNotExist
+}
+func (d *DynamicReadOnlyDirTree) CreateFile(name string, flag OpenMode, mode Mode) (FileHandle, error) {
+	return nil, ErrUnsupported
+}
+func (d *DynamicReadOnlyDirTree) CreateDir(name string, mode Mode) error {
+	return ErrUnsupported
+}
+
+/////////////////////////////////////////////
+
+func StaticReadOnlyFile(name string, mode os.FileMode, modTime time.Time, b []byte) *SimpleFile {
+	return &SimpleFile{
+		SimpleFileInfo: SimpleFileInfo{
+			FIName:    name,
+			FIMode:    mode,
+			FIModTime: modTime,
+		},
+		OpenFn: func() (FileHandle, error) {
+			return &ReadOnlyMemoryFileHandle{b}, nil
+		},
+	}
+}
+
 func DynamicReadOnlyFile(name string, mode os.FileMode, modTime time.Time, open func() ([]byte, error)) *SimpleFile {
 	return &SimpleFile{
 		SimpleFileInfo: SimpleFileInfo{
@@ -302,4 +386,125 @@ func DynamicReadOnlyFile(name string, mode os.FileMode, modTime time.Time, open 
 			return &ReadOnlyMemoryFileHandle{b}, err
 		},
 	}
+}
+
+/////////////////////////////////////////////////////////////////////////////
+
+func FindChild(root Node, name string) (Node, os.FileInfo, error) {
+	if name != "" {
+		var (
+			foundNode Node
+
+			itr NodeIterator
+			err error
+
+			info    os.FileInfo
+			infoErr error
+		)
+
+		if walkDir, ok := root.(StepDir); ok {
+			n, err := walkDir.Step(name)
+			if err != nil {
+				return nil, nil, err
+			}
+			info, err := n.Info()
+			if err != nil {
+				return nil, nil, err
+			}
+			return n, info, nil
+		}
+
+		rootDir, ok := root.(Dir)
+		if !ok {
+			return nil, nil, ErrListingOnNonDir
+		}
+
+		itr, err = rootDir.List()
+		if err != nil {
+			return nil, nil, err
+		}
+		for {
+			node, err := itr.NextNode()
+			if node != nil {
+				info, infoErr = node.Info()
+				if infoErr != nil {
+					itr.Close()
+					return nil, nil, infoErr
+				}
+
+				if info.Name() == name {
+					foundNode = node
+					break
+				}
+			}
+
+			if err == io.EOF {
+				itr.Close()
+				return nil, info, os.ErrNotExist
+			} else if err != nil {
+				itr.Close()
+				return nil, info, err
+			}
+		}
+		itr.Close()
+		return foundNode, info, err
+	} else {
+		return nil, nil, os.ErrNotExist
+	}
+}
+
+// Walks a given node using the path as guidance. Returns the filename reached.
+func Walk(root Node, path string, walkLast bool) (Node, string, error) {
+	currNode := root
+	parts := PathSplit(path)[1:]
+	if len(parts) == 0 {
+		return currNode, "", nil
+	}
+
+	lastPart := parts[len(parts)-1]
+	dirParts := parts[:len(parts)-1]
+	for i, part := range dirParts {
+		var (
+			node Node
+			info os.FileInfo
+			err  error
+		)
+		if walkNode, ok := currNode.(WalkDir); ok {
+			node, err = walkNode.Walk(parts[i:])
+			if err != nil {
+				return nil, lastPart, err
+			}
+			return node, lastPart, err
+		} else {
+			node, info, err = FindChild(currNode, part)
+		}
+		if err != nil {
+			return nil, lastPart, err
+		}
+
+		if !info.IsDir() {
+			return nil, lastPart, os.ErrNotExist
+		}
+
+		currNode = node
+	}
+
+	if walkLast && lastPart != "" {
+		var (
+			node Node
+			err  error
+		)
+		if walkNode, ok := currNode.(WalkDir); ok {
+			node, err = walkNode.Walk(parts[len(parts)-1:])
+
+		} else {
+			node, _, err = FindChild(currNode, lastPart)
+		}
+		if err != nil {
+			return nil, lastPart, err
+		}
+		currNode = node
+	}
+
+	return currNode, lastPart, nil
 }

@@ -393,7 +393,15 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 
 			fil.Name = path
 
-			h.Tracef("srv: Twalk: %s :: %v %v", m.Fid(), fil.Name, info.Mode())
+			if info != nil {
+				h.Tracef("srv: Twalk: %s :: %v %v", m.Fid(), fil.Name, info.Mode())
+			} else {
+				h.Tracef("srv: Twalk: %s :: %v nil", m.Fid(), fil.Name)
+				h.Errorf("srv: implementation returned a nil info without an error; returning not found")
+				w.Rerror(os.ErrNotExist)
+				return
+			}
+
 			if err == nil {
 				q := session.PutQidInfo(fil.Name, info)
 				walkedQids = append(walkedQids, q)
