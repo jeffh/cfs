@@ -13,8 +13,10 @@ import (
 func main() {
 	var path string
 	var numlines int
+	var writeFromStdin bool
 
 	flag.IntVar(&numlines, "n", 0, "number of lines to print")
+	flag.BoolVar(&writeFromStdin, "stdin", false, "writes data read from stdin before reading from the 9p file")
 
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "cat for CFS\n")
@@ -29,12 +31,27 @@ func main() {
 			path = flag.Arg(1)
 		}
 
+		mode := ninep.OpenMode(ninep.OREAD)
+
+		if writeFromStdin {
+			mode = ninep.ORDWR
+		}
+
 		path = flag.Arg(1)
-		h, err := fs.OpenFile(path, ninep.OREAD)
+		h, err := fs.OpenFile(path, mode)
 		if err != nil {
 			return err
 		}
 		defer h.Close()
+
+		if writeFromStdin {
+			wr := ninep.Writer(h)
+			n, err := io.Copy(wr, os.Stdin)
+			fmt.Printf("# write %d bytes\n", n)
+			if err != nil {
+				return err
+			}
+		}
 
 		rdr := ninep.Reader(h)
 		if numlines == 0 {

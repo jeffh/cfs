@@ -196,12 +196,18 @@ func makeNodeSliceIterator(fi []Node) NodeIterator {
 func (itr *nodeSliceIterator) Close() error { return nil }
 func (itr *nodeSliceIterator) Reset() error { itr.index = 0; return nil }
 func (itr *nodeSliceIterator) NextNode() (Node, error) {
-	idx := itr.index
-	if idx >= len(itr.nodes) {
-		return nil, io.EOF
+	for {
+		idx := itr.index
+		if idx >= len(itr.nodes) {
+			return nil, io.EOF
+		}
+		itr.index++
+		node := itr.nodes[idx]
+		if node == nil {
+			continue
+		}
+		return node, nil
 	}
-	itr.index++
-	return itr.nodes[idx], nil
 }
 
 /////////////////////////////////////////////
@@ -290,7 +296,9 @@ func (d *DynamicReadOnlyDir) CreateDir(name string, mode Mode) error {
 /////////////////////////////////////////////
 
 // Creates a dynamic, readonly directory that can't be modified. Allows arbitrary nested paths.
-// Unlike normal directories, displays children as "top-level" children
+// Unlike normal directories, displays children as "top-level" children.
+//
+// Not particularly efficient, but sure is easy!
 type DynamicReadOnlyDirTree struct {
 	SimpleFileInfo
 	GetFlatTree func() ([]Node, error)
@@ -338,6 +346,11 @@ func (d *DynamicReadOnlyDirTree) Walk(subpath []string) (Node, error) {
 			res = append(res, &RenamedNode{n, name[len(path)+slash:]})
 		}
 	}
+
+	// TODO: if the input path is more specific than one we know about, we'll
+	// have to query the closest possible match (if it's a dir) to manually
+	// recurse
+
 	if len(res) > 0 {
 		fi := d.SimpleFileInfo
 		fi.FIName = path
@@ -384,6 +397,26 @@ func DynamicReadOnlyFile(name string, mode os.FileMode, modTime time.Time, open 
 		OpenFn: func() (FileHandle, error) {
 			b, err := open()
 			return &ReadOnlyMemoryFileHandle{b}, err
+		},
+	}
+}
+
+func CtlFile(name string, mode os.FileMode, modTime time.Time, thread func(r io.Reader, w io.Writer)) *SimpleFile {
+	return &SimpleFile{
+		SimpleFileInfo: SimpleFileInfo{
+			FIName:    name,
+			FIMode:    mode,
+			FIModTime: modTime,
+		},
+		OpenFn: func() (FileHandle, error) {
+			r1, w1 := io.Pipe()
+			r2, w2 := io.Pipe()
+			go func() {
+				thread(r1, w2)
+				r1.Close()
+				w2.Close()
+			}()
+			return &RWFileHandle{R: r2, W: w1}, nil
 		},
 	}
 }

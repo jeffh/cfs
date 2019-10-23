@@ -273,6 +273,10 @@ func (t *cltResponse) readReply(rdr io.Reader) error {
 		return fmt.Errorf("Clt: Message too large (%d > %d)", size, len(t.inMsg))
 	}
 
+	if size < 4 {
+		return fmt.Errorf("Clt: Message size too short (%d < %d)", size, 4)
+	}
+
 	_, err = readUpTo(rdr, t.inMsg[4:size])
 	if err != nil {
 		return err

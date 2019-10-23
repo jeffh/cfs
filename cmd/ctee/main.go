@@ -11,8 +11,10 @@ import (
 )
 
 func main() {
-	var path string
-	var nostdout bool
+	var (
+		path     string
+		nostdout bool
+	)
 
 	flag.BoolVar(&nostdout, "s", false, "Don't print to stdout, only write to file")
 
@@ -29,9 +31,16 @@ func main() {
 			path = flag.Arg(1)
 		}
 
+		var (
+			h   ninep.FileHandle
+			err error
+		)
+
 		path = flag.Arg(1)
-		h, err := fs.CreateFile(path, ninep.OWRITE|ninep.OTRUNC, 0664)
-		if os.IsExist(err) {
+		_, err = fs.Stat(path)
+		if os.IsNotExist(err) {
+			h, err = fs.CreateFile(path, ninep.OWRITE|ninep.OTRUNC, 0664)
+		} else {
 			h, err = fs.OpenFile(path, ninep.OWRITE|ninep.OTRUNC)
 		}
 		if err != nil {

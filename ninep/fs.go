@@ -344,3 +344,23 @@ func (h *WriteOnlyFileHandle) WriteAt(p []byte, off int64) (n int, err error) {
 }
 func (h *WriteOnlyFileHandle) Sync() error  { return nil }
 func (h *WriteOnlyFileHandle) Close() error { return nil }
+
+////////////////////////////////////////////////
+
+type RWFileHandle struct {
+	R io.Reader
+	W io.Writer
+}
+
+func (h *RWFileHandle) ReadAt(p []byte, off int64) (n int, err error)  { return h.R.Read(p) }
+func (h *RWFileHandle) WriteAt(p []byte, off int64) (n int, err error) { return h.W.Write(p) }
+func (h *RWFileHandle) Sync() error                                    { return nil }
+func (h *RWFileHandle) Close() error {
+	if rc, ok := h.R.(io.Closer); ok {
+		rc.Close()
+	}
+	if wc, ok := h.W.(io.Closer); ok {
+		wc.Close()
+	}
+	return nil
+}
