@@ -217,9 +217,9 @@ func (c *Client) connect() error {
 
 func (c *Client) writeRequest(t *cltRequest) error {
 	// TODO: GROT this for a different timeout mechnism?
-	now := time.Now()
-	c.rwc.SetReadDeadline(now.Add(c.Timeout))
-	c.rwc.SetWriteDeadline(now.Add(c.Timeout))
+	// now := time.Now()
+	// c.rwc.SetReadDeadline(now.Add(c.Timeout))
+	// c.rwc.SetWriteDeadline(now.Add(c.Timeout))
 	return t.writeRequest(c.rwc)
 }
 

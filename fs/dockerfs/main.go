@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 	"strings"
 	"time"
@@ -168,49 +169,64 @@ func NewFs() (*Fs, error) {
 						b := buf[:]
 						for {
 							b = buf[:]
-							n, err := r.Read(b)
+							// TODO: read to \n
+							n, readErr := r.Read(b)
 							b = b[:n]
 
-							args, err := shlex.Split(string(b))
-							if err != nil {
-								fmt.Printf("error: %s\n", err)
-								fmt.Fprintf(w, "error: %s\n", err)
-								continue
-							}
-							if len(args) == 0 {
-								goto finished
-							}
-							switch args[0] {
-							case "pull":
-								if len(args) > 1 {
-									res, err := c.ImagePull(context.Background(), args[1], types.ImagePullOptions{})
-									if err != nil {
-										fmt.Printf("error: %s\n", err)
-										fmt.Fprintf(w, "error: %s\n", err)
-										goto finished
-									}
-									// io.Copy(ioutil.Discard, res)
-									_, err = io.Copy(os.Stdout, res)
-									if err != nil {
-										fmt.Printf("error: %s\n", err)
-										fmt.Fprintf(w, "error: %s\n", err)
-									} else {
-										fmt.Fprintf(w, "ok\n")
-									}
-									res.Close()
-								} else {
-									w.Write([]byte("error: missing image to fetch"))
+							commands := strings.Split(string(b), "\n")
+
+							for _, cmd := range commands {
+								args, err := shlex.Split(cmd)
+								if err != nil {
+									fmt.Printf("error: %s\n", err)
+									fmt.Fprintf(w, "error: %s\n", err)
+									continue
 								}
-							default:
-								fmt.Fprintf(w, "error: unrecognized command: %v", args[0])
+								if len(args) == 0 {
+									goto finished
+								}
+								switch args[0] {
+								case "pull":
+									if len(args) > 1 {
+										ref := args[1]
+										if strings.Index(ref, ".") == -1 {
+											ref = fmt.Sprintf("docker.io/%s", ref)
+										}
+										res, err := c.ImagePull(context.Background(), ref, types.ImagePullOptions{})
+										if err != nil {
+											fmt.Printf("error: %s\n", err)
+											fmt.Fprintf(w, "error: %s\n", err)
+											goto finished
+										}
+										io.Copy(ioutil.Discard, res)
+										if err != nil {
+											fmt.Printf("error: %s\n", err)
+											fmt.Fprintf(w, "error: %s\n", err)
+										} else {
+											fmt.Fprintf(w, "ok\n")
+										}
+										res.Close()
+									} else {
+										w.Write([]byte("error: missing image to fetch"))
+									}
+								case "exit", "done", "quit":
+									return
+								default:
+									fmt.Fprintf(w, "error: unrecognized command: %v", args[0])
+								}
+							finished:
+								if err != nil {
+									fmt.Printf("error: %s\n", err)
+									fmt.Fprintf(w, "error: %s\n", err)
+									return
+								}
+								if n == 0 {
+									return
+								}
 							}
-						finished:
-							if err != nil {
-								fmt.Printf("error: %s\n", err)
-								fmt.Fprintf(w, "error: %s\n", err)
-								return
-							}
-							if n == 0 {
+							if readErr != nil {
+								fmt.Printf("error: %s\n", readErr)
+								fmt.Fprintf(w, "error: %s\n", readErr)
 								return
 							}
 						}
