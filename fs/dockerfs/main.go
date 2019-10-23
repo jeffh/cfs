@@ -190,7 +190,11 @@ func NewFs() (*Fs, error) {
 									if len(args) > 1 {
 										ref := args[1]
 										if strings.Index(ref, ".") == -1 {
-											ref = fmt.Sprintf("docker.io/%s", ref)
+											if strings.Index(ref, "/") == -1 {
+												ref = fmt.Sprintf("docker.io/library/%s", ref)
+											} else {
+												ref = fmt.Sprintf("docker.io/%s", ref)
+											}
 										}
 										res, err := c.ImagePull(context.Background(), ref, types.ImagePullOptions{})
 										if err != nil {
