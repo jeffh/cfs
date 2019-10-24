@@ -34,6 +34,25 @@ func NewFs() (*Fs, error) {
 			staticStringFile("size", createdAt, fmt.Sprintf("%d", img.Size)),
 			staticStringFile("shared_size", createdAt, fmt.Sprintf("%d", img.SharedSize)),
 			staticStringFile("virtual_size", createdAt, fmt.Sprintf("%d", img.VirtualSize)),
+			dynamicCtlFile("image", func(r io.Reader, w io.Writer) {
+				wr := w.(*io.PipeWriter)
+				imageIdsByLine, err := ioutil.ReadAll(r)
+				if err != nil {
+					wr.CloseWithError(err)
+					return
+				}
+				imageIds := strings.Split(string(imageIdsByLine), "\n")
+				rc, err := c.ImageSave(context.Background(), imageIds)
+				if err != nil {
+					wr.CloseWithError(err)
+					return
+				}
+				_, err = io.Copy(w, rc)
+				if err != nil {
+					wr.CloseWithError(err)
+					return
+				}
+			}),
 			dynamicDirWithTime("labels", createdAt, func() ([]ninep.Node, error) {
 				n := make([]ninep.Node, 0, len(img.Labels))
 				for label, value := range img.Labels {
@@ -159,82 +178,158 @@ func NewFs() (*Fs, error) {
 	var noCListOpts types.ContainerListOptions
 	noCListOpts.Filters = filters.NewArgs()
 
+	resolveImageRef := func(ref string) string {
+		if strings.Index(ref, ".") == -1 {
+			if strings.Index(ref, "/") == -1 {
+				ref = fmt.Sprintf("docker.io/library/%s", ref)
+			} else {
+				ref = fmt.Sprintf("docker.io/%s", ref)
+			}
+		}
+		return ref
+	}
+
+	imageCtl := func(rdr io.Reader, w io.Writer) {
+		r := ninep.LineReader{R: rdr}
+		for {
+			cmd, readErr := r.ReadLine()
+
+			args, err := shlex.Split(cmd)
+			if err != nil {
+				fmt.Printf("error: %s\n", err)
+				fmt.Fprintf(w, "error: %s\n", err)
+				continue
+			}
+			if len(args) == 0 {
+				goto finished
+			}
+			switch args[0] {
+			case "help":
+				fmt.Fprintf(w, "COMMANDS:\n\n")
+				fmt.Fprintf(w, " pull IMAGE_NAME   - makes the docker host fetch a docker image from a remote registry\n")
+				fmt.Fprintf(w, " push IMAGE_NAME   - makes the docker host push a docker image from a remote registry\n")
+				fmt.Fprintf(w, " search QUERY      - makes the docker host search for docker images from a remote registry\n")
+				fmt.Fprintf(w, " delete IMAGE_NAME - makes the docker host delete a local docker image\n")
+				fmt.Fprintf(w, " exit              - tells the fs to close the ctl file. Useful when you want to wait for a command to finish\n")
+				fmt.Fprintf(w, " help              - returns this help\n")
+			case "pull", "fetch":
+				if len(args) > 1 {
+					ref := resolveImageRef(args[1])
+					res, err := c.ImagePull(context.Background(), ref, types.ImagePullOptions{})
+					if err != nil {
+						fmt.Printf("error: %s\n", err)
+						fmt.Fprintf(w, "error: %s\n", err)
+						goto finished
+					}
+					io.Copy(ioutil.Discard, res)
+					if err != nil {
+						fmt.Printf("error: %s\n", err)
+						fmt.Fprintf(w, "error: %s\n", err)
+					} else {
+						fmt.Fprintf(w, "ok\n")
+					}
+					res.Close()
+				} else {
+					w.Write([]byte("error: missing image to fetch"))
+				}
+			case "push":
+				if len(args) > 1 {
+					ref := resolveImageRef(args[1])
+					res, err := c.ImagePush(context.Background(), ref, types.ImagePushOptions{})
+					if err != nil {
+						fmt.Printf("error: %s\n", err)
+						fmt.Fprintf(w, "error: %s\n", err)
+						goto finished
+					}
+					io.Copy(ioutil.Discard, res)
+					if err != nil {
+						fmt.Printf("error: %s\n", err)
+						fmt.Fprintf(w, "error: %s\n", err)
+					} else {
+						fmt.Fprintf(w, "ok\n")
+					}
+					res.Close()
+				} else {
+					w.Write([]byte("error: missing image to fetch"))
+				}
+			case "search":
+				if len(args) > 1 {
+					term := args[1]
+					imgs, err := c.ImageSearch(context.Background(), term, types.ImageSearchOptions{Limit: 100})
+					if err != nil {
+						fmt.Printf("error: %s\n", err)
+						fmt.Fprintf(w, "error: %s\n", err)
+						goto finished
+					}
+					if err != nil {
+						fmt.Printf("error: %s\n", err)
+						fmt.Fprintf(w, "error: %s\n", err)
+					} else {
+						for _, img := range imgs {
+							star := ""
+							if img.IsOfficial {
+								star = "*"
+							}
+							fmt.Fprintf(w, "%s %s- (%d) %s\n", img.Name, star, img.StarCount, img.Description)
+						}
+					}
+				} else {
+					w.Write([]byte("error: missing image to fetch"))
+				}
+			case "delete":
+				if len(args) > 1 {
+					imageId := args[1]
+					_, err := c.ImageRemove(context.Background(), imageId, types.ImageRemoveOptions{})
+					if err != nil {
+						fmt.Printf("error: %s\n", err)
+						fmt.Fprintf(w, "error: %s\n", err)
+						goto finished
+					} else {
+						fmt.Fprintf(w, "ok\n")
+					}
+				}
+			case "exit", "done", "quit":
+				return
+			default:
+				fmt.Fprintf(w, "error: unrecognized command: %v", args[0])
+			}
+		finished:
+			if err != nil {
+				fmt.Printf("error: %s\n", err)
+				fmt.Fprintf(w, "error: %s\n", err)
+				return
+			}
+			if cmd == "" {
+				return
+			}
+
+			if readErr != nil {
+				fmt.Printf("error: %s\n", readErr)
+				fmt.Fprintf(w, "error: %s\n", readErr)
+				return
+			}
+		}
+	}
+
+	imageCreateCtl := func(r io.Reader, w io.Writer) {
+		wr := w.(*io.PipeWriter)
+		_, err := c.ImageLoad(context.Background(), r, true)
+		if err != nil {
+			wr.CloseWithError(err)
+		}
+		fmt.Fprintf(w, "ok\n")
+	}
+
+	containerCtl := func(r io.Reader, w io.Writer) {
+	}
+
 	fs := &Fs{
 		c,
 		ninep.SimpleFileSystem{
 			Root: ninep.StaticRootDir(
 				staticDir("images",
-					dynamicCtlFile("ctl", func(r io.Reader, w io.Writer) {
-						buf := [2048]byte{}
-						b := buf[:]
-						for {
-							b = buf[:]
-							// TODO: read to \n
-							n, readErr := r.Read(b)
-							b = b[:n]
-
-							commands := strings.Split(string(b), "\n")
-
-							for _, cmd := range commands {
-								args, err := shlex.Split(cmd)
-								if err != nil {
-									fmt.Printf("error: %s\n", err)
-									fmt.Fprintf(w, "error: %s\n", err)
-									continue
-								}
-								if len(args) == 0 {
-									goto finished
-								}
-								switch args[0] {
-								case "pull":
-									if len(args) > 1 {
-										ref := args[1]
-										if strings.Index(ref, ".") == -1 {
-											if strings.Index(ref, "/") == -1 {
-												ref = fmt.Sprintf("docker.io/library/%s", ref)
-											} else {
-												ref = fmt.Sprintf("docker.io/%s", ref)
-											}
-										}
-										res, err := c.ImagePull(context.Background(), ref, types.ImagePullOptions{})
-										if err != nil {
-											fmt.Printf("error: %s\n", err)
-											fmt.Fprintf(w, "error: %s\n", err)
-											goto finished
-										}
-										io.Copy(ioutil.Discard, res)
-										if err != nil {
-											fmt.Printf("error: %s\n", err)
-											fmt.Fprintf(w, "error: %s\n", err)
-										} else {
-											fmt.Fprintf(w, "ok\n")
-										}
-										res.Close()
-									} else {
-										w.Write([]byte("error: missing image to fetch"))
-									}
-								case "exit", "done", "quit":
-									return
-								default:
-									fmt.Fprintf(w, "error: unrecognized command: %v", args[0])
-								}
-							finished:
-								if err != nil {
-									fmt.Printf("error: %s\n", err)
-									fmt.Fprintf(w, "error: %s\n", err)
-									return
-								}
-								if n == 0 {
-									return
-								}
-							}
-							if readErr != nil {
-								fmt.Printf("error: %s\n", readErr)
-								fmt.Fprintf(w, "error: %s\n", readErr)
-								return
-							}
-						}
-					}),
+					dynamicCtlFile("ctl", imageCtl),
+					dynamicCtlFile("create", imageCreateCtl),
 					dynamicDir("ids", func() ([]ninep.Node, error) {
 						return imageListAs(c, func(r []ninep.Node, img types.ImageSummary) []ninep.Node {
 							return append(r, imageDir(img.ID, img))
@@ -261,6 +356,7 @@ func NewFs() (*Fs, error) {
 					}),
 				),
 				staticDir("containers",
+					dynamicCtlFile("ctl", containerCtl),
 					dynamicDir("ids", func() ([]ninep.Node, error) {
 						return containerListAs(c, noCListOpts, containerById)
 					}),
@@ -291,7 +387,87 @@ func NewFs() (*Fs, error) {
 				staticDir("stacks"),
 				staticDir("networks"),
 				staticDir("volumes"),
-				staticDir("system"),
+				staticDir("system",
+					dynamicDir("info", func() ([]ninep.Node, error) {
+						now := time.Now()
+						info, err := c.Info(context.Background())
+						if err != nil {
+							return nil, err
+						}
+						files := make([]ninep.Node, 0, 53)
+						files = append(files, staticStringFile("id", now, info.ID))
+
+						intStr := func(v int) string { return fmt.Sprintf("%d", v) }
+						files = append(files, staticStringFile("stats", now, ninep.KeyValues(map[string]string{
+							"num_containers":         intStr(info.Containers),
+							"num_containers_running": intStr(info.ContainersRunning),
+							"num_containers_paused":  intStr(info.ContainersPaused),
+							"num_containers_stopped": intStr(info.ContainersStopped),
+							"num_images":             intStr(info.Images),
+							"num_fds":                intStr(info.NFd),
+							"num_goroutines":         intStr(info.NGoroutines),
+							"num_events_listeners":   intStr(info.NEventsListener),
+							"num_cpus":               intStr(info.NCPU),
+							"mem_total":              fmt.Sprintf("%d", info.MemTotal),
+						})))
+
+						files = append(files, staticStringFile("driver", now, fmt.Sprintf(
+							"%s\n%s\n%s\n%s\n",
+							info.Driver,
+							info.LoggingDriver,
+							info.CgroupDriver,
+							ninep.KeyPairs(info.DriverStatus),
+						)))
+						files = append(files, staticStringFile("status", now, ninep.KeyPairs(info.SystemStatus)))
+
+						boolStr := func(v bool) string {
+							if v {
+								return "true"
+							} else {
+								return "false"
+							}
+						}
+						files = append(files, staticStringFile("flags", now, ninep.KeyValues(map[string]string{
+							"memory_limit":         boolStr(info.MemoryLimit),
+							"swap_limit":           boolStr(info.SwapLimit),
+							"kernel_memory":        boolStr(info.KernelMemory),
+							"cpu_cfs_period":       boolStr(info.CPUCfsPeriod),
+							"cpu_cfs_quota":        boolStr(info.CPUCfsQuota),
+							"cpu_shares":           boolStr(info.CPUShares),
+							"cpu_set":              boolStr(info.CPUSet),
+							"ipv4_forwarding":      boolStr(info.IPv4Forwarding),
+							"bridge_nf_ipv4tables": boolStr(info.BridgeNfIptables),
+							"bridge_nf_ipv6tables": boolStr(info.BridgeNfIP6tables),
+							"debug":                boolStr(info.Debug),
+							"disable_oom_kill":     boolStr(info.OomKillDisable),
+							"experimental_build":   boolStr(info.ExperimentalBuild),
+							"live_restore_enabled": boolStr(info.LiveRestoreEnabled),
+						})))
+						files = append(files, staticDirWithTime("plugins", now,
+							staticStringFile("volumes", now, strings.Join(info.Plugins.Volume, "\n")),
+							staticStringFile("network", now, strings.Join(info.Plugins.Network, "\n")),
+							staticStringFile("authorization", now, strings.Join(info.Plugins.Authorization, "\n")),
+						))
+
+						files = append(files, staticStringFile("about", now, ninep.KeyValues(map[string]string{
+							"kernel_version":    info.KernelVersion,
+							"os":                info.OperatingSystem,
+							"os_type":           info.OSType,
+							"arch":              info.Architecture,
+							"index_server":      info.IndexServerAddress,
+							"docker_root_dir":   info.DockerRootDir,
+							"http_proxy":        info.HTTPProxy,
+							"https_proxy":       info.HTTPSProxy,
+							"no_proxy":          info.NoProxy,
+							"name":              info.Name,
+							"server_version":    info.ServerVersion,
+							"cluster_store":     info.ClusterStore,
+							"cluster_advertise": info.ClusterAdvertise,
+							"default_runtime":   info.DefaultRuntime,
+						})))
+						return files, nil
+					}),
+				),
 			),
 		},
 	}
@@ -325,6 +501,23 @@ func staticDirWithTime(name string, modTime time.Time, children ...ninep.Node) *
 			FIModTime: modTime,
 		},
 		Children: children,
+	}
+}
+
+func dynamicFile(name string, modTime time.Time, content func() ([]byte, error)) *ninep.SimpleFile {
+	return &ninep.SimpleFile{
+		SimpleFileInfo: ninep.SimpleFileInfo{
+			FIName:    name,
+			FIMode:    os.ModeDir | 0777,
+			FIModTime: modTime,
+		},
+		OpenFn: func() (ninep.FileHandle, error) {
+			b, err := content()
+			if err != nil {
+				return nil, err
+			}
+			return &ninep.ReadOnlyMemoryFileHandle{b}, nil
+		},
 	}
 }
 

@@ -421,6 +421,60 @@ func CtlFile(name string, mode os.FileMode, modTime time.Time, thread func(r io.
 	}
 }
 
+type LineReader struct {
+	R      io.Reader
+	buf    []byte
+	offset int
+	length int
+}
+
+func (r *LineReader) ReadLine() (string, error) {
+	if r.buf == nil {
+		r.buf = make([]byte, 4096)
+	}
+	var line string
+
+	for i, ch := range r.buf[r.offset : r.offset+r.length] {
+		if ch == '\n' || ch == 0 {
+			line = string(r.buf[:i])
+			r.buf = append(r.buf[:0], r.buf[i+1:]...)
+			r.offset -= len(line)
+			r.length -= len(line)
+			return line, nil
+		}
+	}
+	r.offset = r.length
+
+	for {
+		n, err := r.R.Read(r.buf[r.offset:])
+		r.length += n
+		for i, ch := range r.buf[r.offset : r.offset+n] {
+			if ch == '\n' || ch == 0 {
+				line = string(r.buf[:i])
+				r.buf = append(r.buf[:0], r.buf[i+1:]...)
+				r.offset -= len(line)
+				r.length -= len(line)
+				break
+			}
+			r.offset++
+		}
+
+		if err != nil {
+			return line, err
+		}
+		if n == 0 && len(r.buf[r.offset:]) == 0 {
+			// uh oh. too large
+			line = string(r.buf)
+			r.buf = r.buf[:0]
+			r.offset -= len(line)
+			r.length -= len(line)
+			return line, io.ErrShortBuffer
+		}
+
+		return line, nil
+	}
+}
+
 /////////////////////////////////////////////////////////////////////////////
 
 func FindChild(root Node, name string) (Node, os.FileInfo, error) {
@@ -540,4 +594,49 @@ func Walk(root Node, path string, walkLast bool) (Node, string, error) {
 	}
 
 	return currNode, lastPart, nil
+}
+
+/////////////////////////////////////////////////////////////////////////////
+
+func KeyPairs(pairs [][2]string) string {
+	res := make([]string, len(pairs))
+	for i, p := range pairs {
+		res[i] = fmt.Sprintf("%v=%v", p[0], p[1])
+	}
+	return strings.Join(res, " ")
+}
+
+func KeyValues(kvs map[string]string) string {
+	res := make([]string, 0, len(kvs))
+	for k, v := range kvs {
+		res = append(res, fmt.Sprintf("%v=%v", k, v))
+	}
+	return strings.Join(res, " ")
+}
+
+func ParseKeyValues(value string) map[string]string {
+	m := make(map[string]string)
+	openQuote := -1
+	key := ""
+	for i, r := range value {
+		switch r {
+		case '"':
+			if openQuote == -1 {
+				openQuote = i
+			} else if key == "" {
+				key = value[openQuote:i]
+				openQuote = -1
+			} else {
+				m[key] = value[openQuote:i]
+				openQuote = -1
+			}
+		case '=':
+			if openQuote == -1 && key != "" {
+				key = ""
+			}
+		default:
+			break
+		}
+	}
+	return m
 }
