@@ -598,10 +598,23 @@ func Walk(root Node, path string, walkLast bool) (Node, string, error) {
 
 /////////////////////////////////////////////////////////////////////////////
 
+func keyValueNeedsEscape(s string) bool {
+	for _, r := range s {
+		if r == ' ' || r == '=' {
+			return true
+		}
+	}
+	return false
+}
+
 func KeyPairs(pairs [][2]string) string {
 	res := make([]string, len(pairs))
 	for i, p := range pairs {
-		res[i] = fmt.Sprintf("%v=%v", p[0], p[1])
+		if keyValueNeedsEscape(p[0]) || keyValueNeedsEscape(p[1]) {
+			res[i] = fmt.Sprintf("%#v=%#v", p[0], p[1])
+		} else {
+			res[i] = fmt.Sprintf("%v=%v", p[0], p[1])
+		}
 	}
 	return strings.Join(res, " ")
 }
@@ -609,7 +622,11 @@ func KeyPairs(pairs [][2]string) string {
 func KeyValues(kvs map[string]string) string {
 	res := make([]string, 0, len(kvs))
 	for k, v := range kvs {
-		res = append(res, fmt.Sprintf("%v=%v", k, v))
+		if keyValueNeedsEscape(k) || keyValueNeedsEscape(v) {
+			res = append(res, fmt.Sprintf("%#v=%#v", k, v))
+		} else {
+			res = append(res, fmt.Sprintf("%v=%v", k, v))
+		}
 	}
 	return strings.Join(res, " ")
 }
@@ -622,20 +639,34 @@ func ParseKeyValues(value string) map[string]string {
 		switch r {
 		case '"':
 			if openQuote == -1 {
-				openQuote = i
+				openQuote = i + 1
 			} else if key == "" {
-				key = value[openQuote:i]
+				key = value[openQuote : i-1]
 				openQuote = -1
 			} else {
-				m[key] = value[openQuote:i]
+				m[key] = value[openQuote : i-1]
 				openQuote = -1
-			}
-		case '=':
-			if openQuote == -1 && key != "" {
 				key = ""
 			}
+		case '=':
+			if openQuote != -1 {
+				if key == "" {
+					key = value[openQuote : i-1]
+				} else {
+					panic("uh oh?")
+					// m[key] = value[openQuote : i-1]
+				}
+			} else if openQuote == -1 {
+				if key == "" {
+					panic("uh oh?")
+				} else {
+					m[key] = value[openQuote : i-1]
+				}
+			}
 		default:
-			break
+			if openQuote == -1 {
+				openQuote = i
+			}
 		}
 	}
 	return m
