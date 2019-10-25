@@ -311,7 +311,7 @@ func NewFs() (*Fs, error) {
 		}
 	}
 
-	imageCreateCtl := func(r io.Reader, w io.Writer) {
+	imageLoadCtl := func(r io.Reader, w io.Writer) {
 		wr := w.(*io.PipeWriter)
 		_, err := c.ImageLoad(context.Background(), r, true)
 		if err != nil {
@@ -323,13 +323,25 @@ func NewFs() (*Fs, error) {
 	containerCtl := func(r io.Reader, w io.Writer) {
 	}
 
+	const IMAGES_HELP = `Files in this directory:
+
+	help - that's this file!
+	ctl - perform most docker operations. Terminal-like. Write 'help\n' to that file to see options.
+	load - allows you to load a docker image binary if you have one to write to directly.
+	ids - lists containers by their ids (content hashes)
+	labels - lists containers by their human-friendly labels stored locally
+	tags - lists containers by their human-friendly labels from the remote registry
+	repos - lists containers by their repository name + tags/shas
+	`
+
 	fs := &Fs{
 		c,
 		ninep.SimpleFileSystem{
 			Root: ninep.StaticRootDir(
 				staticDir("images",
+					staticStringFile("help", time.Time{}, IMAGES_HELP),
 					dynamicCtlFile("ctl", imageCtl),
-					dynamicCtlFile("create", imageCreateCtl),
+					dynamicCtlFile("load", imageLoadCtl),
 					dynamicDir("ids", func() ([]ninep.Node, error) {
 						return imageListAs(c, func(r []ninep.Node, img types.ImageSummary) []ninep.Node {
 							return append(r, imageDir(img.ID, img))
@@ -339,6 +351,14 @@ func NewFs() (*Fs, error) {
 						return imageListAs(c, func(r []ninep.Node, img types.ImageSummary) []ninep.Node {
 							for label := range img.Labels {
 								r = append(r, imageDir(label, img))
+							}
+							return r
+						})
+					}),
+					dynamicDir("tags", func() ([]ninep.Node, error) {
+						return imageListAs(c, func(r []ninep.Node, img types.ImageSummary) []ninep.Node {
+							for _, tag := range img.RepoTags {
+								r = append(r, imageDir(tag, img))
 							}
 							return r
 						})

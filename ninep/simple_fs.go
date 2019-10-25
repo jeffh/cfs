@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode"
 )
 
 type Node interface {
@@ -632,42 +633,29 @@ func KeyValues(kvs map[string]string) string {
 }
 
 func ParseKeyValues(value string) map[string]string {
-	m := make(map[string]string)
-	openQuote := -1
-	key := ""
-	for i, r := range value {
-		switch r {
-		case '"':
-			if openQuote == -1 {
-				openQuote = i + 1
-			} else if key == "" {
-				key = value[openQuote : i-1]
-				openQuote = -1
-			} else {
-				m[key] = value[openQuote : i-1]
-				openQuote = -1
-				key = ""
-			}
-		case '=':
-			if openQuote != -1 {
-				if key == "" {
-					key = value[openQuote : i-1]
-				} else {
-					panic("uh oh?")
-					// m[key] = value[openQuote : i-1]
-				}
-			} else if openQuote == -1 {
-				if key == "" {
-					panic("uh oh?")
-				} else {
-					m[key] = value[openQuote : i-1]
-				}
-			}
+	lastQuote := rune(0)
+
+	items := strings.FieldsFunc(value, func(c rune) bool {
+		switch {
+		case c == lastQuote:
+			lastQuote = rune(0)
+			return false
+		case lastQuote != rune(0):
+			return false
+		case unicode.In(c, unicode.Quotation_Mark):
+			lastQuote = c
+			return false
 		default:
-			if openQuote == -1 {
-				openQuote = i
-			}
+			return unicode.IsSpace(c)
+
 		}
+	})
+
+	m := make(map[string]string)
+	for _, item := range items {
+		x := strings.Split(item, "=")
+		m[x[0]] = x[1]
 	}
+
 	return m
 }
