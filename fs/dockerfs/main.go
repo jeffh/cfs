@@ -2,6 +2,7 @@ package dockerfs
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -10,8 +11,12 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/strslice"
 	"github.com/docker/docker/client"
+	"github.com/docker/go-connections/nat"
 	"github.com/google/shlex"
 	"github.com/jeffh/cfs/ninep"
 )
@@ -36,13 +41,7 @@ func NewFs() (*Fs, error) {
 			staticStringFile("virtual_size", createdAt, fmt.Sprintf("%d", img.VirtualSize)),
 			dynamicCtlFile("image", func(r io.Reader, w io.Writer) {
 				wr := w.(*io.PipeWriter)
-				imageIdsByLine, err := ioutil.ReadAll(r)
-				if err != nil {
-					wr.CloseWithError(err)
-					return
-				}
-				imageIds := strings.Split(string(imageIdsByLine), "\n")
-				rc, err := c.ImageSave(context.Background(), imageIds)
+				rc, err := c.ImageSave(context.Background(), []string{img.ID})
 				if err != nil {
 					wr.CloseWithError(err)
 					return
@@ -101,9 +100,31 @@ func NewFs() (*Fs, error) {
 			)
 		}
 
+		containerLogs := func(opt types.ContainerLogsOptions) func(r io.Reader, w io.Writer) {
+			return func(r io.Reader, w io.Writer) {
+				wr := w.(*io.PipeWriter)
+				out, err := c.ContainerLogs(context.Background(), ct.ID, opt)
+				if err != nil {
+					wr.CloseWithError(err)
+					return
+				}
+				defer out.Close()
+				_, err = io.Copy(wr, out)
+				if err != nil {
+					wr.CloseWithError(err)
+					return
+				}
+			}
+		}
+
+		names := make([]string, len(ct.Names))
+		for i, name := range ct.Names {
+			names[i] = name[1:]
+		}
+
 		return staticDir(name,
 			staticStringFile("id", createdAt, ct.ID),
-			staticStringFile("names", createdAt, strings.Join(ct.Names, "\n")),
+			staticStringFile("names", createdAt, strings.Join(names, "\n")),
 			staticStringFile("image", createdAt, fmt.Sprintf("%s\n%s\n", ct.Image, ct.ImageID)),
 			staticStringFile("cmdline", createdAt, ct.Command),
 			staticStringFile("writable_size", createdAt, fmt.Sprintf("%d", ct.SizeRw)),
@@ -112,6 +133,13 @@ func NewFs() (*Fs, error) {
 			staticStringFile("status", createdAt, ct.Status),
 			staticStringFile("ports", createdAt, strings.Join(ports, "\n")),
 			staticStringFile("mounts", createdAt, strings.Join(mounts, "\n")),
+			dynamicCtlFile("logs", containerLogs(types.ContainerLogsOptions{
+				ShowStdout: true,
+				ShowStderr: true,
+				Tail:       "all",
+			})),
+			dynamicCtlFile("stdout", containerLogs(types.ContainerLogsOptions{ShowStdout: true, Tail: "all"})),
+			dynamicCtlFile("stderr", containerLogs(types.ContainerLogsOptions{ShowStderr: true, Tail: "all"})),
 			staticDirWithTime("net", createdAt,
 				staticStringFile("host_mode", createdAt, ct.HostConfig.NetworkMode),
 				dynamicDirWithTime("configs", createdAt, func() ([]ninep.Node, error) {
@@ -189,7 +217,7 @@ func NewFs() (*Fs, error) {
 		return ref
 	}
 
-	imageCtl := func(rdr io.Reader, w io.Writer) {
+	imagesCtl := func(rdr io.Reader, w io.Writer) {
 		r := ninep.LineReader{R: rdr}
 		for {
 			cmd, readErr := r.ReadLine()
@@ -313,21 +341,253 @@ func NewFs() (*Fs, error) {
 
 	imageLoadCtl := func(r io.Reader, w io.Writer) {
 		wr := w.(*io.PipeWriter)
-		_, err := c.ImageLoad(context.Background(), r, true)
+		out, err := c.ImageLoad(context.Background(), r, true)
 		if err != nil {
 			wr.CloseWithError(err)
+			return
 		}
+		out.Body.Close()
 		fmt.Fprintf(w, "ok\n")
 	}
 
-	containerCtl := func(r io.Reader, w io.Writer) {
+	imageBuildCtl := func(r io.Reader, w io.Writer) {
+		lr := &ninep.LineReader{R: r}
+		line, err := lr.ReadLine()
+		if err != nil {
+			return
+		}
+
+		kvs := ninep.ParseKeyValues(line)
+		buildOpts := types.ImageBuildOptions{
+			Tags:           kvs.GetAll("tags"),
+			SuppressOutput: kvs.GetOneBool("suppress_output"),
+			RemoteContext:  kvs.GetOne("remote_context"),
+			NoCache:        kvs.GetOneBool("no_cache"),
+			Remove:         kvs.GetOneBool("remove"),
+			ForceRemove:    kvs.GetOneBool("force_remove"),
+			PullParent:     kvs.GetOneBool("pull_parent"),
+			// Isolation      container.Isolation
+			CPUSetCPUs:   kvs.GetOne("cpu_set_cpus"),
+			CPUSetMems:   kvs.GetOne("cpu_set_mems"),
+			CPUShares:    kvs.GetOneInt64("cpu_shares"),
+			CPUQuota:     kvs.GetOneInt64("cpu_quota"),
+			CPUPeriod:    kvs.GetOneInt64("cpu_period"),
+			Memory:       kvs.GetOneInt64("memory"),
+			MemorySwap:   kvs.GetOneInt64("memory_swap"),
+			CgroupParent: kvs.GetOne("cgroup_parent"),
+			NetworkMode:  kvs.GetOne("network_mode"),
+			ShmSize:      kvs.GetOneInt64("shm_size"),
+			Dockerfile:   kvs.GetOne("dockerfile"),
+			// Ulimits:      ulimitsFrom(kvs),
+			// BuildArgs   map[string]*string
+			// AuthConfigs map[string]AuthConfig
+			// Context     io.Reader
+			Labels:      kvs.GetAllPrefix("label").Flatten(),
+			Squash:      kvs.GetOneBool("squash"),
+			CacheFrom:   kvs.GetAll("cache_from"),
+			SecurityOpt: kvs.GetAll("security_opt"),
+			// ExtraHosts:     kvs.GetAll("extra_hosts"),
+			// Target:         kvs.GetOne("target"),
+			// SessionID:      kvs.GetOne("session_id"),
+			// Platform:       kvs.GetOne("platform"),
+			// BuilderVersion: types.BuilderVersion(kvs.GetOne("build_version")),
+			// BuilderID:      kvs.GetOne("build_id"), // TODO: we should propbably generate this and manage a dir as the build is occurring
+			// Outputs []ImageBuildOutput
+		}
+		out, err := c.ImageBuild(context.Background(), lr, buildOpts)
+		if err != nil {
+			fmt.Fprintf(w, "error: %s\n", err)
+			return
+		}
+		defer out.Body.Close()
+		_, err = io.Copy(w, out.Body)
+		if err != nil {
+			fmt.Fprintf(w, "error: %s\n", err)
+			return
+		}
+		return
+	}
+
+	containerCtl := func(rdr io.Reader, w io.Writer) {
+		r := ninep.LineReader{R: rdr}
+		wr := w.(*io.PipeWriter)
+		var lastContainerID string
+		for {
+			cmd, readErr := r.ReadLine()
+
+			args, err := shlex.Split(cmd)
+			if err != nil {
+				fmt.Printf("error: %s\n", err)
+				fmt.Fprintf(w, "error: %s\n", err)
+				continue
+			}
+			if len(args) == 0 {
+				goto finished
+			}
+			switch args[0] {
+			case "help":
+				fmt.Fprintf(w, "COMMANDS:\n\n")
+				fmt.Fprintf(w, " run IMAGE_NAME CMD - Runs a docker container image with a given, optional command.")
+				fmt.Fprintf(w, " \n")
+				fmt.Fprintf(w, " exit               - tells the fs to close the ctl file. Useful when you want to wait for a command to finish\n")
+				fmt.Fprintf(w, " help               - returns this help\n")
+			case "create":
+				var (
+					img           string
+					env           string
+					containerName string
+					volumes       string
+					entryPoint    string
+					onbuild       string
+					shell         string
+					exposedPorts  string
+
+					timeout int
+
+					cfg     container.Config
+					hostCfg container.HostConfig
+					netCfg  network.NetworkingConfig
+				)
+				fset := flag.NewFlagSet(args[0], flag.ContinueOnError)
+				fset.StringVar(&cfg.Hostname, "hostname", "", "the hostname of the container")
+				fset.StringVar(&cfg.Domainname, "domainname", "", "the domainname of the container")
+				fset.StringVar(&cfg.User, "user", "", "the user that runs the cmd inside the container. also, supports user:group")
+				fset.BoolVar(&cfg.AttachStdin, "stdin", false, "Attaches to stdin for possible user interaction")
+				fset.BoolVar(&cfg.AttachStdout, "stdout", false, "Attaches to stdout")
+				fset.BoolVar(&cfg.AttachStderr, "stderr", false, "Attaches to stderr")
+				// fset.BoolVar(&cfg.Tty, "tty", "", "Attach stdin, stdout, stderr to terminal tty")
+				fset.BoolVar(&cfg.OpenStdin, "open-stdin", false, "Opens stdin")
+				fset.BoolVar(&cfg.StdinOnce, "once-stdin", false, "If true, close stdin after the 1 attached client disconnects.")
+				fset.StringVar(&env, "e", "", "a comma-separated list of environment variables to use")
+				fset.StringVar(&containerName, "name", "", "a unique name to give a container. Default generates a new container name.")
+				fset.StringVar(&volumes, "volumes", "", "a list of volumes to attach to the container, separated by commas")
+				fset.StringVar(&cfg.WorkingDir, "working-dir", "", "Current directory (PWD) in the command will be launched")
+				fset.StringVar(&entryPoint, "entry-point", "", "Entrypoint to run when starting the container")
+				fset.BoolVar(&cfg.NetworkDisabled, "disable-network", false, "Is network disabled")
+				fset.StringVar(&cfg.MacAddress, "mac-addr", "", "Mac Address of the container")
+				fset.StringVar(&onbuild, "onbuild", "", "ONBUILD metadata that were defined on the image Dockerfile, comma separated")
+				fset.StringVar(&cfg.StopSignal, "stop-signal", "", "Signal to stop a container")
+				fset.IntVar(&timeout, "stop-timeout", 0, "Timeout (in seconds) to stop a container")
+				fset.StringVar(&shell, "shell", "", "Shell for shell-form of RUN, CMD, ENTRYPOINT, commas separated")
+				fset.StringVar(&exposedPorts, "exposed-ports", "", "List of exposed ports, commas separated")
+				fset.BoolVar(&hostCfg.AutoRemove, "auto-remove", false, "Automatically remove container when it exits")
+				fset.BoolVar(&hostCfg.Privileged, "privileged", false, "Is the container in privileged mode")
+				fset.BoolVar(&hostCfg.PublishAllPorts, "published-all-ports", false, "Should docker publish all exposed port for the container")
+				fset.BoolVar(&hostCfg.ReadonlyRootfs, "readyonly-root-fs", false, "Is the container root filesystem in read-only")
+
+				err := fset.Parse(args[1:])
+				if err != nil {
+					wr.CloseWithError(err)
+				}
+				args = fset.Args()
+				size := len(args)
+				if size >= 1 {
+					img = args[0]
+					if size >= 2 {
+						cmd = args[1]
+					}
+
+					if env != "" {
+						cfg.Env = strslice.StrSlice(strings.Split(env, ","))
+					}
+
+					if entryPoint != "" {
+						cfg.Entrypoint = strslice.StrSlice(strings.Split(entryPoint, ","))
+					}
+
+					cfg.Image = img
+					if volumes != "" {
+						m := make(map[string]struct{})
+						for _, name := range strings.Split(volumes, ",") {
+							m[name] = struct{}{}
+						}
+						cfg.Volumes = m
+					}
+
+					if onbuild != "" {
+						cfg.OnBuild = strings.Split(onbuild, ",")
+					}
+					// TODO: set ExposedPorts
+					// TODO: set labels
+					if timeout != 0 {
+						cfg.StopTimeout = &timeout
+					}
+
+					if shell != "" {
+						cfg.Shell = strings.Split(shell, ",")
+					}
+
+					if exposedPorts != "" {
+						exposed, bindings, err := nat.ParsePortSpecs(strings.Split(exposedPorts, ","))
+						if err != nil {
+							wr.CloseWithError(err)
+							return
+						}
+						cfg.ExposedPorts = exposed
+						hostCfg.PortBindings = bindings
+					}
+
+					res, err := c.ContainerCreate(context.Background(), &cfg, &hostCfg, &netCfg, containerName)
+					if err != nil {
+						wr.CloseWithError(err)
+					}
+					fmt.Fprintf(wr, "%s\n", res.ID)
+					for _, warn := range res.Warnings {
+						fmt.Fprintf(wr, "%s\n", warn)
+					}
+					lastContainerID = res.ID
+
+				} else {
+					w.Write([]byte("error: missing image to run"))
+				}
+			case "start":
+				size := len(args)
+				containerID := lastContainerID
+				if size >= 2 {
+					containerID = args[1]
+				}
+
+				if containerID != "" {
+					err := c.ContainerStart(context.Background(), containerID, types.ContainerStartOptions{})
+					if err != nil {
+						wr.CloseWithError(err)
+					}
+					fmt.Fprintf(wr, "%s\n", containerID)
+				} else {
+					w.Write([]byte("error: missing image to run"))
+				}
+			case "exit", "done", "quit":
+				return
+			default:
+				fmt.Fprintf(w, "error: unrecognized command: %v", args[0])
+			}
+		finished:
+			if err != nil {
+				fmt.Printf("error: %s\n", err)
+				fmt.Fprintf(w, "error: %s\n", err)
+				return
+			}
+			if cmd == "" {
+				return
+			}
+
+			if readErr != nil {
+				fmt.Printf("error: %s\n", readErr)
+				fmt.Fprintf(w, "error: %s\n", readErr)
+				return
+			}
+		}
 	}
 
 	const IMAGES_HELP = `Files in this directory:
 
 	help - that's this file!
 	ctl - perform most docker operations. Terminal-like. Write 'help\n' to that file to see options.
-	load - allows you to load a docker image binary if you have one to write to directly.
+	build - allows you to build a docker image by writing key-value pairs of
+	        arguments, followed by a newline, then followed by a tar of the build
+			context, including the Dockerfile.
+	load - allows you to load a docker image if you have one to write to directly (from docker export)
+	export - allows you to download docker images by writing one per line and reading this files' contents.
 	ids - lists containers by their ids (content hashes)
 	labels - lists containers by their human-friendly labels stored locally
 	tags - lists containers by their human-friendly labels from the remote registry
@@ -340,8 +600,28 @@ func NewFs() (*Fs, error) {
 			Root: ninep.StaticRootDir(
 				staticDir("images",
 					staticStringFile("help", time.Time{}, IMAGES_HELP),
-					dynamicCtlFile("ctl", imageCtl),
+					dynamicCtlFile("ctl", imagesCtl),
 					dynamicCtlFile("load", imageLoadCtl),
+					dynamicCtlFile("build", imageBuildCtl),
+					dynamicCtlFile("export", func(r io.Reader, w io.Writer) {
+						wr := w.(*io.PipeWriter)
+						imageIdsByLine, err := ioutil.ReadAll(r)
+						if err != nil {
+							wr.CloseWithError(err)
+							return
+						}
+						imageIds := strings.Split(string(imageIdsByLine), "\n")
+						rc, err := c.ImageSave(context.Background(), imageIds)
+						if err != nil {
+							wr.CloseWithError(err)
+							return
+						}
+						_, err = io.Copy(w, rc)
+						if err != nil {
+							wr.CloseWithError(err)
+							return
+						}
+					}),
 					dynamicDir("ids", func() ([]ninep.Node, error) {
 						return imageListAs(c, func(r []ninep.Node, img types.ImageSummary) []ninep.Node {
 							return append(r, imageDir(img.ID, img))
@@ -383,7 +663,7 @@ func NewFs() (*Fs, error) {
 					dynamicDir("names", func() ([]ninep.Node, error) {
 						return containerListAs(c, noCListOpts, func(r []ninep.Node, cntr types.Container) []ninep.Node {
 							for _, name := range cntr.Names {
-								r = append(r, containerDir(name, cntr))
+								r = append(r, containerDir(name[1:], cntr))
 							}
 							return r
 						})
@@ -417,7 +697,6 @@ func NewFs() (*Fs, error) {
 						files := make([]ninep.Node, 0, 53)
 						files = append(files, staticStringFile("id", now, info.ID))
 
-						intStr := func(v int) string { return fmt.Sprintf("%d", v) }
 						files = append(files, staticStringFile("stats", now, ninep.KeyValues(map[string]string{
 							"num_containers":         intStr(info.Containers),
 							"num_containers_running": intStr(info.ContainersRunning),
@@ -439,14 +718,6 @@ func NewFs() (*Fs, error) {
 							ninep.KeyPairs(info.DriverStatus),
 						)))
 						files = append(files, staticStringFile("status", now, ninep.KeyPairs(info.SystemStatus)))
-
-						boolStr := func(v bool) string {
-							if v {
-								return "true"
-							} else {
-								return "false"
-							}
-						}
 						files = append(files, staticStringFile("flags", now, ninep.KeyValues(map[string]string{
 							"memory_limit":         boolStr(info.MemoryLimit),
 							"swap_limit":           boolStr(info.SwapLimit),
@@ -574,3 +845,16 @@ func staticStringFile(name string, modTime time.Time, contents string) *ninep.Si
 func dynamicCtlFile(name string, thread func(r io.Reader, w io.Writer)) *ninep.SimpleFile {
 	return ninep.CtlFile(name, 0777, time.Time{}, thread)
 }
+
+func strBool(s string) bool {
+	return s == "true" || s == "t" || s == "yes" || s == "y"
+}
+
+func boolStr(v bool) string {
+	if v {
+		return "true"
+	} else {
+		return "false"
+	}
+}
+func intStr(v int) string { return fmt.Sprintf("%d", v) }

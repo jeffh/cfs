@@ -5,7 +5,7 @@ go 1.13
 require (
 	github.com/docker/distribution v2.7.1+incompatible
 	github.com/docker/docker v1.13.1
-	github.com/docker/go-connections v0.4.0 // indirect
+	github.com/docker/go-connections v0.4.0
 	github.com/docker/go-units v0.4.0 // indirect
 	github.com/gogo/protobuf v1.3.1 // indirect
 	github.com/google/shlex v0.0.0-20181106134648-c34317bd91bf

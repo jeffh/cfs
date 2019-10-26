@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -429,9 +430,26 @@ type LineReader struct {
 	length int
 }
 
+func (r *LineReader) Read(p []byte) (int, error) {
+	n := 0
+	if r.buf != nil {
+		n += copy(p, r.buf[r.offset:r.length+r.offset])
+		r.buf = nil
+	}
+	if len(p[n:]) == 0 {
+		return n, nil
+	}
+
+	np, err := r.R.Read(p[n:])
+	return n + np, err
+}
+
 func (r *LineReader) ReadLine() (string, error) {
 	if r.buf == nil {
 		r.buf = make([]byte, 4096)
+	}
+	if r.offset < 0 {
+		r.offset = 0
 	}
 	var line string
 
@@ -632,7 +650,55 @@ func KeyValues(kvs map[string]string) string {
 	return strings.Join(res, " ")
 }
 
-func ParseKeyValues(value string) map[string]string {
+type KVMap map[string][]string
+
+func (kv KVMap) GetAll(k string) []string {
+	v, _ := kv[k]
+	return v
+}
+
+func (kv KVMap) GetOne(k string) string {
+	v, _ := kv[k]
+	if len(v) > 0 {
+		return v[0]
+	}
+	return ""
+}
+
+func strBool(s string) bool {
+	return s == "true" || s == "t" || s == "yes" || s == "y"
+}
+
+func (kv KVMap) GetOneBool(k string) bool { return strBool(kv.GetOne(k)) }
+func (kv KVMap) GetOneInt64(k string) int64 {
+	n, err := strconv.ParseInt(kv.GetOne(k), 10, 64)
+	if err != nil {
+		n = 0
+	}
+	return n
+}
+func (kv KVMap) GetAllPrefix(prefix string) KVMap {
+	m := make(KVMap)
+	for k, v := range kv {
+		i := strings.Index(k, prefix)
+		if i != -1 {
+			key := k[i:]
+			m[key] = v
+		}
+	}
+	return m
+}
+func (kv KVMap) Flatten() map[string]string {
+	m := make(map[string]string)
+	for k, v := range kv {
+		if len(v) > 0 {
+			m[k] = v[0]
+		}
+	}
+	return m
+}
+
+func ParseKeyValues(value string) KVMap {
 	lastQuote := rune(0)
 
 	items := strings.FieldsFunc(value, func(c rune) bool {
@@ -651,10 +717,11 @@ func ParseKeyValues(value string) map[string]string {
 		}
 	})
 
-	m := make(map[string]string)
+	m := make(KVMap)
 	for _, item := range items {
 		x := strings.Split(item, "=")
-		m[x[0]] = x[1]
+		k := x[0]
+		m[k] = append(m[k], x[1])
 	}
 
 	return m
