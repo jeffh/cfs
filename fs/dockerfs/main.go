@@ -122,6 +122,7 @@ func NewFs() (*Fs, error) {
 			names[i] = name[1:]
 		}
 
+		containerID := ct.ID
 		return staticDir(name,
 			staticStringFile("id", createdAt, ct.ID),
 			staticStringFile("names", createdAt, strings.Join(names, "\n")),
@@ -153,12 +154,38 @@ func NewFs() (*Fs, error) {
 						goto finished
 					}
 					switch args[0] {
-					case "stop":
-						if len(args) >= 2 {
-
-						} else {
-							fmt.Fprintf(wr, "error: unrecognized command: %v", args[0])
+					case "help":
+						fmt.Fprintf(w, "COMMANDS:\n\n")
+						fmt.Fprintf(w, " start       - Starts this container")
+						fmt.Fprintf(w, " stop        - Stops this container, or forcefully kill if it takes too long")
+						fmt.Fprintf(w, " kill SIGNAL - Sends this container a signal")
+						fmt.Fprintf(w, " exit        - tells the fs to close the ctl file. Useful when you want to wait for a command to finish\n")
+						fmt.Fprintf(w, " help        - returns this help\n")
+					case "start":
+						err := c.ContainerStart(context.Background(), containerID, types.ContainerStartOptions{})
+						if err != nil {
+							wr.CloseWithError(err)
+							return
 						}
+						fmt.Fprintf(wr, "ok\n")
+					case "stop":
+						err := c.ContainerStop(context.Background(), containerID, nil)
+						if err != nil {
+							wr.CloseWithError(err)
+							return
+						}
+						fmt.Fprintf(wr, "ok\n")
+					case "kill":
+						signal := "SIGKILL"
+						if len(args) > 1 {
+							signal = args[1]
+						}
+						err := c.ContainerKill(context.Background(), containerID, signal)
+						if err != nil {
+							wr.CloseWithError(err)
+							return
+						}
+						fmt.Fprintf(wr, "ok\n")
 					}
 				finished:
 					if err != nil {
@@ -447,7 +474,7 @@ func NewFs() (*Fs, error) {
 		return
 	}
 
-	containerCtl := func(rdr io.Reader, w io.Writer) {
+	containersCtl := func(rdr io.Reader, w io.Writer) {
 		r := ninep.LineReader{R: rdr}
 		wr := w.(*io.PipeWriter)
 		var lastContainerID string
@@ -695,7 +722,7 @@ func NewFs() (*Fs, error) {
 					}),
 				),
 				staticDir("containers",
-					dynamicCtlFile("ctl", containerCtl),
+					dynamicCtlFile("ctl", containersCtl),
 					dynamicDir("ids", func() ([]ninep.Node, error) {
 						return containerListAs(c, noCListOpts, containerById)
 					}),
