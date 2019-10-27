@@ -47,7 +47,7 @@ func main() {
 		if writeFromStdin {
 			wr := ninep.Writer(h)
 			n, err := io.Copy(wr, os.Stdin)
-			fmt.Printf("# write %d bytes\n", n)
+			fmt.Fprintf(os.Stderr, "# wrote %d bytes\n", n)
 			if err != nil {
 				return err
 			}

@@ -2,22 +2,13 @@ package dockerfs
 
 import (
 	"context"
-	"flag"
 	"fmt"
-	"io"
-	"io/ioutil"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/strslice"
 	"github.com/docker/docker/client"
-	"github.com/docker/go-connections/nat"
-	"github.com/google/shlex"
 	"github.com/jeffh/cfs/ninep"
 )
 
@@ -31,634 +22,32 @@ func NewFs() (*Fs, error) {
 	// c, err := client.NewClientWithOpts(client.FromEnv)
 	c, err := client.NewEnvClient()
 
-	imageDir := func(name string, img types.ImageSummary) ninep.Node {
-		createdAt := time.Unix(img.Created, 0)
-		dir := staticDir(name,
-			staticStringFile("id", createdAt, img.ID),
-			staticStringFile("parent_id", createdAt, img.ParentID),
-			staticStringFile("size", createdAt, fmt.Sprintf("%d", img.Size)),
-			staticStringFile("shared_size", createdAt, fmt.Sprintf("%d", img.SharedSize)),
-			staticStringFile("virtual_size", createdAt, fmt.Sprintf("%d", img.VirtualSize)),
-			dynamicCtlFile("image", func(r io.Reader, w io.Writer) {
-				wr := w.(*io.PipeWriter)
-				rc, err := c.ImageSave(context.Background(), []string{img.ID})
-				if err != nil {
-					wr.CloseWithError(err)
-					return
-				}
-				_, err = io.Copy(w, rc)
-				if err != nil {
-					wr.CloseWithError(err)
-					return
-				}
-			}),
-			dynamicDirWithTime("labels", createdAt, func() ([]ninep.Node, error) {
-				n := make([]ninep.Node, 0, len(img.Labels))
-				for label, value := range img.Labels {
-					n = append(n, staticStringFile(label, createdAt, value))
-				}
-				return n, nil
-			}),
-			staticStringFile("virtual_size", createdAt, fmt.Sprintf("%d", img.VirtualSize)),
-		)
-		dir.SimpleFileInfo.FIModTime = createdAt
-		return dir
-	}
+	const (
+		IMAGES_HELP = `Files in this directory:
 
-	imageListAs := func(c *client.Client, fn func(results []ninep.Node, img types.ImageSummary) []ninep.Node) ([]ninep.Node, error) {
-		imgs, err := c.ImageList(context.Background(), types.ImageListOptions{})
-		if err != nil {
-			return nil, err
-		}
+help - that's this file!
+ctl    - perform most docker operations on images. Terminal-like. Write 'help\n' to this file to see options.
+build  - allows you to build a docker image by writing key-value pairs of
+			arguments, followed by a newline, then followed by a tar of the build
+			context, including the Dockerfile.
+load   - allows you to load a docker image if you have one to write to directly (from docker export)
+export - allows you to download docker images by writing one per line and reading this files' contents.
+ids    - lists containers by their ids (content hashes)
+labels - lists containers by their human-friendly labels stored locally
+tags   - lists containers by their human-friendly labels from the remote registry
+repos  - lists containers by their repository name + tags/shas`
 
-		children := make([]ninep.Node, 0, len(imgs))
-		for _, img := range imgs {
-			children = fn(children, img)
-		}
-		return children, nil
-	}
+		CONTAINERS_HELP = `Files in this directory:
 
-	containerDir := func(name string, ct types.Container) ninep.Node {
-		createdAt := time.Unix(ct.Created, 0)
-		ports := make([]string, len(ct.Ports))
-		for i, p := range ct.Ports {
-			ports[i] = fmt.Sprintf("%s %s:%d %d", p.Type, p.IP, p.PublicPort, p.PrivatePort)
-		}
-
-		mounts := make([]string, len(ct.Mounts))
-		for i, m := range ct.Mounts {
-			mounts[i] = fmt.Sprintf(
-				"%s %s %v %v %s %s rw=%v %s",
-				m.Type,
-				m.Name,
-				m.Source,
-				m.Destination,
-				m.Driver,
-				m.Mode,
-				m.RW,
-				m.Propagation,
-			)
-		}
-
-		containerLogs := func(opt types.ContainerLogsOptions) func(r io.Reader, w io.Writer) {
-			return func(r io.Reader, w io.Writer) {
-				wr := w.(*io.PipeWriter)
-				out, err := c.ContainerLogs(context.Background(), ct.ID, opt)
-				if err != nil {
-					wr.CloseWithError(err)
-					return
-				}
-				defer out.Close()
-				_, err = io.Copy(wr, out)
-				if err != nil {
-					wr.CloseWithError(err)
-					return
-				}
-			}
-		}
-
-		names := make([]string, len(ct.Names))
-		for i, name := range ct.Names {
-			names[i] = name[1:]
-		}
-
-		containerID := ct.ID
-		return staticDir(name,
-			staticStringFile("id", createdAt, ct.ID),
-			staticStringFile("names", createdAt, strings.Join(names, "\n")),
-			staticStringFile("image", createdAt, fmt.Sprintf("%s\n%s\n", ct.Image, ct.ImageID)),
-			staticStringFile("cmdline", createdAt, ct.Command),
-			staticStringFile("writable_size", createdAt, fmt.Sprintf("%d", ct.SizeRw)),
-			staticStringFile("rootfs_size", createdAt, fmt.Sprintf("%d", ct.SizeRootFs)),
-			staticStringFile("state", createdAt, ct.State),
-			staticStringFile("status", createdAt, ct.Status),
-			staticStringFile("ports", createdAt, strings.Join(ports, "\n")),
-			staticStringFile("mounts", createdAt, strings.Join(mounts, "\n")),
-			dynamicCtlFile("logs", containerLogs(types.ContainerLogsOptions{
-				ShowStdout: true,
-				ShowStderr: true,
-				Tail:       "all",
-			})),
-			dynamicCtlFile("ctl", func(r io.Reader, w io.Writer) {
-				for {
-					rl := &ninep.LineReader{R: r}
-					wr := w.(*io.PipeWriter)
-					line, readErr := rl.ReadLine()
-					args, err := shlex.Split(line)
-					if err != nil {
-						fmt.Printf("error: %s\n", err)
-						fmt.Fprintf(wr, "error: %s\n", err)
-						continue
-					}
-					if len(args) == 0 {
-						goto finished
-					}
-					switch args[0] {
-					case "help":
-						fmt.Fprintf(w, "COMMANDS:\n\n")
-						fmt.Fprintf(w, " start       - Starts this container")
-						fmt.Fprintf(w, " stop        - Stops this container, or forcefully kill if it takes too long")
-						fmt.Fprintf(w, " kill SIGNAL - Sends this container a signal")
-						fmt.Fprintf(w, " exit        - tells the fs to close the ctl file. Useful when you want to wait for a command to finish\n")
-						fmt.Fprintf(w, " help        - returns this help\n")
-					case "start":
-						err := c.ContainerStart(context.Background(), containerID, types.ContainerStartOptions{})
-						if err != nil {
-							wr.CloseWithError(err)
-							return
-						}
-						fmt.Fprintf(wr, "ok\n")
-					case "stop":
-						err := c.ContainerStop(context.Background(), containerID, nil)
-						if err != nil {
-							wr.CloseWithError(err)
-							return
-						}
-						fmt.Fprintf(wr, "ok\n")
-					case "kill":
-						signal := "SIGKILL"
-						if len(args) > 1 {
-							signal = args[1]
-						}
-						err := c.ContainerKill(context.Background(), containerID, signal)
-						if err != nil {
-							wr.CloseWithError(err)
-							return
-						}
-						fmt.Fprintf(wr, "ok\n")
-					}
-				finished:
-					if err != nil {
-						fmt.Printf("error: %s\n", err)
-						fmt.Fprintf(wr, "error: %s\n", err)
-						return
-					}
-					if line == "" {
-						return
-					}
-
-					if readErr != nil {
-						fmt.Printf("error: %s\n", readErr)
-						fmt.Fprintf(wr, "error: %s\n", readErr)
-						return
-					}
-				}
-			}),
-			dynamicCtlFile("stdout", containerLogs(types.ContainerLogsOptions{ShowStdout: true, Tail: "all"})),
-			dynamicCtlFile("stderr", containerLogs(types.ContainerLogsOptions{ShowStderr: true, Tail: "all"})),
-			staticDirWithTime("net", createdAt,
-				staticStringFile("host_mode", createdAt, ct.HostConfig.NetworkMode),
-				dynamicDirWithTime("configs", createdAt, func() ([]ninep.Node, error) {
-					netCfgs := make([]ninep.Node, 0, len(ct.NetworkSettings.Networks))
-					for endpoint, cfg := range ct.NetworkSettings.Networks {
-						var ipamCfg ninep.Node
-						if cfg.IPAMConfig != nil {
-							ipamCfg = staticDirWithTime("ipam_config", createdAt,
-								staticStringFile("ipv4_address", createdAt, cfg.IPAMConfig.IPv4Address),
-								staticStringFile("ipv6_address", createdAt, cfg.IPAMConfig.IPv6Address),
-								staticStringFile("link_local_ips", createdAt, strings.Join(cfg.IPAMConfig.LinkLocalIPs, "\n")),
-							)
-						}
-						netCfgs = append(netCfgs, staticDir(
-							endpoint,
-							ipamCfg,
-							staticStringFile("links", createdAt, strings.Join(cfg.Links, "\n")),
-							staticStringFile("aliases", createdAt, strings.Join(cfg.Aliases, "\n")),
-							staticStringFile("network_id", createdAt, cfg.NetworkID),
-							staticStringFile("endpoint_id", createdAt, cfg.EndpointID),
-							staticStringFile("gateway", createdAt, cfg.Gateway),
-							staticStringFile("ip_addr", createdAt, fmt.Sprintf("%s/%d", cfg.IPAddress, cfg.IPPrefixLen)),
-							staticStringFile("ipv6_gateway", createdAt, cfg.IPv6Gateway),
-							staticStringFile("global_ipv6_address", createdAt, fmt.Sprintf("%s/%d", cfg.GlobalIPv6Address, cfg.GlobalIPv6PrefixLen)),
-							staticStringFile("mac_address", createdAt, cfg.MacAddress),
-							// dynamicDirWithTime("driver_options", createdAt, func() ([]ninep.Node, error) {
-							// 	res := make([]ninep.Node, 0, len(cfg.DriverOpts))
-							// 	for key, value := range cfg.DriverOpts {
-							// 		res = append(res, staticStringFile(key, createdAt, value))
-							// 	}
-							// 	return res, nil
-							// }),
-						))
-					}
-					return netCfgs, nil
-				}),
-			),
-		)
-	}
-
-	containerById := func(r []ninep.Node, cntr types.Container) []ninep.Node {
-		return append(r, containerDir(cntr.ID, cntr))
-	}
-
-	containerListAs := func(c *client.Client, opts types.ContainerListOptions, fn func([]ninep.Node, types.Container) []ninep.Node) ([]ninep.Node, error) {
-		opts.All = true
-		cntrs, err := c.ContainerList(context.Background(), opts)
-		if err != nil {
-			return nil, err
-		}
-
-		children := make([]ninep.Node, 0, len(cntrs))
-		for _, cntr := range cntrs {
-			children = fn(children, cntr)
-		}
-		return children, nil
-	}
-
-	containerListByState := func(c *client.Client, opts types.ContainerListOptions, state string) ([]ninep.Node, error) {
-		opts.Filters.Add("status", state)
-		return containerListAs(c, opts, containerById)
-	}
+help  - that's this file!
+ctl   - performs most dockers operations on containers. Terminal-like. Write 'help\n' to this file to see options.
+ids   - list all containers by their ids.
+names - list all containers by their names.
+state - list a subset of containers by their current state.`
+	)
 
 	var noCListOpts types.ContainerListOptions
 	noCListOpts.Filters = filters.NewArgs()
-
-	resolveImageRef := func(ref string) string {
-		if strings.Index(ref, ".") == -1 {
-			if strings.Index(ref, "/") == -1 {
-				ref = fmt.Sprintf("docker.io/library/%s", ref)
-			} else {
-				ref = fmt.Sprintf("docker.io/%s", ref)
-			}
-		}
-		return ref
-	}
-
-	imagesCtl := func(rdr io.Reader, w io.Writer) {
-		r := ninep.LineReader{R: rdr}
-		for {
-			cmd, readErr := r.ReadLine()
-
-			args, err := shlex.Split(cmd)
-			if err != nil {
-				fmt.Printf("error: %s\n", err)
-				fmt.Fprintf(w, "error: %s\n", err)
-				continue
-			}
-			if len(args) == 0 {
-				goto finished
-			}
-			switch args[0] {
-			case "help":
-				fmt.Fprintf(w, "COMMANDS:\n\n")
-				fmt.Fprintf(w, " pull IMAGE_NAME   - makes the docker host fetch a docker image from a remote registry\n")
-				fmt.Fprintf(w, " push IMAGE_NAME   - makes the docker host push a docker image from a remote registry\n")
-				fmt.Fprintf(w, " search QUERY      - makes the docker host search for docker images from a remote registry\n")
-				fmt.Fprintf(w, " delete IMAGE_NAME - makes the docker host delete a local docker image\n")
-				fmt.Fprintf(w, " exit              - tells the fs to close the ctl file. Useful when you want to wait for a command to finish\n")
-				fmt.Fprintf(w, " help              - returns this help\n")
-			case "pull", "fetch":
-				if len(args) > 1 {
-					ref := resolveImageRef(args[1])
-					res, err := c.ImagePull(context.Background(), ref, types.ImagePullOptions{})
-					if err != nil {
-						fmt.Printf("error: %s\n", err)
-						fmt.Fprintf(w, "error: %s\n", err)
-						goto finished
-					}
-					io.Copy(ioutil.Discard, res)
-					if err != nil {
-						fmt.Printf("error: %s\n", err)
-						fmt.Fprintf(w, "error: %s\n", err)
-					} else {
-						fmt.Fprintf(w, "ok\n")
-					}
-					res.Close()
-				} else {
-					w.Write([]byte("error: missing image to fetch"))
-				}
-			case "push":
-				if len(args) > 1 {
-					ref := resolveImageRef(args[1])
-					res, err := c.ImagePush(context.Background(), ref, types.ImagePushOptions{})
-					if err != nil {
-						fmt.Printf("error: %s\n", err)
-						fmt.Fprintf(w, "error: %s\n", err)
-						goto finished
-					}
-					io.Copy(ioutil.Discard, res)
-					if err != nil {
-						fmt.Printf("error: %s\n", err)
-						fmt.Fprintf(w, "error: %s\n", err)
-					} else {
-						fmt.Fprintf(w, "ok\n")
-					}
-					res.Close()
-				} else {
-					w.Write([]byte("error: missing image to fetch"))
-				}
-			case "search":
-				if len(args) > 1 {
-					term := args[1]
-					imgs, err := c.ImageSearch(context.Background(), term, types.ImageSearchOptions{Limit: 100})
-					if err != nil {
-						fmt.Printf("error: %s\n", err)
-						fmt.Fprintf(w, "error: %s\n", err)
-						goto finished
-					}
-					if err != nil {
-						fmt.Printf("error: %s\n", err)
-						fmt.Fprintf(w, "error: %s\n", err)
-					} else {
-						for _, img := range imgs {
-							star := ""
-							if img.IsOfficial {
-								star = "*"
-							}
-							fmt.Fprintf(w, "%s %s- (%d) %s\n", img.Name, star, img.StarCount, img.Description)
-						}
-					}
-				} else {
-					w.Write([]byte("error: missing image to fetch"))
-				}
-			case "delete":
-				if len(args) > 1 {
-					imageId := args[1]
-					_, err := c.ImageRemove(context.Background(), imageId, types.ImageRemoveOptions{})
-					if err != nil {
-						fmt.Printf("error: %s\n", err)
-						fmt.Fprintf(w, "error: %s\n", err)
-						goto finished
-					} else {
-						fmt.Fprintf(w, "ok\n")
-					}
-				}
-			case "exit", "done", "quit":
-				return
-			default:
-				fmt.Fprintf(w, "error: unrecognized command: %v", args[0])
-			}
-		finished:
-			if err != nil {
-				fmt.Printf("error: %s\n", err)
-				fmt.Fprintf(w, "error: %s\n", err)
-				return
-			}
-			if cmd == "" {
-				return
-			}
-
-			if readErr != nil {
-				fmt.Printf("error: %s\n", readErr)
-				fmt.Fprintf(w, "error: %s\n", readErr)
-				return
-			}
-		}
-	}
-
-	imageLoadCtl := func(r io.Reader, w io.Writer) {
-		wr := w.(*io.PipeWriter)
-		out, err := c.ImageLoad(context.Background(), r, true)
-		if err != nil {
-			wr.CloseWithError(err)
-			return
-		}
-		out.Body.Close()
-		fmt.Fprintf(w, "ok\n")
-	}
-
-	imageBuildCtl := func(r io.Reader, w io.Writer) {
-		lr := &ninep.LineReader{R: r}
-		line, err := lr.ReadLine()
-		if err != nil {
-			return
-		}
-
-		kvs := ninep.ParseKeyValues(line)
-		buildOpts := types.ImageBuildOptions{
-			Tags:           kvs.GetAll("tags"),
-			SuppressOutput: kvs.GetOneBool("suppress_output"),
-			RemoteContext:  kvs.GetOne("remote_context"),
-			NoCache:        kvs.GetOneBool("no_cache"),
-			Remove:         kvs.GetOneBool("remove"),
-			ForceRemove:    kvs.GetOneBool("force_remove"),
-			PullParent:     kvs.GetOneBool("pull_parent"),
-			// Isolation      container.Isolation
-			CPUSetCPUs:   kvs.GetOne("cpu_set_cpus"),
-			CPUSetMems:   kvs.GetOne("cpu_set_mems"),
-			CPUShares:    kvs.GetOneInt64("cpu_shares"),
-			CPUQuota:     kvs.GetOneInt64("cpu_quota"),
-			CPUPeriod:    kvs.GetOneInt64("cpu_period"),
-			Memory:       kvs.GetOneInt64("memory"),
-			MemorySwap:   kvs.GetOneInt64("memory_swap"),
-			CgroupParent: kvs.GetOne("cgroup_parent"),
-			NetworkMode:  kvs.GetOne("network_mode"),
-			ShmSize:      kvs.GetOneInt64("shm_size"),
-			Dockerfile:   kvs.GetOne("dockerfile"),
-			// Ulimits:      ulimitsFrom(kvs),
-			// BuildArgs   map[string]*string
-			// AuthConfigs map[string]AuthConfig
-			// Context     io.Reader
-			Labels:      kvs.GetAllPrefix("label").Flatten(),
-			Squash:      kvs.GetOneBool("squash"),
-			CacheFrom:   kvs.GetAll("cache_from"),
-			SecurityOpt: kvs.GetAll("security_opt"),
-			// ExtraHosts:     kvs.GetAll("extra_hosts"),
-			// Target:         kvs.GetOne("target"),
-			// SessionID:      kvs.GetOne("session_id"),
-			// Platform:       kvs.GetOne("platform"),
-			// BuilderVersion: types.BuilderVersion(kvs.GetOne("build_version")),
-			// BuilderID:      kvs.GetOne("build_id"), // TODO: we should propbably generate this and manage a dir as the build is occurring
-			// Outputs []ImageBuildOutput
-		}
-		out, err := c.ImageBuild(context.Background(), lr, buildOpts)
-		if err != nil {
-			fmt.Fprintf(w, "error: %s\n", err)
-			return
-		}
-		defer out.Body.Close()
-		_, err = io.Copy(w, out.Body)
-		if err != nil {
-			fmt.Fprintf(w, "error: %s\n", err)
-			return
-		}
-		return
-	}
-
-	containersCtl := func(rdr io.Reader, w io.Writer) {
-		r := ninep.LineReader{R: rdr}
-		wr := w.(*io.PipeWriter)
-		var lastContainerID string
-		for {
-			cmd, readErr := r.ReadLine()
-
-			args, err := shlex.Split(cmd)
-			if err != nil {
-				fmt.Printf("error: %s\n", err)
-				fmt.Fprintf(w, "error: %s\n", err)
-				continue
-			}
-			if len(args) == 0 {
-				goto finished
-			}
-			switch args[0] {
-			case "help":
-				fmt.Fprintf(w, "COMMANDS:\n\n")
-				fmt.Fprintf(w, " run IMAGE_NAME CMD - Runs a docker container image with a given, optional command.")
-				fmt.Fprintf(w, " \n")
-				fmt.Fprintf(w, " exit               - tells the fs to close the ctl file. Useful when you want to wait for a command to finish\n")
-				fmt.Fprintf(w, " help               - returns this help\n")
-			case "create":
-				var (
-					img           string
-					env           string
-					containerName string
-					volumes       string
-					entryPoint    string
-					onbuild       string
-					shell         string
-					exposedPorts  string
-
-					timeout int
-
-					cfg     container.Config
-					hostCfg container.HostConfig
-					netCfg  network.NetworkingConfig
-				)
-				fset := flag.NewFlagSet(args[0], flag.ContinueOnError)
-				fset.StringVar(&cfg.Hostname, "hostname", "", "the hostname of the container")
-				fset.StringVar(&cfg.Domainname, "domainname", "", "the domainname of the container")
-				fset.StringVar(&cfg.User, "user", "", "the user that runs the cmd inside the container. also, supports user:group")
-				fset.BoolVar(&cfg.AttachStdin, "stdin", false, "Attaches to stdin for possible user interaction")
-				fset.BoolVar(&cfg.AttachStdout, "stdout", false, "Attaches to stdout")
-				fset.BoolVar(&cfg.AttachStderr, "stderr", false, "Attaches to stderr")
-				// fset.BoolVar(&cfg.Tty, "tty", "", "Attach stdin, stdout, stderr to terminal tty")
-				fset.BoolVar(&cfg.OpenStdin, "open-stdin", false, "Opens stdin")
-				fset.BoolVar(&cfg.StdinOnce, "once-stdin", false, "If true, close stdin after the 1 attached client disconnects.")
-				fset.StringVar(&env, "e", "", "a comma-separated list of environment variables to use")
-				fset.StringVar(&containerName, "name", "", "a unique name to give a container. Default generates a new container name.")
-				fset.StringVar(&volumes, "volumes", "", "a list of volumes to attach to the container, separated by commas")
-				fset.StringVar(&cfg.WorkingDir, "working-dir", "", "Current directory (PWD) in the command will be launched")
-				fset.StringVar(&entryPoint, "entry-point", "", "Entrypoint to run when starting the container")
-				fset.BoolVar(&cfg.NetworkDisabled, "disable-network", false, "Is network disabled")
-				fset.StringVar(&cfg.MacAddress, "mac-addr", "", "Mac Address of the container")
-				fset.StringVar(&onbuild, "onbuild", "", "ONBUILD metadata that were defined on the image Dockerfile, comma separated")
-				fset.StringVar(&cfg.StopSignal, "stop-signal", "", "Signal to stop a container")
-				fset.IntVar(&timeout, "stop-timeout", 0, "Timeout (in seconds) to stop a container")
-				fset.StringVar(&shell, "shell", "", "Shell for shell-form of RUN, CMD, ENTRYPOINT, commas separated")
-				fset.StringVar(&exposedPorts, "exposed-ports", "", "List of exposed ports, commas separated")
-				fset.BoolVar(&hostCfg.AutoRemove, "auto-remove", false, "Automatically remove container when it exits")
-				fset.BoolVar(&hostCfg.Privileged, "privileged", false, "Is the container in privileged mode")
-				fset.BoolVar(&hostCfg.PublishAllPorts, "published-all-ports", false, "Should docker publish all exposed port for the container")
-				fset.BoolVar(&hostCfg.ReadonlyRootfs, "readyonly-root-fs", false, "Is the container root filesystem in read-only")
-
-				err := fset.Parse(args[1:])
-				if err != nil {
-					wr.CloseWithError(err)
-				}
-				args = fset.Args()
-				size := len(args)
-				if size >= 1 {
-					img = args[0]
-					if size >= 2 {
-						cmd = args[1]
-					}
-
-					if env != "" {
-						cfg.Env = strslice.StrSlice(strings.Split(env, ","))
-					}
-
-					if entryPoint != "" {
-						cfg.Entrypoint = strslice.StrSlice(strings.Split(entryPoint, ","))
-					}
-
-					cfg.Image = img
-					if volumes != "" {
-						m := make(map[string]struct{})
-						for _, name := range strings.Split(volumes, ",") {
-							m[name] = struct{}{}
-						}
-						cfg.Volumes = m
-					}
-
-					if onbuild != "" {
-						cfg.OnBuild = strings.Split(onbuild, ",")
-					}
-					// TODO: set ExposedPorts
-					// TODO: set labels
-					if timeout != 0 {
-						cfg.StopTimeout = &timeout
-					}
-
-					if shell != "" {
-						cfg.Shell = strings.Split(shell, ",")
-					}
-
-					if exposedPorts != "" {
-						exposed, bindings, err := nat.ParsePortSpecs(strings.Split(exposedPorts, ","))
-						if err != nil {
-							wr.CloseWithError(err)
-							return
-						}
-						cfg.ExposedPorts = exposed
-						hostCfg.PortBindings = bindings
-					}
-
-					res, err := c.ContainerCreate(context.Background(), &cfg, &hostCfg, &netCfg, containerName)
-					if err != nil {
-						wr.CloseWithError(err)
-					}
-					fmt.Fprintf(wr, "%s\n", res.ID)
-					for _, warn := range res.Warnings {
-						fmt.Fprintf(wr, "%s\n", warn)
-					}
-					lastContainerID = res.ID
-
-				} else {
-					w.Write([]byte("error: missing image to run"))
-				}
-			case "start":
-				size := len(args)
-				containerID := lastContainerID
-				if size >= 2 {
-					containerID = args[1]
-				}
-
-				if containerID != "" {
-					err := c.ContainerStart(context.Background(), containerID, types.ContainerStartOptions{})
-					if err != nil {
-						wr.CloseWithError(err)
-					}
-					fmt.Fprintf(wr, "%s\n", containerID)
-				} else {
-					w.Write([]byte("error: missing image to run"))
-				}
-			case "exit", "done", "quit":
-				return
-			default:
-				fmt.Fprintf(w, "error: unrecognized command: %v", args[0])
-			}
-		finished:
-			if err != nil {
-				fmt.Printf("error: %s\n", err)
-				fmt.Fprintf(w, "error: %s\n", err)
-				return
-			}
-			if cmd == "" {
-				return
-			}
-
-			if readErr != nil {
-				fmt.Printf("error: %s\n", readErr)
-				fmt.Fprintf(w, "error: %s\n", readErr)
-				return
-			}
-		}
-	}
-
-	const IMAGES_HELP = `Files in this directory:
-
-	help - that's this file!
-	ctl - perform most docker operations. Terminal-like. Write 'help\n' to that file to see options.
-	build - allows you to build a docker image by writing key-value pairs of
-	        arguments, followed by a newline, then followed by a tar of the build
-			context, including the Dockerfile.
-	load - allows you to load a docker image if you have one to write to directly (from docker export)
-	export - allows you to download docker images by writing one per line and reading this files' contents.
-	ids - lists containers by their ids (content hashes)
-	labels - lists containers by their human-friendly labels stored locally
-	tags - lists containers by their human-friendly labels from the remote registry
-	repos - lists containers by their repository name + tags/shas
-	`
 
 	fs := &Fs{
 		c,
@@ -666,37 +55,19 @@ func NewFs() (*Fs, error) {
 			Root: ninep.StaticRootDir(
 				staticDir("images",
 					staticStringFile("help", time.Time{}, IMAGES_HELP),
-					dynamicCtlFile("ctl", imagesCtl),
-					dynamicCtlFile("load", imageLoadCtl),
-					dynamicCtlFile("build", imageBuildCtl),
-					dynamicCtlFile("export", func(r io.Reader, w io.Writer) {
-						wr := w.(*io.PipeWriter)
-						imageIdsByLine, err := ioutil.ReadAll(r)
-						if err != nil {
-							wr.CloseWithError(err)
-							return
-						}
-						imageIds := strings.Split(string(imageIdsByLine), "\n")
-						rc, err := c.ImageSave(context.Background(), imageIds)
-						if err != nil {
-							wr.CloseWithError(err)
-							return
-						}
-						_, err = io.Copy(w, rc)
-						if err != nil {
-							wr.CloseWithError(err)
-							return
-						}
-					}),
+					dynamicCtlFile("ctl", imagesCtl(c)),
+					dynamicCtlFile("load", imageLoadCtl(c)),
+					dynamicCtlFile("build", imageBuildCtl(c)),
+					dynamicCtlFile("export", imageExportCtl(c)),
 					dynamicDir("ids", func() ([]ninep.Node, error) {
 						return imageListAs(c, func(r []ninep.Node, img types.ImageSummary) []ninep.Node {
-							return append(r, imageDir(img.ID, img))
+							return append(r, imageDir(c, img.ID, img))
 						})
 					}),
 					dynamicDir("labels", func() ([]ninep.Node, error) {
 						return imageListAs(c, func(r []ninep.Node, img types.ImageSummary) []ninep.Node {
 							for label := range img.Labels {
-								r = append(r, imageDir(label, img))
+								r = append(r, imageDir(c, label, img))
 							}
 							return r
 						})
@@ -704,7 +75,7 @@ func NewFs() (*Fs, error) {
 					dynamicDir("tags", func() ([]ninep.Node, error) {
 						return imageListAs(c, func(r []ninep.Node, img types.ImageSummary) []ninep.Node {
 							for _, tag := range img.RepoTags {
-								r = append(r, imageDir(tag, img))
+								r = append(r, imageDir(c, tag, img))
 							}
 							return r
 						})
@@ -712,24 +83,25 @@ func NewFs() (*Fs, error) {
 					dynamicDirTree("repos", func() ([]ninep.Node, error) {
 						return imageListAs(c, func(r []ninep.Node, img types.ImageSummary) []ninep.Node {
 							for _, digest := range img.RepoDigests {
-								r = append(r, imageDir(digest, img))
+								r = append(r, imageDir(c, digest, img))
 							}
 							for _, label := range img.RepoTags {
-								r = append(r, imageDir(label, img))
+								r = append(r, imageDir(c, label, img))
 							}
 							return r
 						})
 					}),
 				),
 				staticDir("containers",
-					dynamicCtlFile("ctl", containersCtl),
+					staticStringFile("help", time.Time{}, CONTAINERS_HELP),
+					dynamicCtlFile("ctl", containersCtl(c, noCListOpts)),
 					dynamicDir("ids", func() ([]ninep.Node, error) {
 						return containerListAs(c, noCListOpts, containerById)
 					}),
 					dynamicDir("names", func() ([]ninep.Node, error) {
-						return containerListAs(c, noCListOpts, func(r []ninep.Node, cntr types.Container) []ninep.Node {
+						return containerListAs(c, noCListOpts, func(c *client.Client, r []ninep.Node, cntr types.Container) []ninep.Node {
 							for _, name := range cntr.Names {
-								r = append(r, containerDir(name[1:], cntr))
+								r = append(r, containerDir(c, name[1:], cntr))
 							}
 							return r
 						})
@@ -744,13 +116,13 @@ func NewFs() (*Fs, error) {
 						dynamicDir("dead", func() ([]ninep.Node, error) { return containerListByState(c, noCListOpts, "dead") }),
 					),
 				),
-				staticDir("swarm",
-					staticDir("services"),
-					staticDir("nodes"),
-					staticDir("configs"),
-					staticDir("secrets"),
-				),
-				staticDir("stacks"),
+				// staticDir("swarm",
+				// 	staticDir("services"),
+				// 	staticDir("nodes"),
+				// 	staticDir("configs"),
+				// 	staticDir("secrets"),
+				// ),
+				// staticDir("stacks"),
 				staticDir("networks"),
 				staticDir("volumes"),
 				staticDir("system",
@@ -837,90 +209,3 @@ func (f *Fs) Close() error {
 	}
 	return nil
 }
-
-///////////////////////////////////////////////////////////////////////////////////
-
-func staticDir(name string, children ...ninep.Node) *ninep.StaticReadOnlyDir {
-	return &ninep.StaticReadOnlyDir{
-		SimpleFileInfo: ninep.SimpleFileInfo{
-			FIName: name,
-			FIMode: os.ModeDir | 0777,
-		},
-		Children: children,
-	}
-}
-
-func staticDirWithTime(name string, modTime time.Time, children ...ninep.Node) *ninep.StaticReadOnlyDir {
-	return &ninep.StaticReadOnlyDir{
-		SimpleFileInfo: ninep.SimpleFileInfo{
-			FIName:    name,
-			FIMode:    os.ModeDir | 0777,
-			FIModTime: modTime,
-		},
-		Children: children,
-	}
-}
-
-func dynamicFile(name string, modTime time.Time, content func() ([]byte, error)) *ninep.SimpleFile {
-	return &ninep.SimpleFile{
-		SimpleFileInfo: ninep.SimpleFileInfo{
-			FIName:    name,
-			FIMode:    os.ModeDir | 0777,
-			FIModTime: modTime,
-		},
-		OpenFn: func() (ninep.FileHandle, error) {
-			b, err := content()
-			if err != nil {
-				return nil, err
-			}
-			return &ninep.ReadOnlyMemoryFileHandle{b}, nil
-		},
-	}
-}
-
-func dynamicDir(name string, resolve func() ([]ninep.Node, error)) *ninep.DynamicReadOnlyDir {
-	return &ninep.DynamicReadOnlyDir{
-		SimpleFileInfo: ninep.SimpleFileInfo{
-			FIName: name,
-			FIMode: os.ModeDir | 0777,
-		},
-		GetChildren: resolve,
-	}
-}
-
-func dynamicDirWithTime(name string, modTime time.Time, resolve func() ([]ninep.Node, error)) *ninep.DynamicReadOnlyDir {
-	n := dynamicDir(name, resolve)
-	n.FIModTime = modTime
-	return n
-}
-
-func dynamicDirTree(name string, resolve func() ([]ninep.Node, error)) *ninep.DynamicReadOnlyDirTree {
-	return &ninep.DynamicReadOnlyDirTree{
-		SimpleFileInfo: ninep.SimpleFileInfo{
-			FIName: name,
-			FIMode: os.ModeDir | 0777,
-		},
-		GetFlatTree: resolve,
-	}
-}
-
-func staticStringFile(name string, modTime time.Time, contents string) *ninep.SimpleFile {
-	return ninep.StaticReadOnlyFile(name, 0444, modTime, []byte(contents))
-}
-
-func dynamicCtlFile(name string, thread func(r io.Reader, w io.Writer)) *ninep.SimpleFile {
-	return ninep.CtlFile(name, 0777, time.Time{}, thread)
-}
-
-func strBool(s string) bool {
-	return s == "true" || s == "t" || s == "yes" || s == "y"
-}
-
-func boolStr(v bool) string {
-	if v {
-		return "true"
-	} else {
-		return "false"
-	}
-}
-func intStr(v int) string { return fmt.Sprintf("%d", v) }
