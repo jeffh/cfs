@@ -138,6 +138,45 @@ func NewFs() (*Fs, error) {
 				ShowStderr: true,
 				Tail:       "all",
 			})),
+			dynamicCtlFile("ctl", func(r io.Reader, w io.Writer) {
+				for {
+					rl := &ninep.LineReader{R: r}
+					wr := w.(*io.PipeWriter)
+					line, readErr := rl.ReadLine()
+					args, err := shlex.Split(line)
+					if err != nil {
+						fmt.Printf("error: %s\n", err)
+						fmt.Fprintf(wr, "error: %s\n", err)
+						continue
+					}
+					if len(args) == 0 {
+						goto finished
+					}
+					switch args[0] {
+					case "stop":
+						if len(args) >= 2 {
+
+						} else {
+							fmt.Fprintf(wr, "error: unrecognized command: %v", args[0])
+						}
+					}
+				finished:
+					if err != nil {
+						fmt.Printf("error: %s\n", err)
+						fmt.Fprintf(wr, "error: %s\n", err)
+						return
+					}
+					if line == "" {
+						return
+					}
+
+					if readErr != nil {
+						fmt.Printf("error: %s\n", readErr)
+						fmt.Fprintf(wr, "error: %s\n", readErr)
+						return
+					}
+				}
+			}),
 			dynamicCtlFile("stdout", containerLogs(types.ContainerLogsOptions{ShowStdout: true, Tail: "all"})),
 			dynamicCtlFile("stderr", containerLogs(types.ContainerLogsOptions{ShowStderr: true, Tail: "all"})),
 			staticDirWithTime("net", createdAt,
