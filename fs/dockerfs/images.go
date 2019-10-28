@@ -29,7 +29,7 @@ func imageDir(c *client.Client, name string, img types.ImageSummary) ninep.Node 
 			for _, tag := range img.RepoTags {
 				refs = append(refs, tag)
 			}
-			rc, err := c.ImageSave(context.Background(), []string{img.ID})
+			rc, err := c.ImageSave(context.Background(), refs)
 			if err != nil {
 				wr.CloseWithError(err)
 				return
