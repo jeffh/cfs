@@ -11,6 +11,7 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/strslice"
 	"github.com/docker/docker/client"
@@ -335,6 +336,7 @@ func containersCtl(c *client.Client, opts types.ContainerListOptions) func(io.Re
 				fmt.Fprintf(w, " restart CONTAINER_ID       - Restarts a running container, killing if the container takes too long to stop\n")
 				fmt.Fprintf(w, " pause CONTAINER_ID         - Pauses a running container's main process\n")
 				fmt.Fprintf(w, " unpause CONTAINER_ID       - Unpauses a running container's main process\n")
+				fmt.Fprintf(w, " prune                      - Removes inactive containers\n")
 				fmt.Fprintf(w, " exit                       - tells the fs to close the ctl file. Useful when you want to wait for a command to finish\n")
 				fmt.Fprintf(w, " help                       - returns this help\n")
 			case "create":
@@ -497,6 +499,18 @@ func containersCtl(c *client.Client, opts types.ContainerListOptions) func(io.Re
 					}
 				} else {
 					w.Write([]byte("error: missing image to run"))
+				}
+			case "prune":
+				var res types.ContainersPruneReport
+				res, err = c.ContainersPrune(context.Background(), filters.NewArgs())
+				if err != nil {
+					goto finished
+				} else {
+					fmt.Fprintf(w, "space_reclaimed %d\n", res.SpaceReclaimed)
+					for _, ctnr := range res.ContainersDeleted {
+						fmt.Fprintf(w, "deleted %s\n", ctnr)
+					}
+					fmt.Fprintf(w, "ok\n")
 				}
 			case "exit", "done", "quit":
 				return
