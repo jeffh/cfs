@@ -25,6 +25,10 @@ func imageDir(c *client.Client, name string, img types.ImageSummary) ninep.Node 
 		staticStringFile("virtual_size", createdAt, fmt.Sprintf("%d", img.VirtualSize)),
 		dynamicCtlFile("image", func(r io.Reader, w io.Writer) {
 			wr := w.(*io.PipeWriter)
+			refs := []string{img.ID}
+			for _, tag := range img.RepoTags {
+				refs = append(refs, tag)
+			}
 			rc, err := c.ImageSave(context.Background(), []string{img.ID})
 			if err != nil {
 				wr.CloseWithError(err)
@@ -43,7 +47,6 @@ func imageDir(c *client.Client, name string, img types.ImageSummary) ninep.Node 
 			}
 			return n, nil
 		}),
-		staticStringFile("virtual_size", createdAt, fmt.Sprintf("%d", img.VirtualSize)),
 	)
 	dir.SimpleFileInfo.FIModTime = createdAt
 	return dir
@@ -82,6 +85,7 @@ func imagesCtl(c *client.Client) func(io.Reader, io.Writer) {
 				fmt.Fprintf(w, "COMMANDS:\n\n")
 				fmt.Fprintf(w, " pull IMAGE_NAME   - makes the docker host fetch a docker image from a remote registry\n")
 				fmt.Fprintf(w, " push IMAGE_NAME   - makes the docker host push a docker image from a remote registry\n")
+				fmt.Fprintf(w, " tag SOURCE TAG    - makes the docker host tag a given source\n")
 				fmt.Fprintf(w, " search QUERY      - makes the docker host search for docker images from a remote registry\n")
 				fmt.Fprintf(w, " delete IMAGE_NAME - makes the docker host delete a local docker image\n")
 				fmt.Fprintf(w, " exit              - tells the fs to close the ctl file. Useful when you want to wait for a command to finish\n")
@@ -105,6 +109,20 @@ func imagesCtl(c *client.Client) func(io.Reader, io.Writer) {
 					res.Close()
 				} else {
 					w.Write([]byte("error: missing image to fetch"))
+				}
+			case "tag":
+				if len(args) > 2 {
+					source := args[1]
+					tag := args[2]
+					err := c.ImageTag(context.Background(), source, tag)
+					if err != nil {
+						fmt.Printf("error: %s\n", err)
+						fmt.Fprintf(w, "error: %s\n", err)
+						goto finished
+					}
+					fmt.Fprintf(w, "ok\n")
+				} else {
+					w.Write([]byte("error: missing source or tag"))
 				}
 			case "push":
 				if len(args) > 1 {
@@ -207,13 +225,17 @@ func imagesCtl(c *client.Client) func(io.Reader, io.Writer) {
 func imageLoadCtl(c *client.Client) func(io.Reader, io.Writer) {
 	return func(r io.Reader, w io.Writer) {
 		wr := w.(*io.PipeWriter)
-		out, err := c.ImageLoad(context.Background(), r, true)
+		out, err := c.ImageLoad(context.Background(), r, false)
 		if err != nil {
 			wr.CloseWithError(err)
 			return
 		}
-		out.Body.Close()
-		fmt.Fprintf(w, "ok\n")
+		defer out.Body.Close()
+		_, err = io.Copy(wr, out.Body)
+		if err != nil {
+			wr.CloseWithError(err)
+			return
+		}
 	}
 }
 

@@ -347,9 +347,27 @@ func (d *DynamicReadOnlyDirTree) Walk(subpath []string) (Node, error) {
 		}
 	}
 
-	// TODO: if the input path is more specific than one we know about, we'll
+	// NOTE: if the input path is more specific than one we know about, we'll
 	// have to query the closest possible match (if it's a dir) to manually
-	// recurse
+	// recurse.
+	if len(res) == 0 {
+		var bestMatch Node
+		var bestMatchName string
+		for _, n := range nodes {
+			info, err := n.Info()
+			if err != nil {
+				return nil, err
+			}
+			name := info.Name()
+			// /foo/bar  /foo/bar/baz
+			if IsSubpath(path, name) && len(bestMatchName) < len(name) {
+				bestMatch = n
+				bestMatchName = name
+			}
+		}
+		n, _, err := Walk(bestMatch, path[len(bestMatchName):], true)
+		return n, err
+	}
 
 	if len(res) > 0 {
 		fi := d.SimpleFileInfo

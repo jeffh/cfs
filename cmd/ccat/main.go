@@ -14,9 +14,11 @@ func main() {
 	var path string
 	var numlines int
 	var writeFromStdin bool
+	var writeFromFile string
 
 	flag.IntVar(&numlines, "n", 0, "number of lines to print")
 	flag.BoolVar(&writeFromStdin, "stdin", false, "writes data read from stdin before reading from the 9p file")
+	flag.StringVar(&writeFromFile, "stdin-file", "", "writes data read from a file before reading from the 9p file")
 
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "cat for CFS\n")
@@ -44,7 +46,20 @@ func main() {
 		}
 		defer h.Close()
 
-		if writeFromStdin {
+		if writeFromFile != "" {
+			wr := ninep.Writer(h)
+			f, err := os.Open(writeFromFile)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "failed opening file: %s: %s\n", writeFromFile, err)
+				return err
+			}
+			n, err := io.Copy(wr, f)
+			fmt.Fprintf(os.Stderr, "# wrote %d bytes\n", n)
+			f.Close()
+			if err != nil {
+				return err
+			}
+		} else if writeFromStdin {
 			wr := ninep.Writer(h)
 			n, err := io.Copy(wr, os.Stdin)
 			fmt.Fprintf(os.Stderr, "# wrote %d bytes\n", n)

@@ -64,7 +64,7 @@ state - list a subset of containers by their current state.`
 							return append(r, imageDir(c, img.ID, img))
 						})
 					}),
-					dynamicDir("labels", func() ([]ninep.Node, error) {
+					dynamicDirTree("labels", func() ([]ninep.Node, error) {
 						return imageListAs(c, func(r []ninep.Node, img types.ImageSummary) []ninep.Node {
 							for label := range img.Labels {
 								r = append(r, imageDir(c, label, img))
@@ -72,7 +72,7 @@ state - list a subset of containers by their current state.`
 							return r
 						})
 					}),
-					dynamicDir("tags", func() ([]ninep.Node, error) {
+					dynamicDirTree("tags", func() ([]ninep.Node, error) {
 						return imageListAs(c, func(r []ninep.Node, img types.ImageSummary) []ninep.Node {
 							for _, tag := range img.RepoTags {
 								r = append(r, imageDir(c, tag, img))

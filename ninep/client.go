@@ -269,6 +269,24 @@ func (c *Client) allocTxn() cltTransaction {
 	return txn
 }
 
+func (c *Client) resetTxn(t Tag) cltTransaction {
+	c.mut.Lock()
+	oldTxn := c.tagToTxns[t]
+	if oldTxn.res != nil {
+		oldTxn.res.reset()
+		c.responsePool <- oldTxn.res
+	}
+
+	req := oldTxn.req
+	req.reset()
+	txn := cltTransaction{
+		req: req,
+	}
+	c.tagToTxns[t] = txn
+	c.mut.Unlock()
+	return txn
+}
+
 func (c *Client) release(t Tag) {
 	c.mut.Lock()
 	txn, ok := c.tagToTxns[t]
@@ -564,7 +582,46 @@ func (c *Client) Remove(f Fid) error {
 	}
 }
 
-func (c *Client) Write(f Fid, data []byte, offset uint64) (uint32, error) {
+// Like WriteMsg, but conforms to golang's io.Writer interface (max num bytes possible, else error)
+func (c *Client) Write(f Fid, data []byte, offset uint64) (int, error) {
+	txn := c.allocTxn()
+	defer c.release(txn.req.tag)
+
+	size := len(data)
+	wrote := 0
+
+	for wrote < size {
+		buf := txn.req.TwriteBuffer()
+		n := copy(buf, data[wrote:])
+
+		txn.req.Twrite(f, offset, uint32(n))
+		res := <-c.sendRequest(&txn)
+		if err := res.err; err != nil {
+			c.Errorf("Twrite: Failed to write request: %s", err)
+			return wrote, err
+		}
+
+		switch r := res.res.Reply().(type) {
+		case Rwrite:
+			c.Tracef("Rwrite")
+			cnt := r.Count()
+			wrote += int(cnt)
+			offset += uint64(cnt)
+			txn = c.resetTxn(txn.req.tag)
+		case Rerror:
+			err := c.asError(r)
+			c.Errorf("Expected Rwrite from server, got error: %s", err)
+			return wrote, err
+		default:
+			c.Errorf("Expected Rwrite from server")
+			return wrote, ErrBadFormat
+		}
+	}
+	return wrote, nil
+}
+
+// The 9p protocol-level write. Will only write as large as negotiated message buffers allow
+func (c *Client) WriteMsg(f Fid, data []byte, offset uint64) (uint32, error) {
 	txn := c.allocTxn()
 	defer c.release(txn.req.tag)
 
