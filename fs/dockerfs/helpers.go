@@ -34,7 +34,7 @@ func dynamicFile(name string, modTime time.Time, content func() ([]byte, error))
 	return &ninep.SimpleFile{
 		SimpleFileInfo: ninep.SimpleFileInfo{
 			FIName:    name,
-			FIMode:    os.ModeDir | 0777,
+			FIMode:    0777,
 			FIModTime: modTime,
 		},
 		OpenFn: func() (ninep.FileHandle, error) {

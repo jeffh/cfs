@@ -13,6 +13,24 @@ type Node interface {
 	WriteInfo(in os.FileInfo) error
 }
 
+type NameSortableNodes []Node
+
+func (s NameSortableNodes) Len() int      { return len(s) }
+func (s NameSortableNodes) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
+func (s NameSortableNodes) Less(i, j int) bool {
+	const iIsSmaller = true
+
+	a, aErr := s[i].Info()
+	b, bErr := s[j].Info()
+	if bErr != nil {
+		return iIsSmaller
+	}
+	if aErr != nil {
+		return !iIsSmaller
+	}
+	return a.Name() < b.Name()
+}
+
 type RenamedNode struct {
 	Node
 	NewName string
@@ -291,6 +309,16 @@ func (d *DynamicReadOnlyDir) CreateFile(name string, flag OpenMode, mode Mode) (
 }
 func (d *DynamicReadOnlyDir) CreateDir(name string, mode Mode) error {
 	return ErrUnsupported
+}
+
+func DynamicRootDir(getChildren func() ([]Node, error)) *DynamicReadOnlyDir {
+	return &DynamicReadOnlyDir{
+		SimpleFileInfo: SimpleFileInfo{
+			FIName: "",
+			FIMode: os.ModeDir | 0777,
+		},
+		GetChildren: getChildren,
+	}
 }
 
 /////////////////////////////////////////////
