@@ -40,6 +40,8 @@ func (s Status) String() string {
 		return "idle"
 	case STATUS_RUNNING:
 		return "running"
+	case STATUS_WAITING:
+		return "waiting"
 	case STATUS_SLEEPING:
 		return "sleeping"
 	case STATUS_STOPPED:
@@ -52,11 +54,14 @@ func (s Status) String() string {
 }
 
 const (
-	STATUS_IDLE     Status = 1
-	STATUS_RUNNING  Status = 2
-	STATUS_SLEEPING Status = 3
-	STATUS_STOPPED  Status = 4
-	STATUS_ZOMBIE   Status = 5
+	STATUS_UNKNOWN Status = iota
+	STATUS_IDLE
+	STATUS_RUNNING
+	STATUS_SLEEPING
+	STATUS_STOPPED
+	STATUS_ZOMBIE
+	STATUS_WAITING
+	STATUS_DEAD // linux
 )
 
 type ProcInfo struct {
@@ -73,18 +78,17 @@ type ProcInfo struct {
 	ParentPid Pid
 	PidGroup  int
 	Nice      int
-
-	Command string
 }
 
 type FDType string
 
 const (
-	FDTypeFile   FDType = "file"
-	FDTypeSocket        = "socket"
-	FDTypePSEM          = "psem"
-	FDTypePSHM          = "pshm"
-	FDTypePipe          = "pipe"
+	FDTypeFile    FDType = "file"
+	FDTypeSocket         = "socket"
+	FDTypePSEM           = "psem"
+	FDTypePSHM           = "pshm"
+	FDTypePipe           = "pipe"
+	FDTypeUnknown        = "unknown"
 )
 
 type Fd struct {

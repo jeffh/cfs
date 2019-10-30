@@ -205,12 +205,28 @@ func pidInfo(p Pid) (ProcInfo, error) {
 	var pi ProcInfo
 	r, err := unix.SysctlRaw("kern.proc.pid", int(p))
 	if err != nil {
-		fmt.Printf("PID_INFO: %v\n", err)
 		return pi, err
 	}
 	k := (*C.struct_kinfo_proc)(unsafe.Pointer(&r[0]))
+
+	status := STATUS_UNKNOWN
+	switch k.kp_proc.p_stat {
+	case 1:
+		status = STATUS_IDLE
+	case 2:
+		status = STATUS_RUNNING
+	case 3:
+		status = STATUS_SLEEPING
+	case 4:
+		status = STATUS_STOPPED
+	case 5:
+		status = STATUS_ZOMBIE
+	default:
+		status = STATUS_UNKNOWN
+	}
+
 	pi = ProcInfo{
-		Status: Status(k.kp_proc.p_stat),
+		Status: status,
 		Pid:    Pid(k.kp_proc.p_pid),
 
 		RealUid:   Uid(k.kp_eproc.e_pcred.p_ruid),
@@ -219,7 +235,6 @@ func pidInfo(p Pid) (ProcInfo, error) {
 		Gid:       Gid(k.kp_eproc.e_pcred.p_svgid),
 		ParentPid: Pid(k.kp_eproc.e_ppid),
 		PidGroup:  int(k.kp_eproc.e_pgid),
-		Command:   C.GoString(&k.kp_proc.p_comm[0]),
 	}
 	return pi, nil
 }
