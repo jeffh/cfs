@@ -7,10 +7,66 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
 )
+
+var space = regexp.MustCompile(`\s+`)
+
+type netState struct {
+	kind       string
+	inode      string
+	remoteAddr string
+	localAddr  string
+}
+
+func parseNet(buf []byte, kind string, netStates []netState) ([]netState, error) {
+	lines := strings.Split(string(buf), "\n")
+	const (
+		localAddrIndex  = 1
+		remoteAddrIndex = 2
+		inodeIndex      = 9
+	)
+	for _, line := range lines[1:] {
+		line = strings.TrimSpace(space.ReplaceAllString(line, " "))
+		if len(line) <= 1 {
+			continue
+		}
+
+		cols := strings.Split(line, " ")
+		parseAddr := func(s string) string {
+			parts := strings.Split(s, ":")
+			if len(parts) != 2 {
+				return ""
+			}
+			addr, err := strconv.ParseInt("0x"+parts[0], 0, 64)
+			if err != nil {
+				return ""
+			}
+			port, err := strconv.ParseInt("0x"+parts[1], 0, 64)
+			if err != nil {
+				return ""
+			}
+			if addr == 0 && port == 0 {
+				return ""
+			}
+			if addr != 0 {
+				return fmt.Sprintf("%d:%d", addr, port)
+			} else {
+				return fmt.Sprintf(":%d", port)
+			}
+		}
+		netStates = append(netStates, netState{
+			kind:       kind,
+			inode:      cols[inodeIndex],
+			remoteAddr: parseAddr(cols[remoteAddrIndex]),
+			localAddr:  parseAddr(cols[localAddrIndex]),
+		})
+	}
+	return netStates, nil
+}
 
 func pidFds(p Pid) ([]Fd, error) {
 	path := fmt.Sprintf("/proc/%d/fd", p)
@@ -19,22 +75,31 @@ func pidFds(p Pid) ([]Fd, error) {
 		return nil, err
 	}
 
-	type netState struct {
-		kind       string
-		remoteAddr string
-		localAddr  string
-	}
-
-	netState := make(map[string]netState)
+	netStates := make([]netState, 0, 8)
 	{
-		f, err := os.Open(fmt.Sprintf("/proc/%d/net/tcp", p))
-		if err != nil {
-			return nil, err
+		files := []struct {
+			Path string
+			Kind string
+		}{
+			{fmt.Sprintf("/proc/%d/net/tcp", p), "tcp"},
+			{fmt.Sprintf("/proc/%d/net/tcp6", p), "tcp6"},
+			{fmt.Sprintf("/proc/%d/net/udp", p), "udp"},
+			{fmt.Sprintf("/proc/%d/net/udp6", p), "udp6"},
 		}
-		buf, err := ioutil.ReadAll(f)
-		f.Close()
-		if err != nil {
-			return nil, err
+		for _, file := range files {
+			f, err := os.Open(file.Path)
+			if err != nil {
+				return nil, err
+			}
+			buf, err := ioutil.ReadAll(f)
+			f.Close()
+			if err != nil {
+				return nil, err
+			}
+			netStates, err = parseNet(buf, file.Kind, netStates)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -66,10 +131,32 @@ func pidFds(p Pid) ([]Fd, error) {
 				kind = FDTypeUnknown
 			}
 		}
+
+		var inode string
+		{
+			index := strings.Index(name, "[")
+			if index != -1 {
+				inode = name[index+1 : len(name)-1]
+			}
+		}
+
+		var ns netState
+		if inode != "" {
+			for _, net := range netStates {
+				if net.inode == inode {
+					ns = net
+					break
+				}
+			}
+		}
+
 		fds = append(fds, Fd{
-			Num:  num,
-			Name: name,
-			Type: kind,
+			Num:              num,
+			Name:             name,
+			Type:             kind,
+			SocketType:       ns.kind,
+			SocketSourceAddr: ns.localAddr,
+			SocketRemoteAddr: ns.remoteAddr,
 		})
 	}
 	return fds, nil
