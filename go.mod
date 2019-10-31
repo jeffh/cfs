@@ -3,6 +3,7 @@ module github.com/jeffh/cfs
 go 1.13
 
 require (
+	bazil.org/fuse v0.0.0-20180421153158-65cc252bf669
 	github.com/docker/distribution v2.7.1+incompatible
 	github.com/docker/docker v1.13.1
 	github.com/docker/go-connections v0.4.0
