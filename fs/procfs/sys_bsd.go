@@ -103,8 +103,12 @@ func pidFds(p Pid) ([]Fd, error) {
 					default:
 						break
 					}
-					srcAddr = fmt.Sprintf("%s:%d", laddr, lport)
-					remAddr = fmt.Sprintf("%s:%d", raddr, rport)
+					if lport > 0 {
+						srcAddr = fmt.Sprintf("%s:%d", laddr, lport)
+					}
+					if rport > 0 {
+						remAddr = fmt.Sprintf("%s:%d", raddr, rport)
+					}
 					if lport > 0 && rport > 0 {
 						postfix = fmt.Sprintf("%s->%s", srcAddr, remAddr)
 					} else if rport > 0 {

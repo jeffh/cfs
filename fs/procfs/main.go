@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/user"
 	"sort"
 	"strconv"
 	"strings"
@@ -111,11 +112,27 @@ func procDir(pid Pid) func() ([]ninep.Node, error) {
 		if err != nil {
 			return nil, err
 		}
+		uid := int(pi.Uid)
+		var username string
+		{
+			usr, err := user.LookupId(strconv.Itoa(uid))
+			if err == nil {
+				username = usr.Username
+			}
+		}
+		gid := int(pi.Gid)
+		var groupname string
+		{
+			grp, err := user.LookupGroupId(strconv.Itoa(gid))
+			if err == nil {
+				groupname = grp.Name
+			}
+		}
 		nodes := []ninep.Node{
 			staticStringFile("pid", now, strconv.Itoa(int(pid))),
 			staticStringFile("status", now, pi.Status.String()),
-			staticStringFile("uid", now, strconv.Itoa(int(pi.Uid))),
-			staticStringFile("gid", now, strconv.Itoa(int(pi.Gid))),
+			staticStringFile("uid", now, fmt.Sprintf("%d\n%s\n", uid, username)),
+			staticStringFile("gid", now, fmt.Sprintf("%d\n%s\n", gid, groupname)),
 			staticStringFile("real_uid", now, strconv.Itoa(int(pi.RealUid))),
 			staticStringFile("real_gid", now, strconv.Itoa(int(pi.RealGid))),
 			staticStringFile("parent_pid", now, strconv.Itoa(int(pi.ParentPid))),
