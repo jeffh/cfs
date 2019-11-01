@@ -139,6 +139,13 @@ walk:
 
 func (m *Mem) traverseFile(parts []string) (node *memNode, parent *memNode, err error) {
 	last := len(parts) - 1
+	if last == 0 {
+		if len(parts[0]) == 0 {
+			return &m.Root, nil, nil
+		} else {
+			return nil, nil, os.ErrNotExist
+		}
+	}
 	n, err := m.traverse(parts[:last-1])
 	if err != nil {
 		return nil, nil, err
@@ -172,6 +179,9 @@ func (m *Mem) CreateFile(path string, flag ninep.OpenMode, mode ninep.Mode) (nin
 	n, parent, err := m.traverseFile(parts)
 	if !os.IsNotExist(err) && err != nil {
 		return nil, err
+	}
+	if parent == nil {
+		return nil, os.ErrPermission
 	}
 
 	if n != nil {

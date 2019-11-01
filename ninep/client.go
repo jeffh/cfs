@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -441,6 +442,9 @@ func (c *Client) Walk(f, newF Fid, path []string) ([]Qid, error) {
 				qids[i] = q
 			}
 		}
+		if len(qids) != len(path) {
+			return qids, os.ErrNotExist
+		}
 		return qids, nil
 	case Rerror:
 		err := c.asError(r)
@@ -766,8 +770,12 @@ func (fs *FileSystemProxy) releaseFid(f Fid) {
 	fs.mut.Unlock()
 }
 
-func (fs *FileSystemProxy) walk(fid Fid, path string) error {
-	_, err := fs.c.Walk(fs.rootF, fid, PathSplit(path))
+func (fs *FileSystemProxy) walk(fid Fid, path string, includeLast bool) error {
+	parts := PathSplit(path)[1:]
+	if !includeLast && len(parts) > 0 {
+		parts = parts[:len(parts)-1]
+	}
+	_, err := fs.c.Walk(fs.rootF, fid, parts)
 	if err != nil {
 		// Best attempt to notify server that we're dropping this fid
 		fs.c.Clunk(fid)
@@ -779,6 +787,7 @@ func (fs *FileSystemProxy) walk(fid Fid, path string) error {
 //////////
 
 func (fs *FileSystemProxy) MakeDir(path string, mode Mode) error {
+	fmt.Printf("------------ MakeDir(%#v, %x)\n", path, mode)
 	// TODO: make directory recursively?
 	fid := fs.allocFid()
 
@@ -789,7 +798,7 @@ func (fs *FileSystemProxy) MakeDir(path string, mode Mode) error {
 		prefix = path[:i]
 		filename = path[i+1:]
 	}
-	if err := fs.walk(fid, prefix); err != nil {
+	if err := fs.walk(fid, prefix, false); err != nil {
 		return err
 	}
 	_, _, err := fs.c.Create(fid, filename, mode|M_DIR, ORDWR)
@@ -798,6 +807,7 @@ func (fs *FileSystemProxy) MakeDir(path string, mode Mode) error {
 	return err
 }
 func (fs *FileSystemProxy) CreateFile(path string, flag OpenMode, mode Mode) (FileHandle, error) {
+	fmt.Printf("------------ CreateFile(%#v, %x, %x)\n", path, flag, mode)
 	fid := fs.allocFid()
 
 	prefix := ""
@@ -807,7 +817,7 @@ func (fs *FileSystemProxy) CreateFile(path string, flag OpenMode, mode Mode) (Fi
 		prefix = path[:i]
 		filename = path[i+1:]
 	}
-	if err := fs.walk(fid, prefix); err != nil {
+	if err := fs.walk(fid, prefix, false); err != nil {
 		return nil, err
 	}
 	var h FileHandle
@@ -822,7 +832,7 @@ func (fs *FileSystemProxy) CreateFile(path string, flag OpenMode, mode Mode) (Fi
 }
 func (fs *FileSystemProxy) OpenFile(path string, flag OpenMode) (FileHandle, error) {
 	fid := fs.allocFid()
-	if err := fs.walk(fid, path); err != nil {
+	if err := fs.walk(fid, path, true); err != nil {
 		return nil, err
 	}
 	var h FileHandle
@@ -899,7 +909,7 @@ func (fs *FileSystemProxy) ListDir(path string) (FileInfoIterator, error) {
 
 	fid := fs.allocFid()
 	fs.c.Tracef("ListDir(%#v) %s", path, fid)
-	if err := fs.walk(fid, path); err != nil {
+	if err := fs.walk(fid, path, true); err != nil {
 		fs.releaseFid(fid)
 		return nil, err
 	}
@@ -922,7 +932,7 @@ func (fs *FileSystemProxy) ListDir(path string) (FileInfoIterator, error) {
 func (fs *FileSystemProxy) Stat(path string) (os.FileInfo, error) {
 	fid := fs.allocFid()
 	defer fs.releaseFid(fid)
-	if err := fs.walk(fid, path); err != nil {
+	if err := fs.walk(fid, path, true); err != nil {
 		return nil, err
 	}
 	st, err := fs.c.Stat(fid)
@@ -932,7 +942,7 @@ func (fs *FileSystemProxy) Stat(path string) (os.FileInfo, error) {
 func (fs *FileSystemProxy) WriteStat(path string, s Stat) error {
 	fid := fs.allocFid()
 	defer fs.releaseFid(fid)
-	if err := fs.walk(fid, path); err != nil {
+	if err := fs.walk(fid, path, true); err != nil {
 		return err
 	}
 	err := fs.c.WriteStat(fid, s)
@@ -942,7 +952,7 @@ func (fs *FileSystemProxy) WriteStat(path string, s Stat) error {
 func (fs *FileSystemProxy) Delete(path string) error {
 	fid := fs.allocFid()
 	defer fs.releaseFid(fid)
-	if err := fs.walk(fid, path); err != nil {
+	if err := fs.walk(fid, path, true); err != nil {
 		return err
 	}
 	// regardless of this call, the server should drop the fid

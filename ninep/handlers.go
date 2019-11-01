@@ -375,6 +375,7 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 		for i, size := 0, int(m.NumWname()); i < size; i++ {
 			// TODO: Wname(i) is O(n) which we could optimize for this case
 			name := cleanPath(m.Wname(i))
+			fmt.Printf("---- CD %#v\n", name)
 			if name == "/" {
 				path = "/"
 			} else if strings.Contains(name, string(os.PathSeparator)) {
@@ -425,7 +426,7 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 		if len(walkedQids) == int(m.NumWname()) {
 			session.PutFid(m.NewFid(), fil)
 		}
-		h.Tracef("srv: Twalk: %s=>%s: %v %v -> %v", m.Fid(), m.NewFid(), fil.Name, m.NumWname(), len(walkedQids))
+		h.Tracef("srv: Twalk: %s=>%s: %#v %v -> %v", m.Fid(), m.NewFid(), fil.Name, m.NumWname(), len(walkedQids))
 		if len(walkedQids) > 0 {
 			h.Tracef("srv: Twalk: %s=>%s: qid=%v", m.Fid(), m.NewFid(), walkedQids[len(walkedQids)-1])
 		}

@@ -443,9 +443,9 @@ func (s *serverConn) dispatch(ctx context.Context, txn *srvTransaction) {
 	}
 
 	if e, ok := txn.Reply().(Rerror); ok {
-		s.errorf("return error: %s", e.Ename())
+		s.errorf("srv: return error: %s", e.Ename())
 	} else {
-		s.tracef("return %s", txn.requestType())
+		s.tracef("srv: return %s", txn.requestType())
 	}
 
 	txn.reset()
