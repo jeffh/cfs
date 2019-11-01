@@ -166,7 +166,7 @@ func (m *Mem) MakeDir(path string, mode ninep.Mode) error {
 		return err
 	}
 
-	nc := memNode{name: parts[last]}
+	nc := memNode{name: parts[last], modTime: time.Now()}
 	n.m.Lock()
 	n.children = append(n.children, nc)
 	n.m.Unlock()

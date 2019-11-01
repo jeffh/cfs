@@ -50,12 +50,10 @@ func (f Fs) Root() (fs.Node, error) {
 
 var _ fs.Node = (*Dir)(nil)
 var _ fs.NodeCreater = (*Dir)(nil)
-
-// var _ fs.NodeForgetter = (*Dir)(nil)
 var _ fs.NodeMkdirer = (*Dir)(nil)
 var _ fs.NodeRemover = (*Dir)(nil)
-
-// var _ fs.NodeRenamer = (*Dir)(nil)
+var _ fs.NodeSetattrer = (*Dir)(nil)
+var _ fs.NodeRenamer = (*Dir)(nil)
 var _ fs.NodeStringLookuper = (*Dir)(nil)
 var _ fs.HandleReadDirAller = (*Dir)(nil)
 
@@ -80,6 +78,27 @@ func (n *Dir) Attr(ctx context.Context, a *fuse.Attr) error {
 	a.Ctime = mtime
 	a.Crtime = mtime
 	return nil
+}
+
+func (n *Dir) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse) error {
+	st := ninep.NewStat("", "", "", "")
+	if req.Valid.Size() {
+		st.SetLength(req.Size)
+	}
+	if req.Valid.Atime() {
+		st.SetAtime(uint32(req.Atime.Unix()))
+	}
+	if req.Valid.Mtime() {
+		st.SetMtime(uint32(req.Mtime.Unix()))
+	}
+	if req.Valid.Mode() {
+		st.SetMode(ninep.ModeFromOS(req.Mode))
+	}
+	return mapErr(n.fs.WriteStat(n.path, st))
+}
+
+func (n *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDir fs.Node) error {
+	return fuse.ENOSYS
 }
 
 func (n *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
@@ -194,6 +213,12 @@ type File struct {
 	path string
 }
 
+var _ fs.Node = (*File)(nil)
+var _ fs.NodeStringLookuper = (*File)(nil)
+var _ fs.NodeOpener = (*File)(nil)
+var _ fs.NodeSetattrer = (*File)(nil)
+var _ fs.NodeFsyncer = (*File)(nil)
+
 func (n *File) Attr(ctx context.Context, a *fuse.Attr) error {
 	fmt.Printf("[%v]File.Attr()\n", n.path)
 	st, err := n.fs.Stat(n.path)
@@ -207,6 +232,23 @@ func (n *File) Attr(ctx context.Context, a *fuse.Attr) error {
 	a.Mtime = st.ModTime()
 	a.Size = uint64(st.Size())
 	return nil
+}
+
+func (n *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse) error {
+	st := ninep.NewStat("", "", "", "")
+	if req.Valid.Size() {
+		st.SetLength(req.Size)
+	}
+	if req.Valid.Atime() {
+		st.SetAtime(uint32(req.Atime.Unix()))
+	}
+	if req.Valid.Mtime() {
+		st.SetMtime(uint32(req.Mtime.Unix()))
+	}
+	if req.Valid.Mode() {
+		st.SetMode(ninep.ModeFromOS(req.Mode))
+	}
+	return mapErr(n.fs.WriteStat(n.path, st))
 }
 
 func (n *File) Lookup(ctx context.Context, name string) (fs.Node, error) {
@@ -247,6 +289,13 @@ type FileHandle struct {
 	h    ninep.FileHandle
 }
 
+var _ fs.Handle = (*FileHandle)(nil)
+var _ fs.HandleFlusher = (*FileHandle)(nil)
+var _ fs.HandleReader = (*FileHandle)(nil)
+var _ fs.HandleReleaser = (*FileHandle)(nil)
+var _ fs.HandleWriter = (*FileHandle)(nil)
+var _ fs.NodeFsyncer = (*FileHandle)(nil)
+
 func (h *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
 	fmt.Printf("FUSE: READ(%d) || %d\n", req.Size, len(resp.Data))
 	n, err := h.h.ReadAt(resp.Data[:req.Size], req.Offset)
@@ -271,6 +320,10 @@ func (h *FileHandle) Release(ctx context.Context, req *fuse.ReleaseRequest) erro
 }
 
 func (h *FileHandle) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
+	return mapErr(h.h.Sync())
+}
+
+func (h *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 	return mapErr(h.h.Sync())
 }
 
