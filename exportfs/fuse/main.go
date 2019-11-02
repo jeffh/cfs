@@ -90,25 +90,25 @@ func (n *Dir) Attr(ctx context.Context, a *fuse.Attr) error {
 	if !n.config.doNotMapIds {
 		username := stat.Uid()
 		usr, err := user.Lookup(username)
-		if err != nil {
-			return err
+		if err == nil {
+			uid, err := strconv.Atoi(usr.Uid)
+			fmt.Printf("[%v]Dir.Attr() -> %s\n", n.path, err)
+			if err != nil {
+				return err
+			}
+			a.Uid = uint32(uid)
 		}
-		uid, err := strconv.Atoi(usr.Uid)
-		if err != nil {
-			return err
-		}
-		a.Uid = uint32(uid)
 
 		groupname := stat.Gid()
 		grp, err := user.LookupGroup(groupname)
-		if err != nil {
-			return err
+		if err == nil {
+			gid, err := strconv.Atoi(grp.Gid)
+			fmt.Printf("[%v]Dir.Attr() -> %s\n", n.path, err)
+			if err != nil {
+				return err
+			}
+			a.Gid = uint32(gid)
 		}
-		gid, err := strconv.Atoi(grp.Gid)
-		if err != nil {
-			return err
-		}
-		a.Gid = uint32(gid)
 	}
 	return nil
 }
@@ -268,25 +268,25 @@ func (n *File) Attr(ctx context.Context, a *fuse.Attr) error {
 	if !n.config.doNotMapIds {
 		username := stat.Uid()
 		usr, err := user.Lookup(username)
-		if err != nil {
-			return err
+		if err == nil {
+			uid, err := strconv.Atoi(usr.Uid)
+			fmt.Printf("[%v]Dir.Attr() -> %s\n", n.path, err)
+			if err != nil {
+				return err
+			}
+			a.Uid = uint32(uid)
 		}
-		uid, err := strconv.Atoi(usr.Uid)
-		if err != nil {
-			return err
-		}
-		a.Uid = uint32(uid)
 
 		groupname := stat.Gid()
 		grp, err := user.LookupGroup(groupname)
-		if err != nil {
-			return err
+		if err == nil {
+			gid, err := strconv.Atoi(grp.Gid)
+			fmt.Printf("[%v]Dir.Attr() -> %s\n", n.path, err)
+			if err != nil {
+				return err
+			}
+			a.Gid = uint32(gid)
 		}
-		gid, err := strconv.Atoi(grp.Gid)
-		if err != nil {
-			return err
-		}
-		a.Gid = uint32(gid)
 	}
 	return nil
 }
