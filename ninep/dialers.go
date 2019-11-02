@@ -73,10 +73,3 @@ func (d *TLSDialer) Listen(network, addr string) (net.Listener, error) {
 	}
 	return tls.NewListener(ln, &d.Config), nil
 }
-
-type AANDialer struct{}
-
-func (d *AANDialer) Dial(network, addr string) (net.Conn, error) { return DialAan(network, addr) }
-func (d *AANDialer) Listen(network, addr string) (net.Listener, error) {
-	return ListenAan(network, addr)
-}

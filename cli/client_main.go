@@ -19,8 +19,6 @@ func MainClient(fn func(c *ninep.Client, fs ninep.FileSystem) error) {
 		usr   string
 		mount string
 
-		useAan bool
-
 		timeout int
 
 		err error
@@ -29,7 +27,6 @@ func MainClient(fn func(c *ninep.Client, fs ninep.FileSystem) error) {
 	flag.StringVar(&usr, "user", "", "Username to connect as, defaults to current system user")
 	flag.StringVar(&mount, "mount", "", "Default access path, defaults to empty string")
 	flag.IntVar(&timeout, "timeout", 5, "Timeout in seconds for client requests")
-	flag.BoolVar(&useAan, "p", false, "Use AAN to perform automatic reconnects for flaky networks")
 	flag.BoolVar(&trace, "trace", false, "Print trace of 9p server to stdout")
 	flag.BoolVar(&errLog, "err", false, "Print errors of 9p server to stderr")
 
@@ -65,13 +62,6 @@ func MainClient(fn func(c *ninep.Client, fs ninep.FileSystem) error) {
 			ErrorLog: errLogger,
 			TraceLog: traceLogger,
 		},
-	}
-
-	if useAan {
-		if traceLogger != nil {
-			traceLogger.Printf("Always Available Network is on")
-		}
-		clt.Dialer = &ninep.AANDialer{}
 	}
 
 	if err = clt.Connect(addr); err != nil {
