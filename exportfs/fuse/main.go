@@ -81,7 +81,7 @@ func (n *Dir) Attr(ctx context.Context, a *fuse.Attr) error {
 }
 
 func (n *Dir) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse) error {
-	st := ninep.NewStat("", "", "", "")
+	st := ninep.SyncStat()
 	if req.Valid.Size() {
 		st.SetLength(req.Size)
 	}
