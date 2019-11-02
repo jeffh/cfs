@@ -2,6 +2,7 @@ package fs
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"sync"
 	"time"
@@ -43,7 +44,12 @@ type memFileHandle struct {
 
 func (b *memFileHandle) ReadAt(p []byte, off int64) (n int, err error) {
 	b.n.mut.RLock()
-	n = copy(p, b.n.contents[int(off):int(off)+len(p)])
+	if int(off) < len(b.n.contents) {
+		n = copy(p, b.n.contents[int(off):])
+	} else {
+		n = 0
+		err = io.EOF
+	}
 	b.n.mut.RUnlock()
 	return
 }

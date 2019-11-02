@@ -48,6 +48,10 @@ func (t *srvTransaction) readRequest(rdr io.Reader) error {
 		return fmt.Errorf("Srv: Message too large (%d > %d)", size, len(t.inMsg))
 	}
 
+	if size < 4 {
+		return fmt.Errorf("Srv: Message too small (%d < 4)", size)
+	}
+
 	_, err = readUpTo(rdr, t.inMsg[4:size])
 	if err != nil {
 		return err

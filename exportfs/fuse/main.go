@@ -235,6 +235,7 @@ func (n *File) Attr(ctx context.Context, a *fuse.Attr) error {
 }
 
 func (n *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse) error {
+	fmt.Printf("[%v]File.Setattr()\n")
 	st := ninep.NewStat("", "", "", "")
 	if req.Valid.Size() {
 		st.SetLength(req.Size)
