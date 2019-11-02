@@ -2,7 +2,6 @@ package ninep
 
 import (
 	"context"
-	"errors"
 	"io"
 	"os"
 	"sync"
@@ -104,7 +103,7 @@ func (itr *fileInfoSliceIterator) NextFileInfo() (os.FileInfo, error) {
 
 func FileInfoSliceFromIterator(itr FileInfoIterator, max int) ([]os.FileInfo, error) {
 	if itr == nil {
-		return nil, errors.New("Internal error, no iterator returned, but got no error")
+		return nil, ErrMissingIterator
 	}
 
 	if it, ok := itr.(*fileInfoSliceIterator); ok {

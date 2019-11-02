@@ -2,7 +2,6 @@ package ninep
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -10,17 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 )
-
-var (
-	ErrWriteNotAllowed = errors.New("not allowed to write")
-	ErrSeekNotAllowed  = errors.New("seeking is not allowed")
-	ErrUnsupported     = errors.New("unsupported")
-	ErrNotImplemented  = errors.New("not implemented")
-
-	ErrChangeUidNotAllowed = errors.New("changing uid is not allowed by protocol")
-)
-
-////////////////////////////////////////////////
 
 type directoryHandle struct {
 	offset int64

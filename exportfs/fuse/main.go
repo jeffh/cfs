@@ -431,5 +431,14 @@ func mapErr(err error) error {
 	if err == io.ErrNoProgress {
 		return syscall.ENODATA
 	}
+	if err == os.ErrPermission {
+		return fuse.EPERM
+	}
+	if err == os.ErrClosed {
+		return syscall.EBADF
+	}
+	if err == os.ErrInvalid {
+		return syscall.EINVAL
+	}
 	return err
 }

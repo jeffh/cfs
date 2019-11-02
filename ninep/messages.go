@@ -2,16 +2,11 @@ package ninep
 
 import (
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"math"
 	"os"
 	"strings"
 	"time"
-)
-
-var (
-	ErrBadFormat = errors.New("Unrecognized 9P protocol")
 )
 
 const (
