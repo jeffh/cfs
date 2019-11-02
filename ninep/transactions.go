@@ -200,9 +200,10 @@ func (t *srvTransaction) RreadBuffer() []byte {
 	return Rread(t.outMsg).DataNoLimit()
 }
 
-func (t *srvTransaction) Rread(data []byte) {
+// Use RreadBuffer to access the raw data buffer before setting this
+func (t *srvTransaction) Rread(count uint32) {
 	t.handled = true
-	Rread(t.outMsg).fill(t.reqTag(), data)
+	Rread(t.outMsg).fill(t.reqTag(), count)
 }
 
 func (t *srvTransaction) Rclunk() {

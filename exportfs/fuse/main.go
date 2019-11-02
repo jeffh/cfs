@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -22,7 +24,7 @@ func MountAndServeFS(f ninep.FileSystem, mountpoint string, opts ...fuse.MountOp
 	}
 	defer c.Close()
 
-	err = fs.Serve(c, Fs{f})
+	err = fs.Serve(c, &Fs{Fs: f})
 	if err != nil {
 		return err
 	}
@@ -35,15 +37,22 @@ func MountAndServeFS(f ninep.FileSystem, mountpoint string, opts ...fuse.MountOp
 	return nil
 }
 
+type FsConfig struct {
+	// set to true to disable automatic mapping of usernames/groupnames to
+	// local uids and gids
+	doNotMapIds bool
+}
+
 // Creates a fuse file system that exports a 9p file server as a fuse system
 type Fs struct {
-	Fs ninep.FileSystem
+	Fs     ninep.FileSystem
+	Config FsConfig
 }
 
 var _ fs.FS = (*Fs)(nil)
 
-func (f Fs) Root() (fs.Node, error) {
-	return &Dir{f.Fs, ""}, nil
+func (f *Fs) Root() (fs.Node, error) {
+	return &Dir{f.Fs, "", &f.Config}, nil
 }
 
 ///////////////////////////////////////////////////////////
@@ -58,8 +67,9 @@ var _ fs.NodeStringLookuper = (*Dir)(nil)
 var _ fs.HandleReadDirAller = (*Dir)(nil)
 
 type Dir struct {
-	fs   ninep.FileSystem
-	path string
+	fs     ninep.FileSystem
+	path   string
+	config *FsConfig
 }
 
 func (n *Dir) Attr(ctx context.Context, a *fuse.Attr) error {
@@ -77,6 +87,29 @@ func (n *Dir) Attr(ctx context.Context, a *fuse.Attr) error {
 	a.Mtime = mtime
 	a.Ctime = mtime
 	a.Crtime = mtime
+	if !n.config.doNotMapIds {
+		username := stat.Uid()
+		usr, err := user.Lookup(username)
+		if err != nil {
+			return err
+		}
+		uid, err := strconv.Atoi(usr.Uid)
+		if err != nil {
+			return err
+		}
+		a.Uid = uint32(uid)
+
+		groupname := stat.Gid()
+		grp, err := user.LookupGroup(groupname)
+		if err != nil {
+			return err
+		}
+		gid, err := strconv.Atoi(grp.Gid)
+		if err != nil {
+			return err
+		}
+		a.Gid = uint32(gid)
+	}
 	return nil
 }
 
@@ -146,10 +179,10 @@ func (n *Dir) Lookup(ctx context.Context, name string) (fs.Node, error) {
 	}
 
 	if info.IsDir() {
-		return &Dir{n.fs, path}, nil
+		return &Dir{n.fs, path, n.config}, nil
 	}
 
-	return &File{n.fs, path}, nil
+	return &File{n.fs, path, n.config}, nil
 }
 
 func (n *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, error) {
@@ -162,7 +195,7 @@ func (n *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, error
 		return nil, mapErr(err)
 	}
 
-	return &Dir{n.fs, path}, nil
+	return &Dir{n.fs, path, n.config}, nil
 }
 
 func (n *Dir) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.CreateResponse) (fs.Node, fs.Handle, error) {
@@ -183,7 +216,7 @@ func (n *Dir) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.Cr
 			return nil, nil, mapErr(err)
 		}
 
-		return &File{n.fs, path}, &FileHandle{n.fs, path, h}, nil
+		return &File{n.fs, path, n.config}, &FileHandle{n.fs, path, h}, nil
 	}
 }
 
@@ -209,8 +242,9 @@ func (n *Dir) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 ///////////////////////////////////////////////////////////////
 
 type File struct {
-	fs   ninep.FileSystem
-	path string
+	fs     ninep.FileSystem
+	path   string
+	config *FsConfig
 }
 
 var _ fs.Node = (*File)(nil)
@@ -231,11 +265,34 @@ func (n *File) Attr(ctx context.Context, a *fuse.Attr) error {
 	a.Atime = time.Unix(int64(stat.Atime()), 0)
 	a.Mtime = st.ModTime()
 	a.Size = uint64(st.Size())
+	if !n.config.doNotMapIds {
+		username := stat.Uid()
+		usr, err := user.Lookup(username)
+		if err != nil {
+			return err
+		}
+		uid, err := strconv.Atoi(usr.Uid)
+		if err != nil {
+			return err
+		}
+		a.Uid = uint32(uid)
+
+		groupname := stat.Gid()
+		grp, err := user.LookupGroup(groupname)
+		if err != nil {
+			return err
+		}
+		gid, err := strconv.Atoi(grp.Gid)
+		if err != nil {
+			return err
+		}
+		a.Gid = uint32(gid)
+	}
 	return nil
 }
 
 func (n *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse) error {
-	fmt.Printf("[%v]File.Setattr()\n")
+	fmt.Printf("[%v]File.Setattr()\n", n.path)
 	st := ninep.NewStat("", "", "", "")
 	if req.Valid.Size() {
 		st.SetLength(req.Size)
@@ -298,15 +355,14 @@ var _ fs.HandleWriter = (*FileHandle)(nil)
 var _ fs.NodeFsyncer = (*FileHandle)(nil)
 
 func (h *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
-	fmt.Printf("FUSE: READ(%d) || %d\n", req.Size, len(resp.Data))
-	n, err := h.h.ReadAt(resp.Data[:req.Size], req.Offset)
-	resp.Data = resp.Data[:n]
+	fmt.Printf("FUSE: READ(%d) || %d || %d << %d\n", req.Size, len(resp.Data), cap(resp.Data), req.Offset)
+	fmt.Printf("FUSE: READ %#v\n", h.h)
+	resp.Data = resp.Data[:req.Size]
+	n, err := h.h.ReadAt(resp.Data, req.Offset)
 	if err == io.EOF {
 		err = nil
-		if n == 0 {
-			resp.Data = nil
-		}
 	}
+	resp.Data = resp.Data[:n]
 	return mapErr(err)
 }
 
@@ -360,6 +416,9 @@ func flagModeToMode(flg fuse.OpenFlags, mode os.FileMode) ninep.Mode {
 }
 
 func mapErr(err error) error {
+	if err == io.EOF {
+		return fuse.EIO
+	}
 	if err == ninep.ErrUnsupported {
 		return fuse.ENOSYS
 	}

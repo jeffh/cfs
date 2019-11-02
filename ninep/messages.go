@@ -43,7 +43,7 @@ const (
 var DEFAULT_MAX_MESSAGE_SIZE uint32
 
 func init() {
-	s := uint32(os.Getpagesize())
+	s := uint32(os.Getpagesize() * 2)
 	if s > math.MaxUint32 {
 		s = math.MaxUint32
 	}
@@ -963,7 +963,7 @@ func (r Ropen) Iounit() uint32 {
 type Tcreate []byte
 
 func (r Tcreate) fill(t Tag, fid Fid, name string, perm uint32, mode OpenMode) {
-	size := uint32(msgOffset + QidSize + 4 + 2 + len((name)) + 4 + 1)
+	size := uint32(msgOffset + 4 + 2 + len((name)) + 4 + 1)
 	MsgBase(r).fill(msgTcreate, t, size)
 	bo.PutUint32(r[msgOffset:msgOffset+4], uint32(fid))
 	off := msgString(r[msgOffset+4:]).SetStringAndLen(name)
@@ -1010,7 +1010,7 @@ func (r Rcreate) Iounit() uint32 {
 type Tread []byte
 
 func (r Tread) fill(t Tag, fid Fid, offset uint64, count uint32) {
-	size := uint32(msgOffset + QidSize + 4 + 8 + 4)
+	size := uint32(msgOffset + 4 + 8 + 4)
 	MsgBase(r).fill(msgTread, t, size)
 	bo.PutUint32(r[msgOffset:msgOffset+4], uint32(fid))
 	bo.PutUint64(r[msgOffset+4:msgOffset+12], offset)
@@ -1033,15 +1033,11 @@ func (r Tread) SetCount(v uint32) { bo.PutUint32(r[msgOffset+12:msgOffset+16], v
 // size[4] Rread tag[2] count[4] data[count]
 type Rread []byte
 
-func (r Rread) fill(t Tag, data []byte) {
-	// need len cast for raspberrypis
-	if uint64(len(data)) > math.MaxUint32 {
-		panic(fmt.Errorf("data is larger than allowed: %d", len(data)))
-	}
-	size := uint32(msgOffset + 4 + len(data))
+func (r Rread) fill(t Tag, count uint32) {
+	size := uint32(msgOffset + 4 + count)
 	MsgBase(r).fill(msgRread, t, size)
-	bo.PutUint32(r[msgOffset:msgOffset+4], uint32(len(data)))
-	copy(r[msgOffset+4:], data)
+	bo.PutUint32(r[msgOffset:msgOffset+4], count)
+	// copy(r[msgOffset+4:], data)
 }
 
 func (r Rread) Bytes() []byte       { return MsgBase(r).Bytes() }

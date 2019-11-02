@@ -23,7 +23,7 @@ type Replier interface {
 	Rattach(qid Qid)
 	Ropen(q Qid, iounit uint32)
 	RreadBuffer() []byte
-	Rread(data []byte)
+	Rread(count uint32)
 	Rwalk(wqids []Qid)
 	Rstat(s Stat)
 	Rwstat()

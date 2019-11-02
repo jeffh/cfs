@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -375,7 +376,6 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 		for i, size := 0, int(m.NumWname()); i < size; i++ {
 			// TODO: Wname(i) is O(n) which we could optimize for this case
 			name := cleanPath(m.Wname(i))
-			fmt.Printf("---- CD %#v\n", name)
 			if name == "/" {
 				path = "/"
 			} else if strings.Contains(name, string(os.PathSeparator)) {
@@ -474,12 +474,20 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 			return
 		}
 		data := w.RreadBuffer()
+		{
+			readSize := m.Count()
+			dataSize := len(data)
+			if int(readSize) > dataSize {
+				readSize = uint32(dataSize)
+			}
+			data = data[:readSize]
+		}
 		// TODO: handle overflow of converting uint64 -> int64
 		// TODO: handle retriable errors
 		n, err := fil.H.ReadAt(data, int64(m.Offset()))
 		if n == 0 {
 			if err == io.EOF {
-				w.Rread(nil)
+				w.Rread(0)
 				return
 			}
 			h.Errorf("srv: Tread: error: fid %d couldn't read: %s", m.Fid(), err)
@@ -489,7 +497,13 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 			h.Tracef("srv: Tread: warn: %s couldn't read full buffer (only %d bytes): %s", m.Fid(), n, err)
 		}
 		h.Tracef("srv: Tread: %s (offset=%d, bytes=%d)", m.Fid(), m.Offset(), n)
-		w.Rread(data[:n])
+		if uint64(len(data)) > math.MaxUint32 {
+			panic(fmt.Errorf("data is larger than allowed: %d", len(data)))
+		}
+		if uint64(n) > math.MaxUint32 {
+			panic(fmt.Errorf("read data is larger than allowed: %d", n))
+		}
+		w.Rread(uint32(n))
 
 	case Tclunk:
 		fil, ok := session.FileForFid(m.Fid())

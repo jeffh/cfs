@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"os"
@@ -787,7 +786,6 @@ func (fs *FileSystemProxy) walk(fid Fid, path string, includeLast bool) error {
 //////////
 
 func (fs *FileSystemProxy) MakeDir(path string, mode Mode) error {
-	fmt.Printf("------------ MakeDir(%#v, %x)\n", path, mode)
 	// TODO: make directory recursively?
 	fid := fs.allocFid()
 
@@ -807,7 +805,6 @@ func (fs *FileSystemProxy) MakeDir(path string, mode Mode) error {
 	return err
 }
 func (fs *FileSystemProxy) CreateFile(path string, flag OpenMode, mode Mode) (FileHandle, error) {
-	fmt.Printf("------------ CreateFile(%#v, %x, %x)\n", path, flag, mode)
 	fid := fs.allocFid()
 
 	prefix := ""
