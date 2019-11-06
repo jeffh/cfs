@@ -75,6 +75,7 @@ type WalkDir interface {
 }
 
 type NodeIterator interface {
+	// return err = io.EOF to indicate not more nodes
 	NextNode() (Node, error)
 	Reset() error
 	Close() error
@@ -207,7 +208,7 @@ type nodeSliceIterator struct {
 	index int
 }
 
-func makeNodeSliceIterator(fi []Node) NodeIterator {
+func MakeNodeSliceIterator(fi []Node) NodeIterator {
 	return &nodeSliceIterator{fi, 0}
 }
 
@@ -267,7 +268,7 @@ func (d *StaticReadOnlyDir) Info() (os.FileInfo, error)     { return d, nil }
 func (d *StaticReadOnlyDir) WriteInfo(in os.FileInfo) error { return ErrUnsupported }
 func (d *StaticReadOnlyDir) Delete(name string) error       { return ErrUnsupported }
 func (d *StaticReadOnlyDir) List() (NodeIterator, error) {
-	return makeNodeSliceIterator(d.Children), nil
+	return MakeNodeSliceIterator(d.Children), nil
 }
 func (d *StaticReadOnlyDir) CreateFile(name string, flag OpenMode, mode Mode) (FileHandle, error) {
 	return nil, ErrUnsupported
@@ -302,7 +303,7 @@ func (d *DynamicReadOnlyDir) List() (NodeIterator, error) {
 	if err != nil {
 		return nil, err
 	}
-	return makeNodeSliceIterator(nodes), nil
+	return MakeNodeSliceIterator(nodes), nil
 }
 func (d *DynamicReadOnlyDir) CreateFile(name string, flag OpenMode, mode Mode) (FileHandle, error) {
 	return nil, ErrUnsupported
@@ -340,7 +341,7 @@ func (d *DynamicReadOnlyDirTree) List() (NodeIterator, error) {
 	if err != nil {
 		return nil, err
 	}
-	return makeNodeSliceIterator(nodes), nil
+	return MakeNodeSliceIterator(nodes), nil
 }
 func (d *DynamicReadOnlyDirTree) Walk(subpath []string) (Node, error) {
 	path := strings.Join(subpath, "/")

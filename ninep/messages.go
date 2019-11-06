@@ -534,6 +534,18 @@ func SyncStat() Stat {
 	return st
 }
 
+func SyncStatWithName(name string) Stat {
+	st := NewStat(name, "", "", "")
+	st.SetType(NoTouchU16)
+	st.SetDev(NoTouchU32)
+	st.SetQid(NoTouchQid)
+	st.SetMode(NoTouchMode)
+	st.SetAtime(NoTouchU32)
+	st.SetMtime(NoTouchU32)
+	st.SetLength(NoTouchU64)
+	return st
+}
+
 func NewStat(name, uid, gid, muid string) Stat {
 	// TODO: error if strings are too large
 	size := statSize(name, uid, gid, muid)
