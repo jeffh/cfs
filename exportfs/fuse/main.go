@@ -139,7 +139,12 @@ func (n *Dir) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.
 }
 
 func (n *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDir fs.Node) error {
-	return fuse.ENOSYS
+	nd := newDir.(*Dir)
+	oldpath := filepath.Join(n.path, req.OldName)
+	newpath := filepath.Join(nd.path, req.NewName)
+	n.tracef("[%v]Dir.Rename(%#v, %#v)\n", n.path, oldpath, newpath)
+	st := ninep.SyncStatWithName(newpath)
+	return mapErr(n.fs.WriteStat(oldpath, st))
 }
 
 func (n *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {

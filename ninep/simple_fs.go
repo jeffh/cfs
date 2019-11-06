@@ -289,6 +289,27 @@ func StaticRootDir(children ...Node) *StaticReadOnlyDir {
 
 /////////////////////////////////////////////
 
+// Creates a dynamic, readonly directory that can't be modified, uses iterator instead of a slisce
+type DynamicReadOnlyDirItr struct {
+	SimpleFileInfo
+	GetChildren func() (NodeIterator, error)
+}
+
+func (d *DynamicReadOnlyDirItr) Info() (os.FileInfo, error)     { return d, nil }
+func (d *DynamicReadOnlyDirItr) WriteInfo(in os.FileInfo) error { return ErrUnsupported }
+func (d *DynamicReadOnlyDirItr) Delete(name string) error       { return ErrUnsupported }
+func (d *DynamicReadOnlyDirItr) List() (NodeIterator, error) {
+	return d.GetChildren()
+}
+func (d *DynamicReadOnlyDirItr) CreateFile(name string, flag OpenMode, mode Mode) (FileHandle, error) {
+	return nil, ErrUnsupported
+}
+func (d *DynamicReadOnlyDirItr) CreateDir(name string, mode Mode) error {
+	return ErrUnsupported
+}
+
+/////////////////////////////////////////////
+
 // Creates a dynamic, readonly directory that can't be modified
 type DynamicReadOnlyDir struct {
 	SimpleFileInfo
