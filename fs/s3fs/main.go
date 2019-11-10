@@ -1,6 +1,7 @@
 package s3fs
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"time"
@@ -10,9 +11,11 @@ import (
 	"github.com/jeffh/cfs/ninep"
 )
 
-func objectDir(s3c *s3.S3, bucketName string, obj *s3.Object) (ninep.Node, error) {
-	return nil, nil
-}
+type objectOperation int
+
+const (
+	opData objectOperation = iota
+)
 
 func objectsForBucket(s3c *s3.S3, bucketName string) func() ([]ninep.Node, error) {
 	return func() ([]ninep.Node, error) {
@@ -28,12 +31,14 @@ type objectsItr struct {
 	input      s3.ListObjectsV2Input
 	output     *s3.ListObjectsV2Output
 	index      int
+	op         objectOperation
 }
 
 func (itr *objectsItr) NextNode() (ninep.Node, error) {
 	if itr.output == nil {
 		var err error
 		itr.output, err = itr.s3c.ListObjectsV2(&itr.input)
+		fmt.Printf("[S3] ListObjects(%#v): %v %v\n", itr.output, err)
 		if err != nil {
 			return nil, err
 		}
@@ -41,15 +46,38 @@ func (itr *objectsItr) NextNode() (ninep.Node, error) {
 			return nil, io.EOF
 		}
 		itr.input.ContinuationToken = itr.output.NextContinuationToken
+	} else if itr.index == len(itr.output.Contents) && itr.output.NextContinuationToken == nil {
+		return nil, io.EOF
 	}
 
 	object := itr.output.Contents[itr.index]
 	itr.index++
 	if itr.index == len(itr.output.Contents) {
-		itr.index = 0
-		itr.output = nil
+		if itr.output.NextContinuationToken != nil {
+			itr.index = 0
+			itr.output = nil
+		}
 	}
-	return objectDir(itr.s3c, itr.bucketName, object)
+	bucketName := itr.bucketName
+	s3c := itr.s3c
+	f := ninep.StreamingReadOnlyFile(*object.Key, 0777, time.Time{}, func(w io.Writer) {
+		var err error
+		wp := w.(*io.PipeWriter)
+		switch itr.op {
+		case opData:
+			var resp *s3.GetObjectOutput
+			resp, err = s3c.GetObject(&s3.GetObjectInput{
+				Bucket: aws.String(bucketName),
+				Key:    object.Key,
+			})
+			if err == nil {
+				_, err = io.Copy(w, resp.Body)
+				resp.Body.Close()
+			}
+		}
+		wp.CloseWithError(err)
+	})
+	return f, nil
 }
 
 func (itr *objectsItr) Reset() error {
@@ -66,6 +94,21 @@ func (itr *objectsItr) Close() error {
 
 ////////////////////////////////
 
+// Represents an s3 bucket. For speed, this attempts to minimize the number of s3 api calls.
+//
+// Directory tree:
+//  /objects/data/<key>
+//  /objects/etag/<key>
+//  /objects/storage-class/<key>
+//  /objects/version/<key>
+//  /objects/.../<key>
+//  /create-object
+//  /acl
+//  /cors
+//  /encryption
+//  /logging
+//  /location
+
 type buckets struct {
 	ninep.SimpleFileInfo
 	s3c *s3.S3
@@ -76,6 +119,7 @@ func (b *buckets) WriteInfo(in os.FileInfo) error { return ninep.ErrUnsupported 
 func (b *buckets) Delete(name string) error       { return ninep.ErrUnsupported }
 func (b *buckets) List() (ninep.NodeIterator, error) {
 	resp, err := b.s3c.ListBuckets(&s3.ListBucketsInput{})
+	fmt.Printf("[S3] ListBuckets(): %v %v\n", resp, err)
 	if err != nil {
 		return nil, err
 	}
@@ -130,6 +174,7 @@ func (b *buckets) Walk(subpath []string) (ninep.Node, error) {
 		}
 	} else {
 		// TODO: return bucketDir()
+		return bucketDir(b.s3c, bucket, time.Time{}, time.Now(), ""), nil
 	}
 
 	return nil, os.ErrNotExist

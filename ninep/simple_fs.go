@@ -469,6 +469,14 @@ func DynamicReadOnlyFile(name string, mode os.FileMode, modTime time.Time, open 
 	}
 }
 
+func StreamingReadOnlyFile(name string, mode os.FileMode, modTime time.Time, thread func(io.Writer)) *SimpleFile {
+	return CtlFile(name, mode, modTime, func(r io.Reader, w io.Writer) {
+		rc := r.(*io.PipeReader)
+		rc.Close()
+		thread(w)
+	})
+}
+
 func CtlFile(name string, mode os.FileMode, modTime time.Time, thread func(r io.Reader, w io.Writer)) *SimpleFile {
 	return &SimpleFile{
 		SimpleFileInfo: SimpleFileInfo{
