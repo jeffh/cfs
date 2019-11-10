@@ -17,10 +17,17 @@ const (
 	opData objectOperation = iota
 )
 
-func objectsForBucket(s3c *s3.S3, bucketName string) func() ([]ninep.Node, error) {
-	return func() ([]ninep.Node, error) {
-		return nil, nil
-	}
+func objectsForBucket(s3c *s3.S3, bucketName string) ninep.Node {
+	return dynamicDirItr("objects", func() (ninep.NodeIterator, error) {
+		itr := &objectsItr{
+			s3c:        s3c,
+			bucketName: bucketName,
+			input: s3.ListObjectsV2Input{
+				Bucket: aws.String(bucketName),
+			},
+		}
+		return itr, nil
+	})
 }
 
 ////////////////////////////////
@@ -60,23 +67,50 @@ func (itr *objectsItr) NextNode() (ninep.Node, error) {
 	}
 	bucketName := itr.bucketName
 	s3c := itr.s3c
-	f := ninep.StreamingReadOnlyFile(*object.Key, 0777, time.Time{}, func(w io.Writer) {
-		var err error
-		wp := w.(*io.PipeWriter)
-		switch itr.op {
-		case opData:
-			var resp *s3.GetObjectOutput
-			resp, err = s3c.GetObject(&s3.GetObjectInput{
-				Bucket: aws.String(bucketName),
-				Key:    object.Key,
-			})
-			if err == nil {
-				_, err = io.Copy(w, resp.Body)
-				resp.Body.Close()
-			}
+	uid := ""
+	if object.Owner != nil {
+		if object.Owner.DisplayName != nil {
+			uid = *object.Owner.DisplayName
+		} else if object.Owner.ID != nil {
+			uid = *object.Owner.ID
 		}
-		wp.CloseWithError(err)
-	})
+	}
+
+	f := &ninep.SimpleFile{
+		FileInfo: ninep.FileInfoWithUsers(
+			&ninep.SimpleFileInfo{
+				FIName:    *object.Key,
+				FIMode:    0777,
+				FIModTime: *object.LastModified,
+				FISize:    *object.Size,
+			},
+			uid,
+			"",  // gid
+			uid, // muid
+		),
+		OpenFn: func() (ninep.FileHandle, error) {
+			r, w := io.Pipe()
+			go func() {
+				var err error
+				switch itr.op {
+				case opData:
+					var resp *s3.GetObjectOutput
+					resp, err = s3c.GetObject(&s3.GetObjectInput{
+						Bucket: aws.String(bucketName),
+						Key:    object.Key,
+					})
+					if err == nil {
+						_, err = io.Copy(w, resp.Body)
+						resp.Body.Close()
+					}
+				}
+				w.CloseWithError(err)
+				r.Close()
+				w.Close()
+			}()
+			return &ninep.RWFileHandle{W: w}, nil
+		},
+	}
 	return f, nil
 }
 
@@ -152,25 +186,16 @@ func (b *buckets) Walk(subpath []string) (ninep.Node, error) {
 
 	bucket := subpath[0]
 	if size > 1 {
-		if subpath[1] == "objects" {
+		operation := subpath[1]
+		switch operation {
+		case "objects":
 			if size > 2 {
 			} else {
 				// list all objects
-				dir := dynamicDirItr("objects", func() (ninep.NodeIterator, error) {
-					itr := &objectsItr{
-						s3c:        b.s3c,
-						bucketName: bucket,
-						input: s3.ListObjectsV2Input{
-							Bucket: aws.String(bucket),
-						},
-					}
-					return itr, nil
-				})
-				return dir, nil
+				return objectsForBucket(b.s3c, bucket), nil
 
 			}
-		} else {
-			// try another path?
+		default:
 		}
 	} else {
 		// TODO: return bucketDir()
@@ -206,18 +231,7 @@ func bucketDir(svc *s3.S3, bucketName string, creationDate time.Time, now time.T
 		// 	"",
 		// ),
 		Children: []ninep.Node{
-			dynamicDir("objects", objectsForBucket(svc, bucketName)),
-			dynamicStringFile("location", now, func() ([]byte, error) {
-				out, err := svc.GetBucketLocation(&s3.GetBucketLocationInput{Bucket: aws.String(bucketName)})
-				if err != nil {
-					return nil, err
-				}
-				var loc string
-				if location := out.LocationConstraint; location != nil {
-					loc = *location
-				}
-				return []byte(loc), nil
-			}),
+			objectsForBucket(svc, bucketName),
 		},
 	}
 	return dir

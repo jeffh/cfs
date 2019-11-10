@@ -346,7 +346,7 @@ func DynamicRootDir(getChildren func() ([]Node, error)) *DynamicReadOnlyDir {
 /////////////////////////////////////////////
 
 // Creates a dynamic, readonly directory that can't be modified. Allows arbitrary nested paths.
-// Unlike normal directories, displays children as "top-level" children.
+// Unlike normal directories, displays children in nested subdirectories as "top-level" children.
 //
 // Not particularly efficient, but sure is easy!
 type DynamicReadOnlyDirTree struct {
@@ -444,7 +444,7 @@ func (d *DynamicReadOnlyDirTree) CreateDir(name string, mode Mode) error {
 
 func StaticReadOnlyFile(name string, mode os.FileMode, modTime time.Time, b []byte) *SimpleFile {
 	return &SimpleFile{
-		SimpleFileInfo: SimpleFileInfo{
+		FileInfo: &SimpleFileInfo{
 			FIName:    name,
 			FIMode:    mode,
 			FIModTime: modTime,
@@ -457,7 +457,7 @@ func StaticReadOnlyFile(name string, mode os.FileMode, modTime time.Time, b []by
 
 func DynamicReadOnlyFile(name string, mode os.FileMode, modTime time.Time, open func() ([]byte, error)) *SimpleFile {
 	return &SimpleFile{
-		SimpleFileInfo: SimpleFileInfo{
+		FileInfo: &SimpleFileInfo{
 			FIName:    name,
 			FIMode:    mode,
 			FIModTime: modTime,
@@ -469,17 +469,9 @@ func DynamicReadOnlyFile(name string, mode os.FileMode, modTime time.Time, open 
 	}
 }
 
-func StreamingReadOnlyFile(name string, mode os.FileMode, modTime time.Time, thread func(io.Writer)) *SimpleFile {
-	return CtlFile(name, mode, modTime, func(r io.Reader, w io.Writer) {
-		rc := r.(*io.PipeReader)
-		rc.Close()
-		thread(w)
-	})
-}
-
 func CtlFile(name string, mode os.FileMode, modTime time.Time, thread func(r io.Reader, w io.Writer)) *SimpleFile {
 	return &SimpleFile{
-		SimpleFileInfo: SimpleFileInfo{
+		FileInfo: &SimpleFileInfo{
 			FIName:    name,
 			FIMode:    mode,
 			FIModTime: modTime,

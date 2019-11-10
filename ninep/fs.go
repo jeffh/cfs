@@ -250,13 +250,13 @@ func (f *SimpleFileInfo) Sys() interface{}   { return f.FISys }
 
 // Simple file implements os.FileInfo and FileHandle operations
 type SimpleFile struct {
-	SimpleFileInfo
+	os.FileInfo
 	OpenFn func() (FileHandle, error)
 }
 
 func NewReadOnlySimpleFile(name string, mode os.FileMode, modTime time.Time, contents []byte) *SimpleFile {
 	return &SimpleFile{
-		SimpleFileInfo{
+		&SimpleFileInfo{
 			FIName:    name,
 			FISize:    int64(len(contents)),
 			FIMode:    mode | 0444,
@@ -272,7 +272,7 @@ func NewSimpleFile(name string, mode os.FileMode, modTime time.Time, open func()
 		mode = 0444
 	}
 	return &SimpleFile{
-		SimpleFileInfo{
+		&SimpleFileInfo{
 			FIName:    name,
 			FISize:    0,
 			FIMode:    mode,
@@ -351,9 +351,19 @@ type RWFileHandle struct {
 	W io.Writer
 }
 
-func (h *RWFileHandle) ReadAt(p []byte, off int64) (n int, err error)  { return h.R.Read(p) }
-func (h *RWFileHandle) WriteAt(p []byte, off int64) (n int, err error) { return h.W.Write(p) }
-func (h *RWFileHandle) Sync() error                                    { return nil }
+func (h *RWFileHandle) ReadAt(p []byte, off int64) (n int, err error) {
+	if h.R == nil {
+		return 0, io.EOF
+	}
+	return h.R.Read(p)
+}
+func (h *RWFileHandle) WriteAt(p []byte, off int64) (n int, err error) {
+	if h.W == nil {
+		return 0, io.EOF
+	}
+	return h.W.Write(p)
+}
+func (h *RWFileHandle) Sync() error { return nil }
 func (h *RWFileHandle) Close() error {
 	if rc, ok := h.R.(io.Closer); ok {
 		rc.Close()

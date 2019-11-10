@@ -32,7 +32,7 @@ func staticDirWithTime(name string, modTime time.Time, children ...ninep.Node) *
 
 func dynamicFile(name string, modTime time.Time, content func() ([]byte, error)) *ninep.SimpleFile {
 	return &ninep.SimpleFile{
-		SimpleFileInfo: ninep.SimpleFileInfo{
+		FileInfo: &ninep.SimpleFileInfo{
 			FIName:    name,
 			FIMode:    0777,
 			FIModTime: modTime,

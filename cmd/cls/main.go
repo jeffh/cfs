@@ -11,12 +11,22 @@ import (
 	"github.com/jeffh/cfs/ninep"
 )
 
+const (
+	KB = 1024
+	MB = KB * 1024
+	GB = MB * 1024
+	TB = GB * 1024
+	PB = TB * 1024
+)
+
 func main() {
 	var path string
 	var list bool
 	var nocols bool
+	var humanSizes bool
 
 	flag.BoolVar(&list, "l", false, "list long format stats about each file")
+	flag.BoolVar(&humanSizes, "h", false, "list file sizes in human-readable formats")
 	flag.BoolVar(&nocols, "nocols", false, "avoids printing in nice columns, useful to verify streaming behavior")
 
 	flag.Usage = func() {
@@ -52,7 +62,26 @@ func main() {
 				info, err := infos.NextFileInfo()
 				if info != nil {
 					usr, gid, muid, _ := ninep.FileUsers(info)
-					fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%s\t %s\n", info.Mode(), usr, gid, muid, info.Size(), info.ModTime(), info.Name())
+					size := info.Size()
+					var sizeStr string
+					if humanSizes {
+						if size > PB {
+							sizeStr = fmt.Sprintf("%.2f PB", float64(size)/PB)
+						} else if size > TB {
+							sizeStr = fmt.Sprintf("%.2f TB", float64(size)/TB)
+						} else if size > GB {
+							sizeStr = fmt.Sprintf("%.2f GB", float64(size)/GB)
+						} else if size > MB {
+							sizeStr = fmt.Sprintf("%.2f MB", float64(size)/MB)
+						} else if size > KB {
+							sizeStr = fmt.Sprintf("%.2f KB", float64(size)/KB)
+						} else {
+							sizeStr = fmt.Sprintf("%d", size)
+						}
+					} else {
+						sizeStr = fmt.Sprintf("%d", size)
+					}
+					fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t %s\n", info.Mode(), usr, gid, muid, sizeStr, info.ModTime(), info.Name())
 				}
 				if err == io.EOF {
 					break
