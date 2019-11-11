@@ -6,6 +6,7 @@ var (
 	ErrBadFormat = errors.New("Unrecognized 9P protocol")
 
 	ErrWriteNotAllowed = errors.New("not allowed to write")
+	ErrReadNotAllowed  = errors.New("not allowed to read")
 	ErrSeekNotAllowed  = errors.New("seeking is not allowed")
 	ErrUnsupported     = errors.New("unsupported")
 	ErrNotImplemented  = errors.New("not implemented")

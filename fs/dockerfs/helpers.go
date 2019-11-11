@@ -37,7 +37,10 @@ func dynamicFile(name string, modTime time.Time, content func() ([]byte, error))
 			FIMode:    0777,
 			FIModTime: modTime,
 		},
-		OpenFn: func() (ninep.FileHandle, error) {
+		OpenFn: func(m ninep.OpenMode) (ninep.FileHandle, error) {
+			if !m.IsReadable() {
+				return nil, ninep.ErrWriteNotAllowed
+			}
 			b, err := content()
 			if err != nil {
 				return nil, err

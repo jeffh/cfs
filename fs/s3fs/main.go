@@ -82,7 +82,7 @@ func objectFile(s3c *s3.S3, bucketName, prefix string, op objectOperation, objec
 			"",  // gid
 			uid, // muid
 		),
-		OpenFn: func() (ninep.FileHandle, error) {
+		OpenFn: func(m ninep.OpenMode) (ninep.FileHandle, error) {
 			r, w := io.Pipe()
 			go func() {
 				var err error

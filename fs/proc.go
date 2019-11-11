@@ -70,15 +70,21 @@ func (f *Proc) pidDir(proc *process.Process) ([]os.FileInfo, error) {
 								 SIGINT, SIGQUIT, SIGTRAP, SIGABRT, SIGKILL,
 								 SIGALRM, SIGTERM, SIGSTOP, SIGCONT
 	*/
-	readOnly := func(f func() ([]byte, error)) func() (ninep.FileHandle, error) {
-		return func() (ninep.FileHandle, error) {
+	readOnly := func(f func() ([]byte, error)) func(m ninep.OpenMode) (ninep.FileHandle, error) {
+		return func(m ninep.OpenMode) (ninep.FileHandle, error) {
+			if !m.IsReadable() {
+				return nil, ninep.ErrWriteNotAllowed
+			}
 			b, err := f()
 			return &ninep.ReadOnlyMemoryFileHandle{b}, err
 		}
 	}
 
-	writeOnly := func(bufSize int, f func([]byte) (int, error)) func() (ninep.FileHandle, error) {
-		return func() (ninep.FileHandle, error) {
+	writeOnly := func(bufSize int, f func([]byte) (int, error)) func(m ninep.OpenMode) (ninep.FileHandle, error) {
+		return func(m ninep.OpenMode) (ninep.FileHandle, error) {
+			if !m.IsWriteable() {
+				return nil, ninep.ErrReadNotAllowed
+			}
 			h := &ninep.WriteOnlyFileHandle{
 				Buf:     make([]byte, 0, bufSize),
 				OnWrite: f,
@@ -404,7 +410,7 @@ func (f *Proc) OpenFile(path string, flag ninep.OpenMode) (ninep.FileHandle, err
 
 		for _, info := range infos {
 			if info.Name() == parts[1] {
-				return info.(*ninep.SimpleFile).Open()
+				return info.(*ninep.SimpleFile).Open(flag)
 			}
 		}
 	default:

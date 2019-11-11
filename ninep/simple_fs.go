@@ -48,7 +48,7 @@ func (n *RenamedNode) Info() (os.FileInfo, error) {
 // a file system in memory
 type File interface {
 	Node
-	Open() (FileHandle, error)
+	Open(m OpenMode) (FileHandle, error)
 }
 
 type Dir interface {
@@ -129,7 +129,7 @@ func (f *SimpleFileSystem) OpenFile(path string, flag OpenMode) (FileHandle, err
 		return nil, fmt.Errorf("Cannot open directory: %s", path)
 	}
 
-	return file.Open()
+	return file.Open(flag)
 }
 func (f *SimpleFileSystem) ListDir(path string) (FileInfoIterator, error) {
 	node, _, err := f.walk(path, true)
@@ -449,7 +449,7 @@ func StaticReadOnlyFile(name string, mode os.FileMode, modTime time.Time, b []by
 			FIMode:    mode,
 			FIModTime: modTime,
 		},
-		OpenFn: func() (FileHandle, error) {
+		OpenFn: func(m OpenMode) (FileHandle, error) {
 			return &ReadOnlyMemoryFileHandle{b}, nil
 		},
 	}
@@ -462,7 +462,10 @@ func DynamicReadOnlyFile(name string, mode os.FileMode, modTime time.Time, open 
 			FIMode:    mode,
 			FIModTime: modTime,
 		},
-		OpenFn: func() (FileHandle, error) {
+		OpenFn: func(m OpenMode) (FileHandle, error) {
+			if !m.IsReadable() {
+				return nil, ErrWriteNotAllowed
+			}
 			b, err := open()
 			return &ReadOnlyMemoryFileHandle{b}, err
 		},
@@ -476,7 +479,7 @@ func CtlFile(name string, mode os.FileMode, modTime time.Time, thread func(r io.
 			FIMode:    mode,
 			FIModTime: modTime,
 		},
-		OpenFn: func() (FileHandle, error) {
+		OpenFn: func(m OpenMode) (FileHandle, error) {
 			r1, w1 := io.Pipe()
 			r2, w2 := io.Pipe()
 			go func() {

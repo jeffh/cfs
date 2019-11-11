@@ -251,7 +251,7 @@ func (f *SimpleFileInfo) Sys() interface{}   { return f.FISys }
 // Simple file implements os.FileInfo and FileHandle operations
 type SimpleFile struct {
 	os.FileInfo
-	OpenFn func() (FileHandle, error)
+	OpenFn func(mode OpenMode) (FileHandle, error)
 }
 
 func NewReadOnlySimpleFile(name string, mode os.FileMode, modTime time.Time, contents []byte) *SimpleFile {
@@ -263,11 +263,17 @@ func NewReadOnlySimpleFile(name string, mode os.FileMode, modTime time.Time, con
 			FIModTime: modTime,
 			FISys:     nil,
 		},
-		func() (FileHandle, error) { return &ReadOnlyMemoryFileHandle{contents}, nil },
+		func(m OpenMode) (FileHandle, error) {
+			if m.IsReadable() {
+				return &ReadOnlyMemoryFileHandle{contents}, nil
+			} else {
+				return nil, ErrWriteNotAllowed
+			}
+		},
 	}
 }
 
-func NewSimpleFile(name string, mode os.FileMode, modTime time.Time, open func() (FileHandle, error)) *SimpleFile {
+func NewSimpleFile(name string, mode os.FileMode, modTime time.Time, open func(m OpenMode) (FileHandle, error)) *SimpleFile {
 	if mode == 0 {
 		mode = 0444
 	}
@@ -285,11 +291,11 @@ func NewSimpleFile(name string, mode os.FileMode, modTime time.Time, open func()
 
 func (f *SimpleFile) WriteInfo(in os.FileInfo) error { return ErrUnsupported }
 func (f *SimpleFile) Info() (os.FileInfo, error)     { return f, nil }
-func (f *SimpleFile) Open() (FileHandle, error) {
+func (f *SimpleFile) Open(m OpenMode) (FileHandle, error) {
 	if f.OpenFn == nil {
 		return nil, ErrUnsupported
 	}
-	return f.OpenFn()
+	return f.OpenFn(m)
 }
 
 ////////////////////////////////////////////////
