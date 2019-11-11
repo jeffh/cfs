@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -17,69 +18,62 @@ const (
 	opData objectOperation = iota
 )
 
-func objectsForBucket(s3c *s3.S3, bucketName string) ninep.Node {
-	return dynamicDirItr("objects", func() (ninep.NodeIterator, error) {
-		itr := &objectsItr{
-			s3c:        s3c,
-			bucketName: bucketName,
-			input: s3.ListObjectsV2Input{
-				Bucket: aws.String(bucketName),
-			},
-		}
-		return itr, nil
-	})
-}
-
-////////////////////////////////
-
-type objectsItr struct {
-	s3c        *s3.S3
-	bucketName string
-	input      s3.ListObjectsV2Input
-	output     *s3.ListObjectsV2Output
-	index      int
-	op         objectOperation
-}
-
-func (itr *objectsItr) NextNode() (ninep.Node, error) {
-	if itr.output == nil {
+func objectsForBucket(s3c *s3.S3, bucketName, keyPrefix string) (ninep.Node, error) {
+	var prefix *string
+	if keyPrefix != "" {
+		prefix = aws.String(keyPrefix)
+		// make first fetch to see if it's one file or not
+	}
+	input := s3.ListObjectsV2Input{
+		Bucket: aws.String(bucketName),
+		Prefix: prefix,
+	}
+	var output *s3.ListObjectsV2Output
+	{
 		var err error
-		itr.output, err = itr.s3c.ListObjectsV2(&itr.input)
-		fmt.Printf("[S3] ListObjects(%#v): %v %v\n", itr.output, err)
+		output, err = s3c.ListObjectsV2(&input)
 		if err != nil {
 			return nil, err
 		}
-		if len(itr.output.Contents) == 0 {
-			return nil, io.EOF
+		// if we're navigating to a file, just return that file
+		if prefix != nil && len(output.Contents) == 1 {
+			object := output.Contents[0]
+			return objectFile(s3c, bucketName, keyPrefix, opData, object)
 		}
-		itr.input.ContinuationToken = itr.output.NextContinuationToken
-	} else if itr.index == len(itr.output.Contents) && itr.output.NextContinuationToken == nil {
-		return nil, io.EOF
 	}
+	dir := dynamicDirItr("objects", func() (ninep.NodeIterator, error) {
+		itr := &objectsItr{
+			s3c:        s3c,
+			bucketName: bucketName,
+			prefix:     keyPrefix,
+			input:      input,
+			output:     output,
+		}
+		return itr, nil
+	})
+	return dir, nil
+}
 
-	object := itr.output.Contents[itr.index]
-	itr.index++
-	if itr.index == len(itr.output.Contents) {
-		if itr.output.NextContinuationToken != nil {
-			itr.index = 0
-			itr.output = nil
+func objectFile(s3c *s3.S3, bucketName, prefix string, op objectOperation, object *s3.Object) (*ninep.SimpleFile, error) {
+	var uid string
+	if owner := object.Owner; owner != nil {
+		if displayName := owner.DisplayName; displayName != nil {
+			uid = *displayName
+		} else if id := owner.ID; id != nil {
+			uid = *id
 		}
 	}
-	bucketName := itr.bucketName
-	s3c := itr.s3c
-	uid := ""
-	if object.Owner != nil {
-		if object.Owner.DisplayName != nil {
-			uid = *object.Owner.DisplayName
-		} else if object.Owner.ID != nil {
-			uid = *object.Owner.ID
-		}
+	name := (*object.Key)[len(prefix):]
+	if strings.HasPrefix(name, "/") {
+		name = name[1:]
 	}
-
+	if name == "" {
+		name = "/"
+	}
 	f := &ninep.SimpleFile{
 		FileInfo: ninep.FileInfoWithUsers(
 			&ninep.SimpleFileInfo{
-				FIName:    *object.Key,
+				FIName:    name,
 				FIMode:    0777,
 				FIModTime: *object.LastModified,
 				FISize:    *object.Size,
@@ -92,13 +86,14 @@ func (itr *objectsItr) NextNode() (ninep.Node, error) {
 			r, w := io.Pipe()
 			go func() {
 				var err error
-				switch itr.op {
+				switch op {
 				case opData:
 					var resp *s3.GetObjectOutput
-					resp, err = s3c.GetObject(&s3.GetObjectInput{
+					input := &s3.GetObjectInput{
 						Bucket: aws.String(bucketName),
 						Key:    object.Key,
-					})
+					}
+					resp, err = s3c.GetObject(input)
 					if err == nil {
 						_, err = io.Copy(w, resp.Body)
 						resp.Body.Close()
@@ -106,12 +101,49 @@ func (itr *objectsItr) NextNode() (ninep.Node, error) {
 				}
 				w.CloseWithError(err)
 				r.Close()
-				w.Close()
 			}()
-			return &ninep.RWFileHandle{W: w}, nil
+			return &ninep.RWFileHandle{R: r}, nil
 		},
 	}
 	return f, nil
+}
+
+////////////////////////////////
+
+type objectsItr struct {
+	s3c        *s3.S3
+	bucketName string
+	prefix     string
+	input      s3.ListObjectsV2Input
+	output     *s3.ListObjectsV2Output
+	index      int
+	op         objectOperation
+}
+
+func (itr *objectsItr) NextNode() (ninep.Node, error) {
+	if itr.output == nil {
+		var err error
+		itr.output, err = itr.s3c.ListObjectsV2(&itr.input)
+		if err != nil {
+			return nil, err
+		}
+		if len(itr.output.Contents) == 0 {
+			return nil, io.EOF
+		}
+		itr.input.ContinuationToken = itr.output.NextContinuationToken
+	} else if itr.index == len(itr.output.Contents) && (itr.output.IsTruncated == nil || !*itr.output.IsTruncated) {
+		return nil, io.EOF
+	}
+
+	object := itr.output.Contents[itr.index]
+	itr.index++
+	if itr.index == len(itr.output.Contents) && itr.output.IsTruncated != nil {
+		if *itr.output.IsTruncated {
+			itr.index = 0
+			itr.output = nil
+		}
+	}
+	return objectFile(itr.s3c, itr.bucketName, itr.prefix, itr.op, object)
 }
 
 func (itr *objectsItr) Reset() error {
@@ -190,9 +222,11 @@ func (b *buckets) Walk(subpath []string) (ninep.Node, error) {
 		switch operation {
 		case "objects":
 			if size > 2 {
+				prefix := strings.Join(subpath[2:], "/")
+				return objectsForBucket(b.s3c, bucket, prefix)
 			} else {
 				// list all objects
-				return objectsForBucket(b.s3c, bucket), nil
+				return objectsForBucket(b.s3c, bucket, "")
 
 			}
 		default:
@@ -213,6 +247,11 @@ func (b *buckets) CreateDir(name string, mode ninep.Mode) error {
 
 func bucketDir(svc *s3.S3, bucketName string, creationDate time.Time, now time.Time, uid string) ninep.Node {
 	// TODO: use uid
+	objects, err := objectsForBucket(svc, bucketName, "")
+	if err != nil {
+		// should never happen
+		panic(err)
+	}
 
 	dir := &ninep.StaticReadOnlyDir{
 		SimpleFileInfo: ninep.SimpleFileInfo{
@@ -231,7 +270,7 @@ func bucketDir(svc *s3.S3, bucketName string, creationDate time.Time, now time.T
 		// 	"",
 		// ),
 		Children: []ninep.Node{
-			objectsForBucket(svc, bucketName),
+			objects,
 		},
 	}
 	return dir
