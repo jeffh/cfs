@@ -71,7 +71,7 @@ type StepDir interface {
 // performance for directories that can be large through recursive paths.
 type WalkDir interface {
 	Dir
-	Walk(subpath []string) (Node, error)
+	Walk(subpath []string) ([]Node, error)
 }
 
 type NodeIterator interface {
@@ -110,10 +110,13 @@ func (f *SimpleFileSystem) CreateFile(path string, flag OpenMode, mode Mode) (Fi
 	if err != nil {
 		return nil, err
 	}
+	if node == nil {
+		return nil, os.ErrNotExist
+	}
 
 	dir, ok := node.(Dir)
 	if !ok {
-		return nil, fmt.Errorf("Cannot create file under a path that is a file: %s", path)
+		return nil, fmt.Errorf("Cannot create file under a path that is a file: %s (node: %#v)", path, dir)
 	}
 
 	return dir.CreateFile(name, flag, mode)
@@ -173,6 +176,36 @@ func (f *SimpleFileSystem) Delete(path string) error {
 		return os.ErrNotExist
 	}
 	return dir.Delete(name)
+}
+
+/////////////////////////////////////////////
+
+type SimpleWalkableFileSystem struct {
+	SimpleFileSystem
+}
+
+var _ WalkableFileSystem = (*SimpleWalkableFileSystem)(nil)
+
+func (f *SimpleWalkableFileSystem) Walk(parts []string) ([]os.FileInfo, error) {
+	nodes, err := WalkTrail(f.SimpleFileSystem.Root, parts)
+	fmt.Printf("[WalkTrail] Walk(%#v) %#v %v\n", parts, nodes, err)
+	for i, n := range nodes {
+		info, err := n.Info()
+		fmt.Printf("[WalkTrail] Walk(%#v) => [%d] %#v isDir=%v %v\n", parts, i, info.Name(), info.IsDir(), err)
+
+	}
+	if err != nil {
+		return nil, err
+	}
+	infos := make([]os.FileInfo, len(nodes))
+	for i, n := range nodes {
+		inf, err := n.Info()
+		if err != nil {
+			return nil, err
+		}
+		infos[i] = inf
+	}
+	return infos, nil
 }
 
 /////////////////////////////////////////////
@@ -566,7 +599,11 @@ func (r *LineReader) ReadLine() (string, error) {
 /////////////////////////////////////////////////////////////////////////////
 
 func FindChild(root Node, name string) (Node, os.FileInfo, error) {
-	if name != "" {
+	fmt.Printf("[FindChild] %#v %s\n", root, name)
+	if name == "." {
+		info, err := root.Info()
+		return root, info, err
+	} else if name != "" {
 		var (
 			foundNode Node
 
@@ -579,6 +616,7 @@ func FindChild(root Node, name string) (Node, os.FileInfo, error) {
 
 		if walkDir, ok := root.(StepDir); ok {
 			n, err := walkDir.Step(name)
+			fmt.Printf("[FindChild] Step(%#v)\n", name)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -607,6 +645,7 @@ func FindChild(root Node, name string) (Node, os.FileInfo, error) {
 					return nil, nil, infoErr
 				}
 
+				fmt.Printf("[FindChild] Compare(%#v == %#v)\n", name, info.Name())
 				if info.Name() == name {
 					foundNode = node
 					break
@@ -645,7 +684,13 @@ func Walk(root Node, path string, walkLast bool) (Node, string, error) {
 			err  error
 		)
 		if walkNode, ok := currNode.(WalkDir); ok {
-			node, err = walkNode.Walk(parts[i:])
+			var nodes []Node
+			if walkLast {
+				nodes, err = walkNode.Walk(parts[i:])
+			} else {
+				nodes, err = walkNode.Walk(dirParts[i:])
+			}
+			node = nodes[len(nodes)-1]
 			if err != nil {
 				return nil, lastPart, err
 			}
@@ -670,7 +715,11 @@ func Walk(root Node, path string, walkLast bool) (Node, string, error) {
 			err  error
 		)
 		if walkNode, ok := currNode.(WalkDir); ok {
-			node, err = walkNode.Walk(parts[len(parts)-1:])
+			var nodes []Node
+			nodes, err = walkNode.Walk(parts[len(parts)-1:])
+			if s := len(nodes); s > 0 {
+				node = nodes[s-1]
+			}
 
 		} else {
 			node, _, err = FindChild(currNode, lastPart)
@@ -682,4 +731,45 @@ func Walk(root Node, path string, walkLast bool) (Node, string, error) {
 	}
 
 	return currNode, lastPart, nil
+}
+
+// Like Walk, but expects []Node for each node traversed
+func WalkTrail(root Node, path []string) ([]Node, error) {
+	currNode := root
+	parts := path
+	if len(parts) == 0 {
+		return []Node{currNode}, nil
+	}
+	history := make([]Node, 0, len(parts))
+	// history = append(history, currNode)
+
+	for i, part := range parts {
+		var (
+			node Node
+			info os.FileInfo
+			err  error
+		)
+		if walkNode, ok := currNode.(WalkDir); ok {
+			nodes, err := walkNode.Walk(parts[i:])
+			if err != nil {
+				return nil, err
+			}
+			history = append(history, nodes...)
+			return history, err
+		} else {
+			node, info, err = FindChild(currNode, part)
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		if !info.IsDir() {
+			return nil, os.ErrNotExist
+		}
+
+		currNode = node
+		history = append(history, currNode)
+	}
+
+	return history, nil
 }

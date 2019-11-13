@@ -160,6 +160,18 @@ type FileSystem interface {
 	Delete(path string) error
 }
 
+// A file system that wants to optimize Twalk operations
+type WalkableFileSystem interface {
+	// walk receives a number of directories to traverse (with the last one optionally being a file)
+	// and returns stats about every file/directory traversed.
+	//
+	// It's expected that all FileInfos returned except for the last to be directories.
+	//
+	// Note: simply returning less FileInfos than parts indicates that the cd
+	// failed to traversed to a certain depth.
+	Walk(parts []string) ([]os.FileInfo, error)
+}
+
 ////////////////////////////////////////////////
 
 // file info helper wrappers

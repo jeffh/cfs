@@ -361,50 +361,105 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 		walkedQids := make([]Qid, 0, int(m.NumWname()))
 		path := cleanPath(fil.Name)
 		var info os.FileInfo
-		for i, size := 0, int(m.NumWname()); i < size; i++ {
-			// TODO: Wname(i) is O(n) which we could optimize for this case
-			name := cleanPath(m.Wname(i))
-			if name == "/" {
-				path = "/"
-			} else if strings.Contains(name, string(os.PathSeparator)) {
-				h.Errorf("srv: Twalk: invalid walk element for %s: %v", m.Fid(), name)
-				w.Rerrorf("invalid walk element: %v", name)
-				return
-			} else {
-				path = filepath.Join(path, name)
+		if wfs, ok := h.Fs.(WalkableFileSystem); ok {
+			h.Tracef("srv: Twalk: using WalkableFileSystem")
+			size := int(m.NumWname())
+			parts := make([]string, 0, size)
+			for i := 0; i < size; i++ {
+				// TODO: Wname(i) is O(n) which we could optimize for this case
+				name := cleanPath(m.Wname(i))
+				if strings.Contains(name, string(os.PathSeparator)) {
+					h.Errorf("srv: Twalk: invalid walk element for %s: %v", m.Fid(), name)
+					w.Rerrorf("invalid walk element: %v", name)
+					return
+				}
+				parts = append(parts, name)
 			}
-			var err error
-			info, err = h.Fs.Stat(path)
+			infos, err := wfs.Walk(parts)
 			if err != nil {
-				h.Errorf("srv: Twalk: failed to call stat on %v for %s", path, m.Fid())
-				break
-			}
-
-			fil.Name = path
-
-			if info != nil {
-				h.Tracef("srv: Twalk: %s :: %v %v", m.Fid(), fil.Name, info.Mode())
-			} else {
-				h.Tracef("srv: Twalk: %s :: %v nil", m.Fid(), fil.Name)
-				h.Errorf("srv: implementation returned a nil info without an error; returning not found")
-				w.Rerror(os.ErrNotExist)
+				h.Errorf("srv: Twalk: invalid file system walk for %s: %s", m.Fid(), err)
+				w.Rerrorf("invalid walk element for %#v: %s", parts, err)
 				return
 			}
+			size = len(infos)
+			for i, name := range parts {
+				if i >= size {
+					break
+				}
 
-			if err == nil {
-				q := session.PutQidInfo(fil.Name, info)
-				walkedQids = append(walkedQids, q)
-			} else {
-				q := session.PutQid(fil.Name, 0, versionFromFileInfo(info))
-				walkedQids = append(walkedQids, q)
-			}
+				if name == "/" {
+					path = "/"
+				} else {
+					path = filepath.Join(path, name)
+				}
 
-			if fil.H != nil {
-				fil.H.Close()
+				info := infos[i]
+
+				if info != nil {
+					h.Tracef("srv: Twalk: %s :: %v %v", m.Fid(), path, info.Mode())
+				} else {
+					h.Tracef("srv: Twalk: %s :: %v nil", m.Fid(), path)
+					h.Errorf("srv: implementation returned a nil info without an error; returning not found")
+					w.Rerror(os.ErrNotExist)
+					return
+				}
+
+				q := session.PutQidInfo(path, info)
+				walkedQids = append(walkedQids, q)
+
+				if fil.H != nil {
+					fil.H.Close()
+				}
+				fil = serverFile{
+					Name: path,
+					Mode: ModeFromOS(info.Mode()),
+				}
 			}
-			fil = serverFile{
-				Name: path,
-				Mode: ModeFromOS(info.Mode()),
+		} else {
+			h.Tracef("srv: Twalk: not using WalkableFileSystem")
+			for i, size := 0, int(m.NumWname()); i < size; i++ {
+				// TODO: Wname(i) is O(n) which we could optimize for this case
+				name := cleanPath(m.Wname(i))
+				if name == "/" {
+					path = "/"
+				} else if strings.Contains(name, string(os.PathSeparator)) {
+					h.Errorf("srv: Twalk: invalid walk element for %s: %v", m.Fid(), name)
+					w.Rerrorf("invalid walk element: %v", name)
+					return
+				} else {
+					path = filepath.Join(path, name)
+				}
+				var err error
+				info, err = h.Fs.Stat(path)
+				if err != nil {
+					h.Errorf("srv: Twalk: failed to call stat on %v for %s", path, m.Fid())
+					break
+				}
+
+				if info != nil {
+					h.Tracef("srv: Twalk: %s :: %v %v", m.Fid(), path, info.Mode())
+				} else {
+					h.Tracef("srv: Twalk: %s :: %v nil", m.Fid(), path)
+					h.Errorf("srv: implementation returned a nil info without an error; returning not found")
+					w.Rerror(os.ErrNotExist)
+					return
+				}
+
+				if err == nil {
+					q := session.PutQidInfo(path, info)
+					walkedQids = append(walkedQids, q)
+				} else {
+					q := session.PutQid(path, 0, versionFromFileInfo(info))
+					walkedQids = append(walkedQids, q)
+				}
+
+				if fil.H != nil {
+					fil.H.Close()
+				}
+				fil = serverFile{
+					Name: path,
+					Mode: ModeFromOS(info.Mode()),
+				}
 			}
 		}
 		// From 9p docs:

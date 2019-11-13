@@ -405,6 +405,35 @@ const (
 
 func (qt QidType) IsDir() bool { return qt&QT_DIR != 0 }
 
+func (qt QidType) String() string {
+	parts := []string{}
+	if qt == QT_FILE {
+		parts = append(parts, "QT_FILE")
+	}
+	if qt&QT_LINK != 0 {
+		parts = append(parts, "QT_LINK")
+	}
+	if qt&QT_SYMLINK != 0 {
+		parts = append(parts, "QT_SYMLINK")
+	}
+	if qt&QT_TMP != 0 {
+		parts = append(parts, "QT_TMP")
+	}
+	if qt&QT_AUTH != 0 {
+		parts = append(parts, "QT_AUTH")
+	}
+	if qt&QT_MOUNT != 0 {
+		parts = append(parts, "QT_MOUNT")
+	}
+	if qt&QT_EXCL != 0 {
+		parts = append(parts, "QT_EXCL")
+	}
+	if qt&QT_DIR != 0 {
+		parts = append(parts, "QT_DIR")
+	}
+	return strings.Join(parts, "|")
+}
+
 const QidSize = 13
 
 type Qid []byte // always size 13
@@ -455,7 +484,7 @@ func (q Qid) Clone() Qid {
 }
 
 func (q Qid) String() string {
-	return fmt.Sprintf("Qid{ type: %v, version: %v, path: %v }", q.Type(), q.Version(), q.Path())
+	return fmt.Sprintf("Qid{ type: %s, version: %v, path: %v }", q.Type(), q.Version(), q.Path())
 }
 
 /////////////////////////////////////

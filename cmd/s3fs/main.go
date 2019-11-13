@@ -32,7 +32,11 @@ func main() {
 		}
 		sess := session.Must(session.NewSession())
 		svc := s3.New(sess, cfg)
+		ctx := s3fs.S3Ctx{
+			Session: sess,
+			Client:  svc,
+		}
 
-		return s3fs.NewFs(svc)
+		return s3fs.NewFs(&ctx)
 	})
 }
