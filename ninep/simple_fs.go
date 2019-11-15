@@ -191,8 +191,11 @@ func (f *SimpleWalkableFileSystem) Walk(parts []string) ([]os.FileInfo, error) {
 	fmt.Printf("[WalkTrail] Walk(%#v) %#v %v\n", parts, nodes, err)
 	for i, n := range nodes {
 		info, err := n.Info()
-		fmt.Printf("[WalkTrail] Walk(%#v) => [%d] %#v isDir=%v %v\n", parts, i, info.Name(), info.IsDir(), err)
-
+		if info != nil {
+			fmt.Printf("[WalkTrail] Walk(%#v) => [%d] %#v isDir=%v %v\n", parts, i, info.Name(), info.IsDir(), err)
+		} else {
+			fmt.Printf("[WalkTrail] Walk(%#v) => [%d] %#v isDir=unknown %v\n", parts, i, nil, err)
+		}
 	}
 	if err != nil {
 		return nil, err
@@ -645,7 +648,6 @@ func FindChild(root Node, name string) (Node, os.FileInfo, error) {
 					return nil, nil, infoErr
 				}
 
-				fmt.Printf("[FindChild] Compare(%#v == %#v)\n", name, info.Name())
 				if info.Name() == name {
 					foundNode = node
 					break
