@@ -454,11 +454,9 @@ type buckets struct {
 func (b *buckets) Info() (os.FileInfo, error)     { return &b.SimpleFileInfo, nil }
 func (b *buckets) WriteInfo(in os.FileInfo) error { return ninep.ErrUnsupported }
 func (b *buckets) Delete(name string) error {
-	fmt.Printf("bucket.Delete(%#v)\n", name)
 	return ninep.ErrUnsupported
 }
 func (o *buckets) DeleteWithMode(name string, m ninep.Mode) error {
-	fmt.Printf("bucket.DeleteWithMode(%#v, %s)\n", name, m)
 	return ninep.ErrUnsupported
 }
 func (b *buckets) List() (ninep.NodeIterator, error) {

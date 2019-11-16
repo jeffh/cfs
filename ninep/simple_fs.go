@@ -188,7 +188,6 @@ var _ DeleteWithModeFileSystem = (*SimpleFileSystem)(nil)
 func (f *SimpleFileSystem) DeleteWithMode(path string, m Mode) error {
 	node, name, err := f.walk(path, false)
 	if err != nil {
-		fmt.Printf("DeleteWithMode(%#v, %s) -> %v\n", path, m, err)
 		return err
 	}
 	dir, ok := node.(DeleteWithModeDir)
@@ -197,10 +196,8 @@ func (f *SimpleFileSystem) DeleteWithMode(path string, m Mode) error {
 		if !ok {
 			return os.ErrNotExist
 		}
-		fmt.Printf("Delete(%#v, %s) %#v\n", path, m, dir)
 		return dir.Delete(name)
 	}
-	fmt.Printf("DeleteWithMode(%#v, %s) %#v\n", path, m, dir)
 	return dir.DeleteWithMode(name, m)
 }
 
