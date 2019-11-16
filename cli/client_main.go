@@ -11,7 +11,7 @@ import (
 	"github.com/jeffh/cfs/ninep"
 )
 
-func MainClient(fn func(c *ninep.Client, fs ninep.FileSystem) error) {
+func MainClient(fn func(c *ninep.Client, fs *ninep.FileSystemProxy) error) {
 	var (
 		trace  bool
 		errLog bool

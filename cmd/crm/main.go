@@ -24,7 +24,7 @@ func main() {
 		flag.PrintDefaults()
 	}
 
-	cli.MainClient(func(c *ninep.Client, fs ninep.FileSystem) error {
+	cli.MainClient(func(c *ninep.Client, fs *ninep.FileSystemProxy) error {
 		if flag.NArg() == 1 {
 			flag.Usage()
 			os.Exit(1)
@@ -33,7 +33,7 @@ func main() {
 		files = flag.Args()[1:]
 
 		for _, path := range files {
-			info, err := fs.Stat(path)
+			node, err := fs.Traverse(path)
 			if os.IsNotExist(err) {
 				return fmt.Errorf("Path does not exist: %s", path)
 			}
@@ -41,11 +41,12 @@ func main() {
 				return err
 			}
 
-			if info.IsDir() && !recursive {
+			if node.IsDir() && !recursive {
+				node.Close()
 				return errors.New("Use -r to delete directories")
 			}
 
-			err = fs.Delete(path)
+			err = node.Delete()
 			if err != nil {
 				return err
 			}

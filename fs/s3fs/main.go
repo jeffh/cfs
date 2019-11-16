@@ -271,6 +271,7 @@ func (o *objectNode) Delete(name string) error {
 		Bucket: aws.String(o.bucketName),
 		Key:    aws.String(key),
 	})
+	fmt.Printf("Delete(%#v) | %#v -> %v\n", name, key, err)
 	return err
 }
 

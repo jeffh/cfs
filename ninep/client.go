@@ -93,7 +93,7 @@ func (c *Client) sendRequest(txn *cltTransaction) <-chan cltChResponse {
 
 // Returns an interface that conforms to the file system interface
 // Can be used once Connect*() are called and successful
-func (c *Client) Fs(user, mount string) (FileSystem, error) {
+func (c *Client) Fs(user, mount string) (*FileSystemProxy, error) {
 	afid := NO_FID
 	f := Fid(1)
 	if c.Authorizee != nil {
@@ -713,9 +713,98 @@ func (c *Client) Create(f Fid, name string, perm Mode, mode OpenMode) (q Qid, io
 
 /////////////////////////////////////////////////////////
 
+// Provides operations on a Fid. Caller must understand the state of the Fid to
+// perform the correct operations.
 type FileProxy struct {
+	// required
 	fs  *FileSystemProxy
 	fid Fid
+	qid Qid
+
+	// cache
+	info os.FileInfo
+}
+
+func (f *FileProxy) Type() QidType     { return f.qid.Type() }
+func (f *FileProxy) IsDir() bool       { return f.qid.Type().IsDir() }
+func (f *FileProxy) IsSymLink() bool   { return f.qid.Type()&QT_SYMLINK != 0 }
+func (f *FileProxy) IsAuth() bool      { return f.qid.Type()&QT_AUTH != 0 }
+func (f *FileProxy) IsMount() bool     { return f.qid.Type()&QT_MOUNT != 0 }
+func (f *FileProxy) IsExclusive() bool { return f.qid.Type()&QT_EXCL != 0 }
+func (f *FileProxy) IsTemporary() bool { return f.qid.Type()&QT_TMP != 0 }
+
+// Returns a new FileProxy of the new path relative to this file. It is the
+// caller responsibility to Close() the returned file proxy.
+func (f *FileProxy) Traverse(path string) (*FileProxy, error) {
+	fid := f.fs.allocFid()
+	qid, err := f.fs.walk(f.fid, path, true)
+	if err != nil {
+		return nil, err
+	}
+	return &FileProxy{f.fs, fid, qid, nil}, nil
+}
+
+// Returns file info of the fid. Caches the value locally and uses that when available
+func (f *FileProxy) Stat() (os.FileInfo, error) {
+	if f.info != nil {
+		st, err := f.fs.c.Stat(f.fid)
+		if err != nil {
+			return nil, err
+		}
+		f.info = st.FileInfo()
+	}
+	return f.info, nil
+}
+
+// Returns file info of the fid. Unlike FileProxy.Stat(), this always fetches
+// from the server The new value will still be cached.
+func (f *FileProxy) FetchStat() (os.FileInfo, error) {
+	st, err := f.fs.c.Stat(f.fid)
+	if err != nil {
+		return nil, err
+	}
+	info := st.FileInfo()
+	f.info = info
+	return info, nil
+}
+
+func (f *FileProxy) WriteStat(st Stat) error {
+	err := f.fs.c.WriteStat(f.fid, st)
+	if err == nil {
+		f.info = nil
+	}
+	return err
+}
+
+func (f *FileProxy) Create(name string, flag OpenMode, mode Mode) (*FileProxy, error) {
+	fs := f.fs
+	fid := fs.allocFid()
+
+	qids, err := fs.c.Walk(f.fid, fid, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var h *FileProxy
+	_, _, err = fs.c.Create(fid, name, mode, flag)
+	if err == nil {
+		h = &FileProxy{fs, fid, qids[len(qids)-1], nil}
+	} else {
+		fs.c.Clunk(fid)
+		fs.releaseFid(fid)
+	}
+	return h, err
+}
+
+// Opens a file for reading/writing. Use only if you FileSystemProxy.Traverse()
+func (f *FileProxy) Open(flag OpenMode) error {
+	qid, _, err := f.fs.c.Open(f.fid, flag)
+	if err == nil {
+		if qid.Type().IsDir() {
+			err = ErrOpenDirNotAllowed
+		}
+	}
+	return err
 }
 
 func (f *FileProxy) ReadAt(p []byte, offset int64) (int, error) {
@@ -725,13 +814,24 @@ func (f *FileProxy) ReadAt(p []byte, offset int64) (int, error) {
 	}
 	return int(size), err
 }
+
 func (f *FileProxy) WriteAt(p []byte, offset int64) (int, error) {
 	size, err := f.fs.c.Write(f.fid, p, uint64(offset))
 	return int(size), err
 }
+
+// Alias to f.WriteStat(SyncStat())
 func (f *FileProxy) Sync() error { return f.fs.c.WriteStat(f.fid, SyncStat()) }
+
 func (f *FileProxy) Close() error {
 	err := f.fs.c.Clunk(f.fid)
+	f.fs.releaseFid(f.fid)
+	return err
+}
+
+// Deletes the file or directory that this FileProxy points to. Implies Close()
+func (f *FileProxy) Delete() error {
+	err := f.fs.c.Remove(f.fid)
 	f.fs.releaseFid(f.fid)
 	return err
 }
@@ -769,18 +869,18 @@ func (fs *FileSystemProxy) releaseFid(f Fid) {
 	fs.mut.Unlock()
 }
 
-func (fs *FileSystemProxy) walk(fid Fid, path string, includeLast bool) error {
+func (fs *FileSystemProxy) walk(fid Fid, path string, includeLast bool) (Qid, error) {
 	parts := PathSplit(path)[1:]
 	if !includeLast && len(parts) > 0 {
 		parts = parts[:len(parts)-1]
 	}
-	_, err := fs.c.Walk(fs.rootF, fid, parts)
+	qids, err := fs.c.Walk(fs.rootF, fid, parts)
 	if err != nil {
 		// Best attempt to notify server that we're dropping this fid
 		fs.c.Clunk(fid)
-		return err
+		return nil, err
 	}
-	return nil
+	return qids[len(qids)-1], nil
 }
 
 //////////
@@ -796,7 +896,7 @@ func (fs *FileSystemProxy) MakeDir(path string, mode Mode) error {
 		prefix = path[:i]
 		filename = path[i+1:]
 	}
-	if err := fs.walk(fid, prefix, false); err != nil {
+	if _, err := fs.walk(fid, prefix, false); err != nil {
 		return err
 	}
 	_, _, err := fs.c.Create(fid, filename, mode|M_DIR, ORDWR)
@@ -814,13 +914,14 @@ func (fs *FileSystemProxy) CreateFile(path string, flag OpenMode, mode Mode) (Fi
 		prefix = path[:i]
 		filename = path[i+1:]
 	}
-	if err := fs.walk(fid, prefix, false); err != nil {
+	qid, err := fs.walk(fid, prefix, false)
+	if err != nil {
 		return nil, err
 	}
 	var h FileHandle
-	_, _, err := fs.c.Create(fid, filename, mode, flag)
+	_, _, err = fs.c.Create(fid, filename, mode, flag)
 	if err == nil {
-		h = &FileProxy{fs, fid}
+		h = &FileProxy{fs, fid, qid, nil}
 	} else {
 		fs.c.Clunk(fid)
 		fs.releaseFid(fid)
@@ -829,7 +930,8 @@ func (fs *FileSystemProxy) CreateFile(path string, flag OpenMode, mode Mode) (Fi
 }
 func (fs *FileSystemProxy) OpenFile(path string, flag OpenMode) (FileHandle, error) {
 	fid := fs.allocFid()
-	if err := fs.walk(fid, path, true); err != nil {
+	_, err := fs.walk(fid, path, true)
+	if err != nil {
 		return nil, err
 	}
 	var h FileHandle
@@ -840,7 +942,7 @@ func (fs *FileSystemProxy) OpenFile(path string, flag OpenMode) (FileHandle, err
 			fs.releaseFid(fid)
 			err = ErrOpenDirNotAllowed
 		} else {
-			h = &FileProxy{fs, fid}
+			h = &FileProxy{fs, fid, qid, nil}
 		}
 	} else {
 		fs.c.Clunk(fid)
@@ -906,12 +1008,13 @@ func (fs *FileSystemProxy) ListDir(path string) (FileInfoIterator, error) {
 
 	fid := fs.allocFid()
 	fs.c.Tracef("ListDir(%#v) %s", path, fid)
-	if err := fs.walk(fid, path, true); err != nil {
+	q, err := fs.walk(fid, path, true)
+	if err != nil {
 		fs.releaseFid(fid)
 		return nil, err
 	}
 
-	itr := &fileSystemProxyIterator{fp: &FileProxy{fs, fid}}
+	itr := &fileSystemProxyIterator{fp: &FileProxy{fs, fid, q, nil}}
 
 	qid, _, err := fs.c.Open(fid, OREAD)
 	if err == nil {
@@ -929,7 +1032,7 @@ func (fs *FileSystemProxy) ListDir(path string) (FileInfoIterator, error) {
 func (fs *FileSystemProxy) Stat(path string) (os.FileInfo, error) {
 	fid := fs.allocFid()
 	defer fs.releaseFid(fid)
-	if err := fs.walk(fid, path, true); err != nil {
+	if _, err := fs.walk(fid, path, true); err != nil {
 		return nil, err
 	}
 	st, err := fs.c.Stat(fid)
@@ -939,7 +1042,7 @@ func (fs *FileSystemProxy) Stat(path string) (os.FileInfo, error) {
 func (fs *FileSystemProxy) WriteStat(path string, s Stat) error {
 	fid := fs.allocFid()
 	defer fs.releaseFid(fid)
-	if err := fs.walk(fid, path, true); err != nil {
+	if _, err := fs.walk(fid, path, true); err != nil {
 		return err
 	}
 	err := fs.c.WriteStat(fid, s)
@@ -949,9 +1052,20 @@ func (fs *FileSystemProxy) WriteStat(path string, s Stat) error {
 func (fs *FileSystemProxy) Delete(path string) error {
 	fid := fs.allocFid()
 	defer fs.releaseFid(fid)
-	if err := fs.walk(fid, path, true); err != nil {
+	if _, err := fs.walk(fid, path, true); err != nil {
 		return err
 	}
 	// regardless of this call, the server should drop the fid
 	return fs.c.Remove(fid)
+}
+
+// Walks to a given path an returns a FileProxy to that path. It is expected
+// for the caller to call Close on the returned file proxy.
+func (fs *FileSystemProxy) Traverse(path string) (*FileProxy, error) {
+	fid := fs.allocFid()
+	qid, err := fs.walk(fid, path, true)
+	if err != nil {
+		return nil, err
+	}
+	return &FileProxy{fs, fid, qid, nil}, nil
 }

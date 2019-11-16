@@ -12,7 +12,7 @@ import (
 
 func main() {
 	var mountpoint string
-	cli.MainClient(func(c *ninep.Client, fs ninep.FileSystem) error {
+	cli.MainClient(func(c *ninep.Client, fs *ninep.FileSystemProxy) error {
 		if flag.NArg() == 1 {
 			return fmt.Errorf("Missing mountpoint")
 		} else {

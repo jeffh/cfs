@@ -188,15 +188,6 @@ var _ WalkableFileSystem = (*SimpleWalkableFileSystem)(nil)
 
 func (f *SimpleWalkableFileSystem) Walk(parts []string) ([]os.FileInfo, error) {
 	nodes, err := WalkTrail(f.SimpleFileSystem.Root, parts)
-	fmt.Printf("[WalkTrail] Walk(%#v) %#v %v\n", parts, nodes, err)
-	for i, n := range nodes {
-		info, err := n.Info()
-		if info != nil {
-			fmt.Printf("[WalkTrail] Walk(%#v) => [%d] %#v isDir=%v %v\n", parts, i, info.Name(), info.IsDir(), err)
-		} else {
-			fmt.Printf("[WalkTrail] Walk(%#v) => [%d] %#v isDir=unknown %v\n", parts, i, nil, err)
-		}
-	}
 	if err != nil {
 		return nil, err
 	}
@@ -602,7 +593,6 @@ func (r *LineReader) ReadLine() (string, error) {
 /////////////////////////////////////////////////////////////////////////////
 
 func FindChild(root Node, name string) (Node, os.FileInfo, error) {
-	fmt.Printf("[FindChild] %#v %s\n", root, name)
 	if name == "." {
 		info, err := root.Info()
 		return root, info, err
@@ -619,7 +609,6 @@ func FindChild(root Node, name string) (Node, os.FileInfo, error) {
 
 		if walkDir, ok := root.(StepDir); ok {
 			n, err := walkDir.Step(name)
-			fmt.Printf("[FindChild] Step(%#v)\n", name)
 			if err != nil {
 				return nil, nil, err
 			}

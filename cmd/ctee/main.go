@@ -24,7 +24,7 @@ func main() {
 		flag.PrintDefaults()
 	}
 
-	cli.MainClient(func(c *ninep.Client, fs ninep.FileSystem) error {
+	cli.MainClient(func(c *ninep.Client, fs *ninep.FileSystemProxy) error {
 		if flag.NArg() == 1 {
 			path = ""
 		} else {
