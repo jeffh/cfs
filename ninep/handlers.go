@@ -562,8 +562,12 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 			}
 			if fil.Flag&ORCLOSE != 0 {
 				h.Tracef("srv: deleting %s %#v", m.Fid(), fil.Name)
-				// delete the file
-				h.Fs.Delete(fil.Name)
+				if fsd, ok := h.Fs.(DeleteWithModeFileSystem); ok {
+					fsd.DeleteWithMode(fil.Name, fil.Mode)
+				} else {
+					// delete the file
+					h.Fs.Delete(fil.Name)
+				}
 				session.DeleteQid(fil.Name)
 			}
 			session.DeleteFid(m.Fid())
@@ -576,11 +580,22 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 	case Tremove:
 		fil, ok := session.FileForFid(m.Fid())
 		if ok {
-			h.Fs.Delete(fil.Name)
+			var err error
+			if fsd, ok := h.Fs.(DeleteWithModeFileSystem); ok {
+				h.Tracef("srv: Tremove: %v %v // with mode %s", m.Fid(), fil.Name, fil.Mode)
+				err = fsd.DeleteWithMode(fil.Name, fil.Mode)
+			} else {
+				h.Tracef("srv: Tremove: %v %v // without mode", m.Fid(), fil.Name)
+				err = h.Fs.Delete(fil.Name)
+			}
 			session.DeleteFid(m.Fid())
 			session.DeleteQid(fil.Name)
-			h.Tracef("srv: Tremove: %v %v", m.Fid(), fil.Name)
-			w.Rremove()
+			if err != nil {
+				h.Errorf("srv: Tremove: error %v: %v %v", err, m.Fid(), fil.Name)
+				w.Rerror(err)
+			} else {
+				w.Rremove()
+			}
 		} else {
 			w.Rerrorf("srv: Tremove: unknown fid %d", m.Fid())
 		}

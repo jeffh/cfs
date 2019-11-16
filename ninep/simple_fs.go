@@ -74,6 +74,11 @@ type WalkDir interface {
 	Walk(subpath []string) ([]Node, error)
 }
 
+type DeleteWithModeDir interface {
+	Dir
+	DeleteWithMode(name string, m Mode) error
+}
+
 type NodeIterator interface {
 	// return err = io.EOF to indicate not more nodes
 	NextNode() (Node, error)
@@ -176,6 +181,27 @@ func (f *SimpleFileSystem) Delete(path string) error {
 		return os.ErrNotExist
 	}
 	return dir.Delete(name)
+}
+
+var _ DeleteWithModeFileSystem = (*SimpleFileSystem)(nil)
+
+func (f *SimpleFileSystem) DeleteWithMode(path string, m Mode) error {
+	node, name, err := f.walk(path, false)
+	if err != nil {
+		fmt.Printf("DeleteWithMode(%#v, %s) -> %v\n", path, m, err)
+		return err
+	}
+	dir, ok := node.(DeleteWithModeDir)
+	if !ok {
+		dir, ok := node.(Dir)
+		if !ok {
+			return os.ErrNotExist
+		}
+		fmt.Printf("Delete(%#v, %s) %#v\n", path, m, dir)
+		return dir.Delete(name)
+	}
+	fmt.Printf("DeleteWithMode(%#v, %s) %#v\n", path, m, dir)
+	return dir.DeleteWithMode(name, m)
 }
 
 /////////////////////////////////////////////

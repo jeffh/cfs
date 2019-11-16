@@ -160,6 +160,14 @@ type FileSystem interface {
 	Delete(path string) error
 }
 
+// A file system that wants more information when deleting a file. This can be
+// useful if you need to perform different operations on directories and files,
+// but wish to avoid reading from the underlying storage because it may be
+// expensive.
+type DeleteWithModeFileSystem interface {
+	DeleteWithMode(path string, m Mode) error
+}
+
 // A file system that wants to optimize Twalk operations
 type WalkableFileSystem interface {
 	// walk receives a number of directories to traverse (with the last one optionally being a file)

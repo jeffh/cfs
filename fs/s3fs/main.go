@@ -265,6 +265,18 @@ func (o *objectNode) CreateDir(name string, mode ninep.Mode) error {
 	h.Close()
 	return nil
 }
+func (o *objectNode) DeleteWithMode(name string, m ninep.Mode) error {
+	key := filepath.Join(o.getKey(), name)
+	if m.IsDir() {
+		key += "/"
+	}
+	out, err := o.s3c.Client.DeleteObject(&s3.DeleteObjectInput{
+		Bucket: aws.String(o.bucketName),
+		Key:    aws.String(key),
+	})
+	fmt.Printf("DeleteWithMode(%#v, %s) | %#v -> %#v, %v\n", name, m, key, out, err)
+	return err
+}
 func (o *objectNode) Delete(name string) error {
 	key := filepath.Join(o.getKey(), name)
 	_, err := o.s3c.Client.DeleteObject(&s3.DeleteObjectInput{
@@ -441,7 +453,14 @@ type buckets struct {
 
 func (b *buckets) Info() (os.FileInfo, error)     { return &b.SimpleFileInfo, nil }
 func (b *buckets) WriteInfo(in os.FileInfo) error { return ninep.ErrUnsupported }
-func (b *buckets) Delete(name string) error       { return ninep.ErrUnsupported }
+func (b *buckets) Delete(name string) error {
+	fmt.Printf("bucket.Delete(%#v)\n", name)
+	return ninep.ErrUnsupported
+}
+func (o *buckets) DeleteWithMode(name string, m ninep.Mode) error {
+	fmt.Printf("bucket.DeleteWithMode(%#v, %s)\n", name, m)
+	return ninep.ErrUnsupported
+}
 func (b *buckets) List() (ninep.NodeIterator, error) {
 	resp, err := b.s3c.Client.ListBuckets(&s3.ListBucketsInput{})
 	fmt.Printf("[S3] ListBuckets()\n")
