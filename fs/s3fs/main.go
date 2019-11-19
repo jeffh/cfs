@@ -1,6 +1,7 @@
 package s3fs
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -286,13 +287,40 @@ func (o *objectNode) DeleteWithMode(name string, m ninep.Mode) error {
 	key := filepath.Join(o.getKey(), name)
 	if m.IsDir() {
 		key += "/"
+		input := &s3.ListObjectsV2Input{
+			Bucket: aws.String(o.bucketName),
+			Prefix: aws.String(key),
+		}
+		ctx := context.Background()
+		var deleteErr error
+		err := o.s3c.Client.ListObjectsV2PagesWithContext(ctx, input, func(page *s3.ListObjectsV2Output, lastPage bool) bool {
+			ids := make([]*s3.ObjectIdentifier, 0, len(page.Contents))
+			for _, obj := range page.Contents {
+				ids = append(ids, &s3.ObjectIdentifier{Key: obj.Key})
+			}
+			_, deleteErr = o.s3c.Client.DeleteObjects(&s3.DeleteObjectsInput{
+				Bucket: aws.String(o.bucketName),
+				Delete: &s3.Delete{Objects: ids},
+			})
+			if deleteErr != nil {
+				fmt.Printf("DeleteWithMode(%#v, %s) -> %v, %v\n", name, m, deleteErr)
+				return false
+			}
+			return true
+		})
+		fmt.Printf("DeleteWithMode(%#v, %s) | %#v -> %v\n", name, m, key, err)
+		if err != nil {
+			return err
+		}
+		return deleteErr
+	} else {
+		out, err := o.s3c.Client.DeleteObject(&s3.DeleteObjectInput{
+			Bucket: aws.String(o.bucketName),
+			Key:    aws.String(key),
+		})
+		fmt.Printf("DeleteWithMode(%#v, %s) | %#v -> %#v, %v\n", name, m, key, out, err)
+		return err
 	}
-	out, err := o.s3c.Client.DeleteObject(&s3.DeleteObjectInput{
-		Bucket: aws.String(o.bucketName),
-		Key:    aws.String(key),
-	})
-	fmt.Printf("DeleteWithMode(%#v, %s) | %#v -> %#v, %v\n", name, m, key, out, err)
-	return err
 }
 func (o *objectNode) Delete(name string) error {
 	key := filepath.Join(o.getKey(), name)

@@ -378,7 +378,7 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 			infos, err := wfs.Walk(parts)
 			if err != nil {
 				h.Errorf("srv: Twalk: invalid file system walk for %s: %s", m.Fid(), err)
-				w.Rerrorf("invalid walk element for %#v: %s", parts, err)
+				w.Rerrorf("invalid walk element for %#v: %s", filepath.Join(parts...), err)
 				return
 			}
 			size = len(infos)
