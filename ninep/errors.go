@@ -10,6 +10,7 @@ var (
 	ErrSeekNotAllowed  = errors.New("seeking is not allowed")
 	ErrUnsupported     = errors.New("unsupported")
 	ErrNotImplemented  = errors.New("not implemented")
+	ErrInvalidAccess   = errors.New("invalid access permissions")
 
 	ErrChangeUidNotAllowed = errors.New("changing uid is not allowed by protocol")
 

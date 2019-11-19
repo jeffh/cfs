@@ -468,5 +468,8 @@ func mapErr(err error) error {
 	if err == os.ErrInvalid {
 		return syscall.EINVAL
 	}
+	if err == ninep.ErrInvalidAccess {
+		return syscall.EACCES
+	}
 	return err
 }
