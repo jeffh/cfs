@@ -298,7 +298,7 @@ func (o *objectNode) DeleteWithMode(name string, m ninep.Mode) error {
 				Delete: &s3.Delete{Objects: ids},
 			})
 			if deleteErr != nil {
-				fmt.Printf("DeleteWithMode(%#v, %s) -> %v, %v\n", name, m, deleteErr)
+				fmt.Printf("DeleteWithMode(%#v, %s) -> %v\n", name, m, deleteErr)
 				return false
 			}
 			return true
