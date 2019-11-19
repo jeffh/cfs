@@ -30,16 +30,29 @@ func keysMatch(objKey *string, wantedKey string) bool {
 	return objKey != nil && (*objKey == wantedKey || *objKey == wantedKey+"/")
 }
 
-func objectInfo(nameOffset int, object *s3.Object) os.FileInfo {
-	var uid string
-	if owner := object.Owner; owner != nil {
-		if displayName := owner.DisplayName; displayName != nil {
-			uid = *displayName
-		} else if id := owner.ID; id != nil {
-			uid = *id
+func objectInfo(nameOffset int, object *s3.Object, fallbackKey string) os.FileInfo {
+	var (
+		uid     string
+		name    string
+		key     string
+		modTime time.Time
+		size    int64
+	)
+	if object != nil {
+		if owner := object.Owner; owner != nil {
+			if displayName := owner.DisplayName; displayName != nil {
+				uid = *displayName
+			} else if id := owner.ID; id != nil {
+				uid = *id
+			}
 		}
+		key = *object.Key
+		modTime = *object.LastModified
+		size = *object.Size
+	} else {
+		key = fallbackKey
 	}
-	name := (*object.Key)[nameOffset:]
+	name = key[nameOffset:]
 	if strings.HasPrefix(name, "/") {
 		name = name[1:]
 	}
@@ -56,7 +69,7 @@ func objectInfo(nameOffset int, object *s3.Object) os.FileInfo {
 	// forward slash ("/") character as the last (trailing)
 	// character in the key name as a folder, for example
 	// examplekeyname/."
-	isDir := strings.HasSuffix(*object.Key, "/")
+	isDir := strings.HasSuffix(key, "/")
 
 	var dirMode os.FileMode
 	if isDir {
@@ -66,8 +79,8 @@ func objectInfo(nameOffset int, object *s3.Object) os.FileInfo {
 		&ninep.SimpleFileInfo{
 			FIName:    name,
 			FIMode:    0777 | dirMode,
-			FIModTime: *object.LastModified,
-			FISize:    *object.Size,
+			FIModTime: modTime,
+			FISize:    size,
 		},
 		uid,
 		"",  // gid
@@ -145,10 +158,10 @@ func (o *objectNode) getName() string {
 }
 
 func (o *objectNode) getKey() string {
-	if o.key != "" {
-		return o.key
+	if o.obj != nil && o.obj.Key != nil {
+		return *o.obj.Key
 	}
-	return *o.obj.Key
+	return o.key
 }
 
 func (o *objectNode) List() (ninep.NodeIterator, error) {
@@ -157,6 +170,7 @@ func (o *objectNode) List() (ninep.NodeIterator, error) {
 		Prefix: aws.String(o.key),
 	}
 	res, err := o.s3c.Client.ListObjectsV2(&input)
+	fmt.Printf("[S3] ListObjectsV2(%#v) -> %#v, %v\n", input, res, err)
 	if err != nil {
 		return nil, err
 	}
@@ -189,7 +203,10 @@ func (o *objectNode) Walk(subpath []string) ([]ninep.Node, error) {
 	if size == 1 && keysMatch(res.Contents[0].Key, key) {
 		object := res.Contents[0]
 		parentKey := filepath.Join(o.getKey(), filepath.Join(subpath[:len(subpath)-1]...))
-		objInfo := objectInfo(len(parentKey), object)
+		if !strings.HasSuffix(key, "/") {
+			key += "/"
+		}
+		objInfo := objectInfo(len(parentKey), object, key)
 		nodes := make([]ninep.Node, 0, len(subpath))
 		for i, part := range subpath[:len(subpath)-1] {
 			name := part
@@ -292,12 +309,13 @@ func (o *objectNode) Info() (os.FileInfo, error) {
 		return o.info, nil
 	}
 
+	key := o.key
 	object := o.obj
 	// TODO: should we cache the object fetch?
 	if o.obj == nil {
 		input := &s3.ListObjectsV2Input{
 			Bucket:  aws.String(o.bucketName),
-			Prefix:  aws.String(o.key),
+			Prefix:  aws.String(key),
 			MaxKeys: aws.Int64(1),
 		}
 		res, err := o.s3c.Client.ListObjectsV2(input)
@@ -308,15 +326,18 @@ func (o *objectNode) Info() (os.FileInfo, error) {
 
 		if len(res.Contents) == 1 {
 			obj := res.Contents[0]
-			if keysMatch(obj.Key, o.key) {
+			if keysMatch(obj.Key, key) {
 				object = obj
 			}
 		}
-		if object == nil {
+		if object == nil && len(res.Contents) == 0 {
 			return nil, os.ErrNotExist
 		}
 	}
-	return objectInfo(o.nameOffset, object), nil
+	if !strings.HasSuffix(key, "/") {
+		key += "/"
+	}
+	return objectInfo(o.nameOffset, object, key), nil
 }
 func (o *objectNode) WriteInfo(in os.FileInfo) error { return ninep.ErrUnsupported }
 func (o *objectNode) Open(m ninep.OpenMode) (ninep.FileHandle, error) {
@@ -349,25 +370,18 @@ func objectsOrObjectForBucket(s3c *S3Ctx, bucketName string, keyPrefix []string,
 	return traversal, nil
 }
 
-func objectsForBucket(s3c *S3Ctx, bucketName, keyPrefix string) (ninep.Node, error) {
-	var prefix *string
-	if keyPrefix != "" {
-		prefix = aws.String(keyPrefix)
-		// make first fetch to see if it's one file or not
+func objectsForBucket(s3c *S3Ctx, bucketName string) ninep.Node {
+	return &objectNode{
+		s3c:        s3c,
+		bucketName: bucketName,
+		op:         opData,
+		nameOffset: 0,
+		key:        "",
+		info: &ninep.SimpleFileInfo{
+			FIName: "objects",
+			FIMode: 0777 | os.ModeDir,
+		},
 	}
-	input := s3.ListObjectsV2Input{
-		Bucket: aws.String(bucketName),
-		Prefix: prefix,
-	}
-	dir := dynamicDirItr("objects", func() (ninep.NodeIterator, error) {
-		itr := &objectsItr{
-			s3c:        s3c,
-			bucketName: bucketName,
-			input:      input,
-		}
-		return itr, nil
-	})
-	return dir, nil
 }
 
 ////////////////////////////////
@@ -505,39 +519,22 @@ func (b *buckets) Walk(subpath []string) ([]ninep.Node, error) {
 		subpath = subpath[1:]
 		switch operation {
 		case "objects":
+			// list all objects
+			var node ninep.Node = objectsForBucket(b.s3c, bucket)
+			nodes = append(nodes, node)
 			if size > 2 && (subpath[0] != "." && subpath[0] != "") {
-				nodes = append(
-					nodes, dynamicDirItr("objects", func() (ninep.NodeIterator, error) {
-						itr := &objectsItr{
-							s3c:        b.s3c,
-							bucketName: bucket,
-							prefix:     subpath[0],
-							input: s3.ListObjectsV2Input{
-								Bucket: aws.String(bucket),
-							},
-							op: opData,
-						}
-						return itr, nil
-					}),
-				)
 				var objNodes []ninep.Node
 				objNodes, err = objectsOrObjectForBucket(b.s3c, bucket, subpath, opData)
 				if err == nil {
 					nodes = append(nodes, objNodes...)
 				}
 			} else {
-				// list all objects
-				var node ninep.Node
-				node, err = objectsForBucket(b.s3c, bucket, "")
-				if err == nil && node != nil {
-					nodes = append(nodes, node)
-					// repeat if "." is at the end...
-					for _, p := range subpath {
-						if p == "." {
-							nodes = append(nodes, node)
-						} else {
-							break
-						}
+				// repeat if "." is at the end...
+				for _, p := range subpath {
+					if p == "." {
+						nodes = append(nodes, node)
+					} else {
+						break
 					}
 				}
 			}
@@ -579,10 +576,7 @@ func bucketDir(s3c *S3Ctx, bucketName string, creationDate time.Time, now time.T
 		// ),
 		GetChildren: func() ([]ninep.Node, error) {
 			// TODO: use uid
-			objects, err := objectsForBucket(s3c, bucketName, "")
-			if err != nil {
-				return nil, err
-			}
+			objects := objectsForBucket(s3c, bucketName)
 			return []ninep.Node{objects}, nil
 		},
 	}
