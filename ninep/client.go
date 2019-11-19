@@ -880,6 +880,9 @@ func (fs *FileSystemProxy) walk(fid Fid, path string, includeLast bool) (Qid, er
 		fs.c.Clunk(fid)
 		return nil, err
 	}
+	if len(qids) == 0 {
+		return nil, io.ErrUnexpectedEOF
+	}
 	return qids[len(qids)-1], nil
 }
 
@@ -895,8 +898,10 @@ func (fs *FileSystemProxy) MakeDir(path string, mode Mode) error {
 	if i != -1 {
 		prefix = path[:i]
 		filename = path[i+1:]
+	} else {
+		prefix = "/"
 	}
-	if _, err := fs.walk(fid, prefix, false); err != nil {
+	if _, err := fs.walk(fid, prefix, true); err != nil {
 		return err
 	}
 	_, _, err := fs.c.Create(fid, filename, mode|M_DIR, ORDWR)

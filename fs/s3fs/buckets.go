@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/jeffh/cfs/ninep"
 )
@@ -34,10 +35,10 @@ type buckets struct {
 func (b *buckets) Info() (os.FileInfo, error)     { return &b.SimpleFileInfo, nil }
 func (b *buckets) WriteInfo(in os.FileInfo) error { return ninep.ErrUnsupported }
 func (b *buckets) Delete(name string) error {
-	return ninep.ErrUnsupported
-}
-func (o *buckets) DeleteWithMode(name string, m ninep.Mode) error {
-	return ninep.ErrUnsupported
+	_, err := b.s3c.Client.DeleteBucket(&s3.DeleteBucketInput{
+		Bucket: aws.String(name),
+	})
+	return err
 }
 func (b *buckets) List() (ninep.NodeIterator, error) {
 	resp, err := b.s3c.Client.ListBuckets(&s3.ListBucketsInput{})
@@ -66,6 +67,7 @@ func (b *buckets) List() (ninep.NodeIterator, error) {
 	}
 	return ninep.MakeNodeSliceIterator(nodes), nil
 }
+
 func (b *buckets) Walk(subpath []string) ([]ninep.Node, error) {
 	size := len(subpath)
 	if size < 1 {
@@ -139,11 +141,16 @@ func (b *buckets) Walk(subpath []string) ([]ninep.Node, error) {
 	}
 
 }
+
 func (b *buckets) CreateFile(name string, flag ninep.OpenMode, mode ninep.Mode) (ninep.FileHandle, error) {
-	return nil, ninep.ErrUnsupported
+	return nil, ErrUseMkDirToCreateBucket
 }
 func (b *buckets) CreateDir(name string, mode ninep.Mode) error {
-	return ninep.ErrUnsupported
+	_, err := b.s3c.Client.CreateBucket(&s3.CreateBucketInput{
+		Bucket: aws.String(name),
+	})
+	fmt.Printf("[S3] CreateBucket(%#v) -> %v\n", name, err)
+	return err
 }
 
 ////////////////////////////////////////////////////////////////////////////////

@@ -365,8 +365,10 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 			h.Tracef("srv: Twalk: using WalkableFileSystem")
 			size := int(m.NumWname())
 			parts := make([]string, 0, size)
+			h.Tracef("srv: Twalk: size: %#v\n", m.NumWname())
 			for i := 0; i < size; i++ {
 				// TODO: Wname(i) is O(n) which we could optimize for this case
+				h.Tracef("srv: Twalk: path: %#v\n", m.Wname(i))
 				name := cleanPath(m.Wname(i))
 				if strings.Contains(name, string(os.PathSeparator)) {
 					h.Errorf("srv: Twalk: invalid walk element for %s: %v", m.Fid(), name)
