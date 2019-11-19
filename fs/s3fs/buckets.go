@@ -149,6 +149,7 @@ func (b *buckets) CreateDir(name string, mode ninep.Mode) error {
 	_, err := b.s3c.Client.CreateBucket(&s3.CreateBucketInput{
 		Bucket: aws.String(name),
 	})
+	err = mapAwsToNinep(err)
 	fmt.Printf("[S3] CreateBucket(%#v) -> %v\n", name, err)
 	return err
 }
