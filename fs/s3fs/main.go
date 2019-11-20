@@ -91,5 +91,5 @@ func staticStringFile(name string, modTime time.Time, contents string) *ninep.Si
 }
 
 func dynamicStringFile(name string, modTime time.Time, content func() ([]byte, error)) *ninep.SimpleFile {
-	return ninep.DynamicReadOnlyFile(name, 0777, modTime, content)
+	return ninep.DynamicReadOnlyFile(name, 0444, modTime, content)
 }

@@ -1,6 +1,7 @@
 package s3fs
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -19,6 +20,7 @@ type objectOperation int
 
 const (
 	opData objectOperation = iota
+	opPresignedDownloadUrl
 )
 
 func keysMatch(objKey *string, wantedKey string) bool {
@@ -85,45 +87,129 @@ func objectInfo(nameOffset int, object *s3.Object, fallbackKey string) os.FileIn
 
 func objectFileHandle(s3c *S3Ctx, bucketName, objectKey string, op objectOperation, m ninep.OpenMode) (ninep.FileHandle, error) {
 	h := &ninep.RWFileHandle{}
-	if m.IsReadable() {
-		r, w := io.Pipe()
-		go func() {
-			var err error
-			switch op {
-			case opData:
+	switch op {
+	case opData:
+		if m.IsReadable() {
+			r, w := io.Pipe()
+			go func() {
+				var err error
 				var resp *s3.GetObjectOutput
-				input := &s3.GetObjectInput{
+				input := s3.GetObjectInput{
 					Bucket: aws.String(bucketName),
 					Key:    aws.String(objectKey),
 				}
-				resp, err = s3c.Client.GetObject(input)
+				resp, err = s3c.Client.GetObject(&input)
 				if err == nil {
 					_, err = io.Copy(w, resp.Body)
 					resp.Body.Close()
 				}
-			}
-			w.CloseWithError(err)
-			r.Close()
-		}()
-		h.R = r
-	}
-	if m.IsWriteable() {
-		r, w := io.Pipe()
-		go func() {
-			var err error
-			switch op {
-			case opData:
+				w.CloseWithError(mapAwsErrToNinep(err))
+				r.Close()
+			}()
+			h.R = r
+		}
+		if m.IsWriteable() {
+			r, w := io.Pipe()
+			go func() {
+				var err error
 				uploader := s3manager.NewUploader(s3c.Session)
 				_, err = uploader.Upload(&s3manager.UploadInput{
 					Bucket: aws.String(bucketName),
 					Key:    aws.String(objectKey),
 					Body:   r,
 				})
-			}
-			w.CloseWithError(err)
-			r.Close()
-		}()
-		h.W = w
+				w.CloseWithError(err)
+				r.Close()
+			}()
+			h.W = w
+		}
+	case opPresignedDownloadUrl:
+		wr, ww := io.Pipe()
+		rr, rw := io.Pipe()
+		h.R = rr
+		h.W = ww
+		if m.IsReadable() && !m.IsWriteable() {
+			// just assume 1 hour
+			wr.Close()
+			ww.Close()
+			h.W = nil
+			go func() {
+				input := s3.GetObjectInput{
+					Bucket: aws.String(bucketName),
+					Key:    aws.String(objectKey),
+				}
+				req, _ := s3c.Client.GetObjectRequest(&input)
+				urlStr, err := req.Presign(1 * time.Hour)
+				fmt.Printf("[S3] Presign ObjectRequest(%v) 1 hour -> %#v %v\n", input, urlStr, err)
+				if err != nil {
+					fmt.Fprintf(rw, "error creating url: %s\n", err)
+				} else {
+					fmt.Fprintf(rw, "%s\n", urlStr)
+				}
+				rw.Close()
+			}()
+		} else if !m.IsReadable() && m.IsWriteable() {
+			wr.Close()
+			rw.Close()
+			rr.Close()
+			ww.Close()
+			return nil, ErrMustOpenForReading
+		} else {
+			go func() {
+				defer wr.Close()
+				defer rw.Close()
+				for {
+					in := bufio.NewReaderSize(wr, 4096)
+					line, isPrefix, err := in.ReadLine()
+					if err != nil {
+						if err != io.EOF {
+							fmt.Fprintf(rw, "error: %s\n", err)
+						}
+						return
+					}
+					if isPrefix {
+						// the line is too long, skip
+						for isPrefix {
+							_, isPrefix, err = in.ReadLine()
+							if err != nil {
+								if err != io.EOF {
+									fmt.Fprintf(rw, "error: %s\n", err)
+								}
+								return
+							}
+						}
+						fmt.Fprintf(rw, "error: line too long\n")
+					} else {
+						kv := ninep.ParseKeyValues(string(line))
+						total := time.Duration(0)
+						total += time.Duration(kv.GetOneInt64("seconds"))
+						total += time.Duration(kv.GetOneInt64("second"))
+						total += time.Duration(kv.GetOneInt64("minute")) * time.Minute
+						total += time.Duration(kv.GetOneInt64("minutes")) * time.Minute
+						total += time.Duration(kv.GetOneInt64("hour")) * time.Hour
+						total += time.Duration(kv.GetOneInt64("hours")) * time.Hour
+						total += time.Duration(kv.GetOneInt64("day")) * 24 * time.Hour
+						total += time.Duration(kv.GetOneInt64("days")) * 24 * time.Hour
+						if total <= 0 {
+							fmt.Fprintf(rw, "error: duration cannot be less than or equal to zero seconds")
+						} else {
+							input := s3.GetObjectInput{
+								Bucket: aws.String(bucketName),
+								Key:    aws.String(objectKey),
+							}
+							req, _ := s3c.Client.GetObjectRequest(&input)
+							urlStr, err := req.Presign(total)
+							fmt.Printf("[S3] Presign ObjectRequest(%v) %s -> %#v %v\n", input, total, urlStr, err)
+							if err != nil {
+								fmt.Fprintf(rw, "error creating url: %s\n", err)
+							} else {
+								fmt.Fprintf(rw, "%s\n", urlStr)
+							}
+						}
+					}
+				}
+			}()
+		}
 	}
 	return h, nil
 }
@@ -167,7 +253,7 @@ func (o *objectNode) List() (ninep.NodeIterator, error) {
 	res, err := o.s3c.Client.ListObjectsV2(&input)
 	fmt.Printf("[S3] ListObjectsV2(%#v) -> %#v, %v\n", input, res, err)
 	if err != nil {
-		return nil, err
+		return nil, mapAwsErrToNinep(err)
 	}
 	itr := &objectsItr{
 		s3c:        o.s3c,
@@ -192,7 +278,7 @@ func (o *objectNode) Walk(subpath []string) ([]ninep.Node, error) {
 	res, err := o.s3c.Client.ListObjectsV2(&input)
 	fmt.Printf("[S3.objectNode.Walk] ListObjectsV2(%#v)\n", input)
 	if err != nil {
-		return nil, err
+		return nil, mapAwsErrToNinep(err)
 	}
 	size := len(res.Contents)
 	if size == 1 && keysMatch(res.Contents[0].Key, key) {
@@ -305,16 +391,16 @@ func (o *objectNode) DeleteWithMode(name string, m ninep.Mode) error {
 		})
 		fmt.Printf("DeleteWithMode(%#v, %s) | %#v -> %v\n", name, m, key, err)
 		if err != nil {
-			return err
+			return mapAwsErrToNinep(err)
 		}
-		return deleteErr
+		return mapAwsErrToNinep(deleteErr)
 	} else {
 		out, err := o.s3c.Client.DeleteObject(&s3.DeleteObjectInput{
 			Bucket: aws.String(o.bucketName),
 			Key:    aws.String(key),
 		})
 		fmt.Printf("DeleteWithMode(%#v, %s) | %#v -> %#v, %v\n", name, m, key, out, err)
-		return err
+		return mapAwsErrToNinep(err)
 	}
 }
 func (o *objectNode) Delete(name string) error {
@@ -324,7 +410,7 @@ func (o *objectNode) Delete(name string) error {
 		Key:    aws.String(key),
 	})
 	fmt.Printf("Delete(%#v) | %#v -> %v\n", name, key, err)
-	return err
+	return mapAwsErrToNinep(err)
 }
 
 func (o *objectNode) Info() (os.FileInfo, error) {
@@ -344,7 +430,7 @@ func (o *objectNode) Info() (os.FileInfo, error) {
 		res, err := o.s3c.Client.ListObjectsV2(input)
 		fmt.Printf("[S3.objectNode.Info] ListObjectsV2(%#v) %#v %v\n", input, res, err)
 		if err != nil {
-			return nil, err
+			return nil, mapAwsErrToNinep(err)
 		}
 
 		if len(res.Contents) == 1 {
@@ -425,7 +511,7 @@ func (itr *objectsItr) NextNode() (ninep.Node, error) {
 		var err error
 		itr.output, err = itr.s3c.Client.ListObjectsV2(&itr.input)
 		if err != nil {
-			return nil, err
+			return nil, mapAwsErrToNinep(err)
 		}
 		if len(itr.output.Contents) == 0 {
 			return nil, io.EOF
@@ -471,6 +557,7 @@ func (itr *objectsItr) Close() error {
 func objectsRoot(name string, s3c *S3Ctx, bucketName string) ninep.Node {
 	return staticDir(
 		name,
-		objectsForBucket(s3c, "data", bucketName, opData),
+		objectsForBucket(s3c, dirObjectData, bucketName, opData),
+		objectsForBucket(s3c, dirObjectPresignedDownloadUrls, bucketName, opPresignedDownloadUrl),
 	)
 }

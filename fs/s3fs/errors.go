@@ -2,23 +2,26 @@ package s3fs
 
 import (
 	"errors"
-	"fmt"
+	"os"
 
 	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/jeffh/cfs/ninep"
 )
 
 var (
 	ErrUseMkDirToCreateBucket = errors.New("Create a directory to create a bucket")
+	ErrMustOpenForReading     = errors.New("Must open for reading results")
 )
 
-func mapAwsToNinep(err error) error {
+func mapAwsErrToNinep(err error) error {
 	switch e := err.(type) {
 	case awserr.Error:
-		fmt.Printf("CODE: %#v\n", e.Code())
 		switch e.Code() {
-		case "AccessDenied":
+		case "AccessDenied", "AllAccessDisabled":
 			return ninep.ErrInvalidAccess
+		case s3.ErrCodeNoSuchKey:
+			return os.ErrNotExist
 		default:
 			break
 		}

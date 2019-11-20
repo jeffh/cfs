@@ -703,7 +703,7 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 		n, err := fil.H.WriteAt(data, int64(m.Offset()))
 		if n == 0 && err != nil {
 			h.Errorf("srv: Twrite: error: fid %d couldn't write: %s", m.Fid(), err)
-			w.Rerrorf("failed to write to fid %d", m.Fid())
+			w.Rerror(err)
 			return
 		}
 		session.TouchQid(fil.Name, fil.Mode.QidType())

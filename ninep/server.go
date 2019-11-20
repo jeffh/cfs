@@ -53,7 +53,7 @@ const (
 
 	// max number of requests a session can make
 	// needs to be balanced with max number of active connections
-	DefaultMaxInflightRequestsPerSession = 30
+	DefaultMaxInflightRequestsPerSession = 10
 )
 
 type Server struct {

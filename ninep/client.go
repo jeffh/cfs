@@ -346,6 +346,22 @@ var mappedErrors []error = []error{
 	os.ErrNotExist,
 	os.ErrClosed,
 	os.ErrNoDeadline,
+	io.EOF,
+	io.ErrClosedPipe,
+	io.ErrNoProgress,
+	io.ErrShortBuffer,
+	io.ErrShortWrite,
+	io.ErrUnexpectedEOF,
+
+	ErrBadFormat,
+	ErrWriteNotAllowed,
+	ErrReadNotAllowed,
+	ErrSeekNotAllowed,
+	ErrUnsupported,
+	ErrNotImplemented,
+	ErrInvalidAccess,
+	ErrChangeUidNotAllowed,
+	ErrMissingIterator,
 }
 
 func (c *Client) asError(r Rerror) error {

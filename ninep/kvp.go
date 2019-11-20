@@ -9,7 +9,7 @@ import (
 
 func keyValueNeedsEscape(s string) bool {
 	for _, r := range s {
-		if r == ' ' || r == '=' {
+		if r == ' ' || r == '=' || r == '"' {
 			return true
 		}
 	}
@@ -23,6 +23,20 @@ func KeyPairs(pairs [][2]string) string {
 			res[i] = fmt.Sprintf("%#v=%#v", p[0], p[1])
 		} else {
 			res[i] = fmt.Sprintf("%v=%v", p[0], p[1])
+		}
+	}
+	return strings.Join(res, " ")
+}
+
+func NonEmptyKeyPairs(pairs [][2]string) string {
+	res := make([]string, 0, len(pairs))
+	for _, p := range pairs {
+		if p[1] != "" {
+			if keyValueNeedsEscape(p[0]) || keyValueNeedsEscape(p[1]) {
+				res = append(res, fmt.Sprintf("%#v=%#v", p[0], p[1]))
+			} else {
+				res = append(res, fmt.Sprintf("%v=%v", p[0], p[1]))
+			}
 		}
 	}
 	return strings.Join(res, " ")
