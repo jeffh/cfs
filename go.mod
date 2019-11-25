@@ -22,6 +22,7 @@ require (
 	golang.org/x/net v0.0.0-20191021144547-ec77196f6094 // indirect
 	golang.org/x/sys v0.0.0-20191018095205-727590c5006e
 	golang.org/x/time v0.0.0-20190921001708-c4c64cad1fd0 // indirect
+	golang.org/x/tools v0.0.0-20191124021906-f5828fc9a103 // indirect
 	google.golang.org/grpc v1.24.0 // indirect
 	gotest.tools v2.2.0+incompatible // indirect
 )

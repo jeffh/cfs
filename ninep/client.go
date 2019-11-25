@@ -753,7 +753,7 @@ func (f *FileProxy) IsTemporary() bool { return f.qid.Type()&QT_TMP != 0 }
 // caller responsibility to Close() the returned file proxy.
 func (f *FileProxy) Traverse(path string) (*FileProxy, error) {
 	fid := f.fs.allocFid()
-	qid, err := f.fs.walk(f.fid, path, true)
+	qid, err := f.fs.walk(f.fid, path)
 	if err != nil {
 		return nil, err
 	}
@@ -885,11 +885,8 @@ func (fs *FileSystemProxy) releaseFid(f Fid) {
 	fs.mut.Unlock()
 }
 
-func (fs *FileSystemProxy) walk(fid Fid, path string, includeLast bool) (Qid, error) {
+func (fs *FileSystemProxy) walk(fid Fid, path string) (Qid, error) {
 	parts := PathSplit(path)[1:]
-	if !includeLast && len(parts) > 0 {
-		parts = parts[:len(parts)-1]
-	}
 	qids, err := fs.c.Walk(fs.rootF, fid, parts)
 	if err != nil {
 		// Best attempt to notify server that we're dropping this fid
@@ -917,7 +914,7 @@ func (fs *FileSystemProxy) MakeDir(path string, mode Mode) error {
 	} else {
 		prefix = "/"
 	}
-	if _, err := fs.walk(fid, prefix, true); err != nil {
+	if _, err := fs.walk(fid, prefix); err != nil {
 		return err
 	}
 	_, _, err := fs.c.Create(fid, filename, mode|M_DIR, ORDWR)
@@ -935,7 +932,7 @@ func (fs *FileSystemProxy) CreateFile(path string, flag OpenMode, mode Mode) (Fi
 		prefix = path[:i]
 		filename = path[i+1:]
 	}
-	qid, err := fs.walk(fid, prefix, false)
+	qid, err := fs.walk(fid, prefix)
 	if err != nil {
 		return nil, err
 	}
@@ -951,7 +948,7 @@ func (fs *FileSystemProxy) CreateFile(path string, flag OpenMode, mode Mode) (Fi
 }
 func (fs *FileSystemProxy) OpenFile(path string, flag OpenMode) (FileHandle, error) {
 	fid := fs.allocFid()
-	_, err := fs.walk(fid, path, true)
+	_, err := fs.walk(fid, path)
 	if err != nil {
 		return nil, err
 	}
@@ -1029,7 +1026,7 @@ func (fs *FileSystemProxy) ListDir(path string) (FileInfoIterator, error) {
 
 	fid := fs.allocFid()
 	fs.c.Tracef("ListDir(%#v) %s", path, fid)
-	q, err := fs.walk(fid, path, true)
+	q, err := fs.walk(fid, path)
 	if err != nil {
 		fs.releaseFid(fid)
 		return nil, err
@@ -1053,7 +1050,7 @@ func (fs *FileSystemProxy) ListDir(path string) (FileInfoIterator, error) {
 func (fs *FileSystemProxy) Stat(path string) (os.FileInfo, error) {
 	fid := fs.allocFid()
 	defer fs.releaseFid(fid)
-	if _, err := fs.walk(fid, path, true); err != nil {
+	if _, err := fs.walk(fid, path); err != nil {
 		return nil, err
 	}
 	st, err := fs.c.Stat(fid)
@@ -1063,7 +1060,7 @@ func (fs *FileSystemProxy) Stat(path string) (os.FileInfo, error) {
 func (fs *FileSystemProxy) WriteStat(path string, s Stat) error {
 	fid := fs.allocFid()
 	defer fs.releaseFid(fid)
-	if _, err := fs.walk(fid, path, true); err != nil {
+	if _, err := fs.walk(fid, path); err != nil {
 		return err
 	}
 	err := fs.c.WriteStat(fid, s)
@@ -1073,7 +1070,7 @@ func (fs *FileSystemProxy) WriteStat(path string, s Stat) error {
 func (fs *FileSystemProxy) Delete(path string) error {
 	fid := fs.allocFid()
 	defer fs.releaseFid(fid)
-	if _, err := fs.walk(fid, path, true); err != nil {
+	if _, err := fs.walk(fid, path); err != nil {
 		return err
 	}
 	// regardless of this call, the server should drop the fid
@@ -1084,7 +1081,7 @@ func (fs *FileSystemProxy) Delete(path string) error {
 // for the caller to call Close on the returned file proxy.
 func (fs *FileSystemProxy) Traverse(path string) (*FileProxy, error) {
 	fid := fs.allocFid()
-	qid, err := fs.walk(fid, path, true)
+	qid, err := fs.walk(fid, path)
 	if err != nil {
 		return nil, err
 	}

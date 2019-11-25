@@ -145,6 +145,26 @@ func (b *buckets) Walk(subpath []string) ([]ninep.Node, error) {
 							}
 						}
 					}
+				case dirObjectPresignedUploadUrl:
+					// list all objects
+					var node ninep.Node = objectsForBucket(b.s3c, dirObjectPresignedUploadUrl, bucket, opPresignedDownloadUrl)
+					nodes = append(nodes, node)
+					if size > 3 && (subpath[0] != "." && subpath[0] != "") {
+						var objNodes []ninep.Node
+						objNodes, err = objectsOrObjectForBucket(b.s3c, bucket, subpath, opPresignedDownloadUrl)
+						if err == nil {
+							nodes = append(nodes, objNodes...)
+						}
+					} else {
+						// repeat if "." is at the end...
+						for _, p := range subpath {
+							if p == "." {
+								nodes = append(nodes, node)
+							} else {
+								break
+							}
+						}
+					}
 				case ".", "":
 					nodes = append(nodes, sNode)
 				default:
@@ -375,34 +395,34 @@ type bucketNode struct {
 }
 
 func (b *bucketNode) Info() (os.FileInfo, error) {
-	if b.bucket == nil {
-		// we only have Listing all buckets to find the one we need...
-		resp, err := b.s3c.Client.ListBuckets(&s3.ListBucketsInput{})
-		fmt.Printf("[S3.bucket.Info] ListBuckets() | %v %p\n", b.bucketName, b)
-		if err != nil {
-			return nil, mapAwsErrToNinep(err)
-		}
-		var uid string
-		if owner := resp.Owner; owner != nil {
-			if displayName := owner.DisplayName; displayName != nil {
-				uid = *displayName
-			}
-		}
-		now := time.Now()
-		for _, bucket := range resp.Buckets {
-			if bucket != nil && bucket.Name != nil {
-				b.uid = uid
-				b.now = now
-				b.bucket = bucket
-				break
-			}
-		}
-		if b.bucket == nil {
-			return nil, os.ErrNotExist
-		}
-	}
+	// if b.bucket == nil {
+	// 	// we only have Listing all buckets to find the one we need...
+	// 	resp, err := b.s3c.Client.ListBuckets(&s3.ListBucketsInput{})
+	// 	fmt.Printf("[S3.bucket.Info] ListBuckets() | %v %p\n", b.bucketName, b)
+	// 	if err != nil {
+	// 		return nil, mapAwsErrToNinep(err)
+	// 	}
+	// 	var uid string
+	// 	if owner := resp.Owner; owner != nil {
+	// 		if displayName := owner.DisplayName; displayName != nil {
+	// 			uid = *displayName
+	// 		}
+	// 	}
+	// 	now := time.Now()
+	// 	for _, bucket := range resp.Buckets {
+	// 		if bucket != nil && bucket.Name != nil {
+	// 			b.uid = uid
+	// 			b.now = now
+	// 			b.bucket = bucket
+	// 			break
+	// 		}
+	// 	}
+	// 	if b.bucket == nil {
+	// 		return nil, os.ErrNotExist
+	// 	}
+	// }
 	var date time.Time
-	if b.bucket.CreationDate != nil {
+	if b.bucket != nil && b.bucket.CreationDate != nil {
 		date = *b.bucket.CreationDate
 	} else {
 		date = b.now

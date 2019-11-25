@@ -699,10 +699,16 @@ func Walk(root Node, path string, walkLast bool) (Node, string, error) {
 		)
 		if walkNode, ok := currNode.(WalkDir); ok {
 			var nodes []Node
+			var p []string
 			if walkLast {
-				nodes, err = walkNode.Walk(parts[i:])
+				p = parts[i:]
 			} else {
-				nodes, err = walkNode.Walk(dirParts[i:])
+				p = dirParts[i:]
+			}
+			nodes, err = walkNode.Walk(p)
+			if len(nodes) == 0 {
+				err = fmt.Errorf("Failed to Walk %#v with %#v", currNode, p)
+				return nil, lastPart, err
 			}
 			node = nodes[len(nodes)-1]
 			if err != nil {

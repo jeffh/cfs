@@ -298,7 +298,7 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 		info, err := h.Fs.Stat(fullPath)
 		if err != nil {
 			h.Errorf("srv: Topen: failed to call stat on %v: %s", fullPath, err)
-			w.Rerrorf("file does not exist: %s", fullPath)
+			w.Rerror(err)
 			return
 		}
 		q := session.PutQidInfo(fil.Name, info)
@@ -379,8 +379,8 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 			}
 			infos, err := wfs.Walk(parts)
 			if err != nil {
-				h.Errorf("srv: Twalk: invalid file system walk for %s: %s", m.Fid(), err)
-				w.Rerrorf("invalid walk element for %#v: %s", filepath.Join(parts...), err)
+				h.Errorf("srv: Twalk: invalid file system walk for %s (%#v): %s", m.Fid(), filepath.Join(parts...), err)
+				w.Rerror(err)
 				return
 			}
 			size = len(infos)

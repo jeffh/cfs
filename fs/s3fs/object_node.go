@@ -21,7 +21,10 @@ type objectOperation int
 const (
 	opData objectOperation = iota
 	opPresignedDownloadUrl
+	opPresignedUploadUrl
 )
+
+const DEFAULT_PRESIGN_DURATION = 1 * time.Hour
 
 func keysMatch(objKey *string, wantedKey string) bool {
 	return objKey != nil && (*objKey == wantedKey || *objKey == wantedKey+"/")
@@ -86,6 +89,67 @@ func objectInfo(nameOffset int, object *s3.Object, fallbackKey string) os.FileIn
 }
 
 func objectFileHandle(s3c *S3Ctx, bucketName, objectKey string, op objectOperation, m ninep.OpenMode) (ninep.FileHandle, error) {
+	timeBasedFileHandle := func(h *ninep.RWFileHandle, read func(w io.Writer, d time.Duration, kv ninep.KVMap)) error {
+		wr, ww := io.Pipe()
+		rr, rw := io.Pipe()
+		h.R = rr
+		h.W = ww
+		if m.IsReadable() && !m.IsWriteable() {
+			// just assume 1 hour
+			wr.Close()
+			ww.Close()
+			h.W = nil
+			go func() {
+				read(rw, DEFAULT_PRESIGN_DURATION, nil)
+				rw.Close()
+			}()
+		} else if !m.IsReadable() && m.IsWriteable() {
+			wr.Close()
+			rw.Close()
+			rr.Close()
+			ww.Close()
+			return ErrMustOpenForReading
+		} else {
+			go func() {
+				defer wr.Close()
+				defer rw.Close()
+				for {
+					in := bufio.NewReaderSize(wr, 4096)
+					line, isPrefix, err := in.ReadLine()
+					if err != nil {
+						if err != io.EOF {
+							fmt.Fprintf(rw, "error: %s\n", err)
+						}
+						return
+					}
+					if isPrefix {
+						// the line is too long, skip
+						for isPrefix {
+							_, isPrefix, err = in.ReadLine()
+							if err != nil {
+								if err != io.EOF {
+									fmt.Fprintf(rw, "error: %s\n", err)
+								}
+								return
+							}
+						}
+						fmt.Fprintf(rw, "error: line too long\n")
+					} else {
+						kv := ninep.ParseKeyValues(string(line))
+						total := interpretTimeKeyValues(kv)
+						if total <= 0 {
+							fmt.Fprintf(rw, "error: duration cannot be less than or equal to zero seconds")
+						} else {
+							read(rw, total, kv)
+							rw.Close()
+						}
+					}
+				}
+			}()
+		}
+		return nil
+	}
+
 	h := &ninep.RWFileHandle{}
 	switch op {
 	case opData:
@@ -124,92 +188,85 @@ func objectFileHandle(s3c *S3Ctx, bucketName, objectKey string, op objectOperati
 			h.W = w
 		}
 	case opPresignedDownloadUrl:
-		wr, ww := io.Pipe()
-		rr, rw := io.Pipe()
-		h.R = rr
-		h.W = ww
-		if m.IsReadable() && !m.IsWriteable() {
-			// just assume 1 hour
-			wr.Close()
-			ww.Close()
-			h.W = nil
-			go func() {
-				input := s3.GetObjectInput{
-					Bucket: aws.String(bucketName),
-					Key:    aws.String(objectKey),
+		err := timeBasedFileHandle(h, func(w io.Writer, d time.Duration, kv ninep.KVMap) {
+			input := s3.GetObjectInput{
+				Bucket: aws.String(bucketName),
+				Key:    aws.String(objectKey),
+
+				IfMatch:                    stringPtrIfNotEmpty(kv.GetOne("if-match")),
+				IfModifiedSince:            timePtrIfNotEmpty(kv.GetOne("if-modified-since")),
+				IfNoneMatch:                stringPtrIfNotEmpty(kv.GetOne("if-none-match")),
+				IfUnmodifiedSince:          timePtrIfNotEmpty(kv.GetOne("if-unmodified-since")),
+				Range:                      stringPtrIfNotEmpty(kv.GetOne("range")),
+				RequestPayer:               stringPtrIfNotEmpty(kv.GetOne("request-payer")),
+				ResponseCacheControl:       stringPtrIfNotEmpty(kv.GetOne("response-cache-control")),
+				ResponseContentDisposition: stringPtrIfNotEmpty(kv.GetOne("response-content-disposition")),
+				ResponseContentEncoding:    stringPtrIfNotEmpty(kv.GetOne("response-content-encoding")),
+				ResponseContentLanguage:    stringPtrIfNotEmpty(kv.GetOne("response-content-language")),
+				ResponseContentType:        stringPtrIfNotEmpty(kv.GetOne("response-content-type")),
+				SSECustomerAlgorithm:       stringPtrIfNotEmpty(kv.GetOne("sse-customer-algorithm")),
+				SSECustomerKey:             stringPtrIfNotEmpty(kv.GetOne("sse-customer-key")),
+				SSECustomerKeyMD5:          stringPtrIfNotEmpty(kv.GetOne("sse-customer-key-md5")),
+				VersionId:                  stringPtrIfNotEmpty(kv.GetOne("version-id")),
+			}
+			req, _ := s3c.Client.GetObjectRequest(&input)
+			urlStr, header, err := req.PresignRequest(d)
+			fmt.Printf("[S3] Presign GetObjectRequest(%v) %s -> %#v %v\n", input, d, urlStr, err)
+			if err != nil {
+				fmt.Fprintf(w, "error creating url: %s\n", err)
+			} else {
+				fmt.Fprintf(w, "%s\n", urlStr)
+				for k, v := range header {
+					fmt.Fprintf(w, "%s: %s\n", k, v)
 				}
-				req, _ := s3c.Client.GetObjectRequest(&input)
-				urlStr, err := req.Presign(1 * time.Hour)
-				fmt.Printf("[S3] Presign ObjectRequest(%v) 1 hour -> %#v %v\n", input, urlStr, err)
-				if err != nil {
-					fmt.Fprintf(rw, "error creating url: %s\n", err)
-				} else {
-					fmt.Fprintf(rw, "%s\n", urlStr)
+			}
+		})
+		return h, err
+	case opPresignedUploadUrl:
+		err := timeBasedFileHandle(h, func(w io.Writer, d time.Duration, kv ninep.KVMap) {
+			input := s3.PutObjectInput{
+				Bucket: aws.String(bucketName),
+				Key:    aws.String(objectKey),
+
+				ACL:                       stringPtrIfNotEmpty(kv.GetOne("acl")),
+				CacheControl:              stringPtrIfNotEmpty(kv.GetOne("cache-control")),
+				ContentDisposition:        stringPtrIfNotEmpty(kv.GetOne("content-disposition")),
+				ContentEncoding:           stringPtrIfNotEmpty(kv.GetOne("content-encoding")),
+				ContentLanguage:           stringPtrIfNotEmpty(kv.GetOne("content-language")),
+				ContentLength:             int64PtrIfNotEmpty(kv.GetOne("content-length")),
+				ContentMD5:                stringPtrIfNotEmpty(kv.GetOne("content-md5")),
+				ContentType:               stringPtrIfNotEmpty(kv.GetOne("content-type")),
+				GrantFullControl:          stringPtrIfNotEmpty(kv.GetOne("grant-full-control")),
+				GrantRead:                 stringPtrIfNotEmpty(kv.GetOne("grant-read")),
+				GrantReadACP:              stringPtrIfNotEmpty(kv.GetOne("grant-read-acp")),
+				GrantWriteACP:             stringPtrIfNotEmpty(kv.GetOne("grant-write-acp")),
+				Metadata:                  mapPtrIfNotEmpty(kv.GetAllPrefix("metadata-")),
+				ObjectLockLegalHoldStatus: stringPtrIfNotEmpty(kv.GetOne("object-lock-legal-hold-status")),
+				ObjectLockMode:            stringPtrIfNotEmpty(kv.GetOne("object-lock-mode")),
+				ObjectLockRetainUntilDate: timePtrIfNotEmpty(kv.GetOne("object-lock-retain-until-date")),
+				SSECustomerAlgorithm:      stringPtrIfNotEmpty(kv.GetOne("sse-customer-algorithm")),
+				SSECustomerKey:            stringPtrIfNotEmpty(kv.GetOne("sse-customer-key")),
+				SSECustomerKeyMD5:         stringPtrIfNotEmpty(kv.GetOne("sse-customer-key-md5")),
+				SSEKMSEncryptionContext:   stringPtrIfNotEmpty(kv.GetOne("sse-kms-encryption-context")),
+				SSEKMSKeyId:               stringPtrIfNotEmpty(kv.GetOne("sse-kms-key-id")),
+				ServerSideEncryption:      stringPtrIfNotEmpty(kv.GetOne("server-side-encryption")),
+				StorageClass:              stringPtrIfNotEmpty(kv.GetOne("storage-class")),
+				Tagging:                   stringPtrIfNotEmpty(kv.GetOne("tagging")),
+				WebsiteRedirectLocation:   stringPtrIfNotEmpty(kv.GetOne("website-redirect-location")),
+			}
+			req, _ := s3c.Client.PutObjectRequest(&input)
+			urlStr, header, err := req.PresignRequest(d)
+			fmt.Printf("[S3] Presign PutObjectRequest(%v) 1 hour -> %#v %v\n", input, urlStr, err)
+			if err != nil {
+				fmt.Fprintf(w, "error creating url: %s\n", err)
+			} else {
+				fmt.Fprintf(w, "%s\n", urlStr)
+				for k, v := range header {
+					fmt.Fprintf(w, "%s: %s\n", k, v)
 				}
-				rw.Close()
-			}()
-		} else if !m.IsReadable() && m.IsWriteable() {
-			wr.Close()
-			rw.Close()
-			rr.Close()
-			ww.Close()
-			return nil, ErrMustOpenForReading
-		} else {
-			go func() {
-				defer wr.Close()
-				defer rw.Close()
-				for {
-					in := bufio.NewReaderSize(wr, 4096)
-					line, isPrefix, err := in.ReadLine()
-					if err != nil {
-						if err != io.EOF {
-							fmt.Fprintf(rw, "error: %s\n", err)
-						}
-						return
-					}
-					if isPrefix {
-						// the line is too long, skip
-						for isPrefix {
-							_, isPrefix, err = in.ReadLine()
-							if err != nil {
-								if err != io.EOF {
-									fmt.Fprintf(rw, "error: %s\n", err)
-								}
-								return
-							}
-						}
-						fmt.Fprintf(rw, "error: line too long\n")
-					} else {
-						kv := ninep.ParseKeyValues(string(line))
-						total := time.Duration(0)
-						total += time.Duration(kv.GetOneInt64("seconds"))
-						total += time.Duration(kv.GetOneInt64("second"))
-						total += time.Duration(kv.GetOneInt64("minute")) * time.Minute
-						total += time.Duration(kv.GetOneInt64("minutes")) * time.Minute
-						total += time.Duration(kv.GetOneInt64("hour")) * time.Hour
-						total += time.Duration(kv.GetOneInt64("hours")) * time.Hour
-						total += time.Duration(kv.GetOneInt64("day")) * 24 * time.Hour
-						total += time.Duration(kv.GetOneInt64("days")) * 24 * time.Hour
-						if total <= 0 {
-							fmt.Fprintf(rw, "error: duration cannot be less than or equal to zero seconds")
-						} else {
-							input := s3.GetObjectInput{
-								Bucket: aws.String(bucketName),
-								Key:    aws.String(objectKey),
-							}
-							req, _ := s3c.Client.GetObjectRequest(&input)
-							urlStr, err := req.Presign(total)
-							fmt.Printf("[S3] Presign ObjectRequest(%v) %s -> %#v %v\n", input, total, urlStr, err)
-							if err != nil {
-								fmt.Fprintf(rw, "error creating url: %s\n", err)
-							} else {
-								fmt.Fprintf(rw, "%s\n", urlStr)
-							}
-						}
-					}
-				}
-			}()
-		}
+			}
+		})
+		return h, err
 	}
 	return h, nil
 }
@@ -559,5 +616,6 @@ func objectsRoot(name string, s3c *S3Ctx, bucketName string) ninep.Node {
 		name,
 		objectsForBucket(s3c, dirObjectData, bucketName, opData),
 		objectsForBucket(s3c, dirObjectPresignedDownloadUrls, bucketName, opPresignedDownloadUrl),
+		objectsForBucket(s3c, dirObjectPresignedUploadUrl, bucketName, opPresignedUploadUrl),
 	)
 }
