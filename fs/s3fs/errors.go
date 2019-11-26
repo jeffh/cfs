@@ -20,6 +20,8 @@ func mapAwsErrToNinep(err error) error {
 		switch e.Code() {
 		case "AccessDenied", "AllAccessDisabled":
 			return ninep.ErrInvalidAccess
+		case s3.ErrCodeBucketAlreadyExists:
+			return ninep.ErrInvalidAccess
 		case s3.ErrCodeNoSuchKey:
 			return os.ErrNotExist
 		default:

@@ -16,6 +16,14 @@ func keyValueNeedsEscape(s string) bool {
 	return false
 }
 
+func KeyPair(key, value string) string {
+	if keyValueNeedsEscape(key) || keyValueNeedsEscape(value) {
+		return fmt.Sprintf("%#v=%#v", key, value)
+	} else {
+		return fmt.Sprintf("%v=%v", key, value)
+	}
+}
+
 func KeyPairs(pairs [][2]string) string {
 	res := make([]string, len(pairs))
 	for i, p := range pairs {
@@ -83,10 +91,10 @@ func (kv KVMap) GetOneInt64(k string) int64 {
 }
 func (kv KVMap) GetAllPrefix(prefix string) KVMap {
 	m := make(KVMap)
+	size := len(prefix)
 	for k, v := range kv {
-		i := strings.Index(k, prefix)
-		if i != -1 {
-			key := k[i:]
+		if strings.HasPrefix(k, prefix) {
+			key := k[size:]
 			m[key] = v
 		}
 	}

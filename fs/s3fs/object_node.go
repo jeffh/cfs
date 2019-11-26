@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,6 +23,7 @@ const (
 	opData objectOperation = iota
 	opPresignedDownloadUrl
 	opPresignedUploadUrl
+	opMetadata
 )
 
 const DEFAULT_PRESIGN_DURATION = 1 * time.Hour
@@ -267,6 +269,154 @@ func objectFileHandle(s3c *S3Ctx, bucketName, objectKey string, op objectOperati
 			}
 		})
 		return h, err
+	case opMetadata:
+		if m.IsReadable() {
+			r, w := io.Pipe()
+			go func() {
+				var err error
+				var resp *s3.HeadObjectOutput
+				input := s3.HeadObjectInput{
+					Bucket: aws.String(bucketName),
+					Key:    aws.String(objectKey),
+				}
+				resp, err = s3c.Client.HeadObject(&input)
+				if err == nil {
+					if err = writeKeyStringPtr(w, "accept-ranges", resp.AcceptRanges); err != nil {
+						goto end
+					}
+					if err = writeKeyStringPtr(w, "cache-control", resp.CacheControl); err != nil {
+						goto end
+					}
+					if err = writeKeyStringPtr(w, "content-disposition", resp.ContentDisposition); err != nil {
+						goto end
+					}
+					if err = writeKeyStringPtr(w, "content-encoding", resp.ContentEncoding); err != nil {
+						goto end
+					}
+					if err = writeKeyStringPtr(w, "content-language", resp.ContentLanguage); err != nil {
+						goto end
+					}
+					if err = writeKeyInt64Ptr(w, "content-length", resp.ContentLength); err != nil {
+						goto end
+					}
+					if err = writeKeyStringPtr(w, "content-type", resp.ContentType); err != nil {
+						goto end
+					}
+					if err = writeKeyBoolPtr(w, "delete-marker", resp.DeleteMarker); err != nil {
+						goto end
+					}
+					if err = writeKeyStringPtr(w, "etag", resp.ETag); err != nil {
+						goto end
+					}
+					if err = writeKeyStringPtr(w, "expiration", resp.Expiration); err != nil {
+						goto end
+					}
+					if err = writeKeyStringPtr(w, "expires", resp.Expires); err != nil {
+						goto end
+					}
+					if err = writeKeyTimePtr(w, "last-modified", resp.LastModified); err != nil {
+						goto end
+					}
+					if md := resp.Metadata; md != nil {
+						for k, v := range md {
+							if err = writeKeyStringPtr(w, fmt.Sprintf("metadata-%s", k), v); err != nil {
+								goto end
+							}
+						}
+					}
+					if err = writeKeyInt64Ptr(w, "missing-meta", resp.MissingMeta); err != nil {
+						goto end
+					}
+					if err = writeKeyStringPtr(w, "object-lock-legal-hold-status", resp.ObjectLockLegalHoldStatus); err != nil {
+						goto end
+					}
+					if err = writeKeyStringPtr(w, "object-lock-mode", resp.ObjectLockMode); err != nil {
+						goto end
+					}
+					if err = writeKeyTimePtr(w, "object-lock-retain-until-date", resp.ObjectLockRetainUntilDate); err != nil {
+						goto end
+					}
+					if err = writeKeyInt64Ptr(w, "parts-count", resp.PartsCount); err != nil {
+						goto end
+					}
+					if err = writeKeyStringPtr(w, "replication-status", resp.ReplicationStatus); err != nil {
+						goto end
+					}
+					if err = writeKeyStringPtr(w, "request-charged", resp.RequestCharged); err != nil {
+						goto end
+					}
+					if err = writeKeyStringPtr(w, "restore", resp.Restore); err != nil {
+						goto end
+					}
+					if err = writeKeyStringPtr(w, "sse-customer-algorithm", resp.SSECustomerAlgorithm); err != nil {
+						goto end
+					}
+					if err = writeKeyStringPtr(w, "sse-customer-key-md5", resp.SSECustomerKeyMD5); err != nil {
+						goto end
+					}
+					if err = writeKeyStringPtr(w, "storage-class", resp.StorageClass); err != nil {
+						goto end
+					}
+					if err = writeKeyStringPtr(w, "version-id", resp.VersionId); err != nil {
+						goto end
+					}
+					if err = writeKeyStringPtr(w, "website-redirect-location", resp.WebsiteRedirectLocation); err != nil {
+						goto end
+					}
+				}
+			end:
+				w.CloseWithError(mapAwsErrToNinep(err))
+			}()
+			h.R = r
+		}
+		if m.IsWriteable() {
+			r, w := io.Pipe()
+			go func() {
+				var err error
+				var buf []byte
+				buf, err = ioutil.ReadAll(r)
+				if err == nil {
+					kv := ninep.ParseKeyValues(string(buf))
+					input := s3.PutObjectInput{
+						Bucket: aws.String(bucketName),
+						Key:    aws.String(objectKey),
+
+						ACL:                       stringPtrIfNotEmpty(kv.GetOne("acl")),
+						CacheControl:              stringPtrIfNotEmpty(kv.GetOne("cache-control")),
+						ContentDisposition:        stringPtrIfNotEmpty(kv.GetOne("content-disposition")),
+						ContentEncoding:           stringPtrIfNotEmpty(kv.GetOne("content-encoding")),
+						ContentLanguage:           stringPtrIfNotEmpty(kv.GetOne("content-language")),
+						ContentLength:             int64PtrIfNotEmpty(kv.GetOne("content-length")),
+						ContentMD5:                stringPtrIfNotEmpty(kv.GetOne("content-md5")),
+						ContentType:               stringPtrIfNotEmpty(kv.GetOne("content-type")),
+						GrantFullControl:          stringPtrIfNotEmpty(kv.GetOne("grant-full-control")),
+						GrantRead:                 stringPtrIfNotEmpty(kv.GetOne("grant-read")),
+						GrantReadACP:              stringPtrIfNotEmpty(kv.GetOne("grant-read-acp")),
+						GrantWriteACP:             stringPtrIfNotEmpty(kv.GetOne("grant-write-acp")),
+						Metadata:                  mapPtrIfNotEmpty(kv.GetAllPrefix("metadata-")),
+						ObjectLockLegalHoldStatus: stringPtrIfNotEmpty(kv.GetOne("object-lock-legal-hold-status")),
+						ObjectLockMode:            stringPtrIfNotEmpty(kv.GetOne("object-lock-mode")),
+						ObjectLockRetainUntilDate: timePtrIfNotEmpty(kv.GetOne("object-lock-retain-until-date")),
+						SSECustomerAlgorithm:      stringPtrIfNotEmpty(kv.GetOne("sse-customer-algorithm")),
+						SSECustomerKey:            stringPtrIfNotEmpty(kv.GetOne("sse-customer-key")),
+						SSECustomerKeyMD5:         stringPtrIfNotEmpty(kv.GetOne("sse-customer-key-md5")),
+						SSEKMSEncryptionContext:   stringPtrIfNotEmpty(kv.GetOne("sse-kms-encryption-context")),
+						SSEKMSKeyId:               stringPtrIfNotEmpty(kv.GetOne("sse-kms-key-id")),
+						ServerSideEncryption:      stringPtrIfNotEmpty(kv.GetOne("server-side-encryption")),
+						StorageClass:              stringPtrIfNotEmpty(kv.GetOne("storage-class")),
+						Tagging:                   stringPtrIfNotEmpty(kv.GetOne("tagging")),
+						WebsiteRedirectLocation:   stringPtrIfNotEmpty(kv.GetOne("website-redirect-location")),
+					}
+					var res *s3.PutObjectOutput
+					res, err = s3c.Client.PutObject(&input)
+					fmt.Printf("[S3] Presign PutObject(%v) -> %#v %v\n", input, res, err)
+				} else {
+					fmt.Printf("[S3] Presign PutObject(_) -> nil %v\n", err)
+				}
+				r.CloseWithError(mapAwsErrToNinep(err))
+			}()
+			h.W = w
+		}
 	}
 	return h, nil
 }
@@ -615,6 +765,7 @@ func objectsRoot(name string, s3c *S3Ctx, bucketName string) ninep.Node {
 	return staticDir(
 		name,
 		objectsForBucket(s3c, dirObjectData, bucketName, opData),
+		objectsForBucket(s3c, dirObjectMetadata, bucketName, opMetadata),
 		objectsForBucket(s3c, dirObjectPresignedDownloadUrls, bucketName, opPresignedDownloadUrl),
 		objectsForBucket(s3c, dirObjectPresignedUploadUrl, bucketName, opPresignedUploadUrl),
 	)

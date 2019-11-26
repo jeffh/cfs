@@ -104,67 +104,38 @@ func (b *buckets) Walk(subpath []string) ([]ninep.Node, error) {
 				staticDir := subpath[0]
 				subpath = subpath[1:]
 
+				objectTree := func(s3c *S3Ctx, subpath []string, dir, bucket string, op objectOperation, nodes []ninep.Node) ([]ninep.Node, error) {
+					var err error
+					var node ninep.Node = objectsForBucket(s3c, dir, bucket, op)
+					nodes = append(nodes, node)
+					if size > 3 && (subpath[0] != "." && subpath[0] != "") {
+						var objNodes []ninep.Node
+						objNodes, err = objectsOrObjectForBucket(s3c, bucket, subpath, op)
+						if err == nil {
+							nodes = append(nodes, objNodes...)
+						}
+					} else {
+						// repeat if "." is at the end...
+						for _, p := range subpath {
+							if p == "." {
+								nodes = append(nodes, node)
+							} else {
+								break
+							}
+						}
+					}
+					return nodes, err
+				}
+
 				switch staticDir {
 				case dirObjectData:
-					// list all objects
-					var node ninep.Node = objectsForBucket(b.s3c, dirObjectData, bucket, opData)
-					nodes = append(nodes, node)
-					if size > 3 && (subpath[0] != "." && subpath[0] != "") {
-						var objNodes []ninep.Node
-						objNodes, err = objectsOrObjectForBucket(b.s3c, bucket, subpath, opData)
-						if err == nil {
-							nodes = append(nodes, objNodes...)
-						}
-					} else {
-						// repeat if "." is at the end...
-						for _, p := range subpath {
-							if p == "." {
-								nodes = append(nodes, node)
-							} else {
-								break
-							}
-						}
-					}
+					nodes, err = objectTree(b.s3c, subpath, dirObjectData, bucket, opData, nodes)
 				case dirObjectPresignedDownloadUrls:
-					// list all objects
-					var node ninep.Node = objectsForBucket(b.s3c, dirObjectPresignedDownloadUrls, bucket, opPresignedDownloadUrl)
-					nodes = append(nodes, node)
-					if size > 3 && (subpath[0] != "." && subpath[0] != "") {
-						var objNodes []ninep.Node
-						objNodes, err = objectsOrObjectForBucket(b.s3c, bucket, subpath, opPresignedDownloadUrl)
-						if err == nil {
-							nodes = append(nodes, objNodes...)
-						}
-					} else {
-						// repeat if "." is at the end...
-						for _, p := range subpath {
-							if p == "." {
-								nodes = append(nodes, node)
-							} else {
-								break
-							}
-						}
-					}
+					nodes, err = objectTree(b.s3c, subpath, dirObjectPresignedDownloadUrls, bucket, opPresignedDownloadUrl, nodes)
 				case dirObjectPresignedUploadUrl:
-					// list all objects
-					var node ninep.Node = objectsForBucket(b.s3c, dirObjectPresignedUploadUrl, bucket, opPresignedDownloadUrl)
-					nodes = append(nodes, node)
-					if size > 3 && (subpath[0] != "." && subpath[0] != "") {
-						var objNodes []ninep.Node
-						objNodes, err = objectsOrObjectForBucket(b.s3c, bucket, subpath, opPresignedDownloadUrl)
-						if err == nil {
-							nodes = append(nodes, objNodes...)
-						}
-					} else {
-						// repeat if "." is at the end...
-						for _, p := range subpath {
-							if p == "." {
-								nodes = append(nodes, node)
-							} else {
-								break
-							}
-						}
-					}
+					nodes, err = objectTree(b.s3c, subpath, dirObjectPresignedUploadUrl, bucket, opPresignedUploadUrl, nodes)
+				case dirObjectMetadata:
+					nodes, err = objectTree(b.s3c, subpath, dirObjectMetadata, bucket, opMetadata, nodes)
 				case ".", "":
 					nodes = append(nodes, sNode)
 				default:
