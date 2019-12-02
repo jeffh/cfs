@@ -11,10 +11,11 @@ import (
 	"github.com/jeffh/cfs/ninep"
 )
 
-func MainClient(fn func(c *ninep.Client, fs *ninep.FileSystemProxy) error) {
+func MainClient(fn func(c ninep.Client, fs *ninep.FileSystemProxy) error) {
 	var (
 		trace  bool
 		errLog bool
+		recov  bool
 
 		usr   string
 		mount string
@@ -29,6 +30,7 @@ func MainClient(fn func(c *ninep.Client, fs *ninep.FileSystemProxy) error) {
 	flag.IntVar(&timeout, "timeout", 5, "Timeout in seconds for client requests")
 	flag.BoolVar(&trace, "trace", false, "Print trace of 9p server to stdout")
 	flag.BoolVar(&errLog, "err", false, "Print errors of 9p server to stderr")
+	flag.BoolVar(&recov, "recover", false, "Use recover client for talking over flaky networks")
 
 	flag.Parse()
 
@@ -56,29 +58,61 @@ func MainClient(fn func(c *ninep.Client, fs *ninep.FileSystemProxy) error) {
 		errLogger = log.New(os.Stderr, "", log.LstdFlags)
 	}
 
-	clt := ninep.Client{
-		Timeout: time.Duration(timeout) * time.Second,
-		Loggable: ninep.Loggable{
-			ErrorLog: errLogger,
-			TraceLog: traceLogger,
-		},
-	}
+	if recov {
+		clt := ninep.RecoverClient{
+			BasicClient: ninep.BasicClient{
+				Timeout: time.Duration(timeout) * time.Second,
+				Loggable: ninep.Loggable{
+					ErrorLog: errLogger,
+					TraceLog: traceLogger,
+				},
+			},
+			User:  usr,
+			Mount: mount,
+		}
 
-	if err = clt.Connect(addr); err != nil {
-		fmt.Printf("Failed to connect to 9p server: %s\n", err)
-		os.Exit(1)
-	}
-	defer clt.Close()
+		if err = clt.Connect(addr); err != nil {
+			fmt.Printf("Failed to connect to 9p server: %s\n", err)
+			os.Exit(1)
+		}
+		defer clt.Close()
 
-	fs, err := clt.Fs(usr, mount)
-	if err != nil {
-		fmt.Printf("Failed to attach to 9p server: %s\n", err)
-		os.Exit(1)
-	}
+		fs, err := clt.Fs()
+		if err != nil {
+			fmt.Printf("Failed to attach to 9p server: %s\n", err)
+			os.Exit(1)
+		}
 
-	err = fn(&clt, fs)
-	if err != nil {
-		fmt.Printf("Failed: %s\n", err)
-		os.Exit(1)
+		err = fn(&clt, fs)
+		if err != nil {
+			fmt.Printf("Failed: %s\n", err)
+			os.Exit(1)
+		}
+	} else {
+		clt := ninep.BasicClient{
+			Timeout: time.Duration(timeout) * time.Second,
+			Loggable: ninep.Loggable{
+				ErrorLog: errLogger,
+				TraceLog: traceLogger,
+			},
+		}
+
+		if err = clt.Connect(addr); err != nil {
+			fmt.Printf("Failed to connect to 9p server: %s\n", err)
+			os.Exit(1)
+		}
+		defer clt.Close()
+
+		fs, err := clt.Fs(usr, mount)
+		if err != nil {
+			fmt.Printf("Failed to attach to 9p server: %s\n", err)
+			os.Exit(1)
+		}
+
+		err = fn(&clt, fs)
+		if err != nil {
+			fmt.Printf("Failed: %s\n", err)
+			os.Exit(1)
+		}
 	}
 }

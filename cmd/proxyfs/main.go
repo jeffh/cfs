@@ -20,6 +20,8 @@ func main() {
 		usr   string
 		mount string
 
+		recov bool
+
 		timeout int
 
 		// server
@@ -38,6 +40,7 @@ func main() {
 	flag.StringVar(&usr, "user", "", "Username to connect as, defaults to current system user")
 	flag.StringVar(&mount, "mount", "", "Default access path, defaults to empty string")
 	flag.IntVar(&timeout, "timeout", 5, "Timeout in seconds for client requests")
+	flag.BoolVar(&recov, "r", false, "Use recover client for talking over flaky networks")
 
 	// server
 	flag.StringVar(&addr, "addr", "localhost:564", "The address and port to listen the 9p server. Defaults to 'localhost:564'.")
@@ -83,22 +86,46 @@ func main() {
 			}
 			usr = u.Username
 		}
-		clt := ninep.Client{
-			Timeout: time.Duration(timeout) * time.Second,
-			Loggable: ninep.Loggable{
-				ErrorLog: cltErrLogger,
-				TraceLog: cltTraceLogger,
-			},
-		}
-		err = clt.Connect(srcAddr)
-		if err != nil {
-			fmt.Printf("Error: %s", err)
-			os.Exit(1)
-		}
-		fsys, err = clt.Fs(usr, mount)
-		if err != nil {
-			fmt.Printf("Error: %s", err)
-			os.Exit(1)
+		if recov {
+			clt := &ninep.RecoverClient{
+				BasicClient: ninep.BasicClient{
+					Timeout: time.Duration(timeout) * time.Second,
+					Loggable: ninep.Loggable{
+						ErrorLog: cltErrLogger,
+						TraceLog: cltTraceLogger,
+					},
+				},
+				User:  usr,
+				Mount: mount,
+			}
+			err = clt.Connect(srcAddr)
+			if err != nil {
+				fmt.Printf("Error: %s", err)
+				os.Exit(1)
+			}
+			fsys, err = clt.Fs()
+			if err != nil {
+				fmt.Printf("Error: %s", err)
+				os.Exit(1)
+			}
+		} else {
+			clt := &ninep.BasicClient{
+				Timeout: time.Duration(timeout) * time.Second,
+				Loggable: ninep.Loggable{
+					ErrorLog: cltErrLogger,
+					TraceLog: cltTraceLogger,
+				},
+			}
+			err = clt.Connect(srcAddr)
+			if err != nil {
+				fmt.Printf("Error: %s", err)
+				os.Exit(1)
+			}
+			fsys, err = clt.Fs(usr, mount)
+			if err != nil {
+				fmt.Printf("Error: %s", err)
+				os.Exit(1)
+			}
 		}
 	}
 

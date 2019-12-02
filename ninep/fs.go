@@ -61,11 +61,13 @@ type FileInfoMuid interface{ Muid() string }
 // paths)
 // type FileInfoPath interface{ Path() uint32 }
 
+// Interface for a server to verify a client
 // Return nil, nil to indicate no authentication needed
 type Authorizer interface {
 	Auth(ctx context.Context, addr, user, access string) (AuthFileHandle, error)
 }
 
+// Interface for a client to request credentials
 type Authorizee interface {
 	Prove(ctx context.Context, user, access string) error
 }

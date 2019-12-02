@@ -5,6 +5,9 @@ import "errors"
 var (
 	ErrBadFormat = errors.New("Unrecognized 9P protocol")
 
+	ErrUnrecognizedFid = errors.New("unknown fid")
+	ErrFidExists       = errors.New("attempted to create a new fid where one already exists")
+
 	ErrWriteNotAllowed = errors.New("not allowed to write")
 	ErrReadNotAllowed  = errors.New("not allowed to read")
 	ErrSeekNotAllowed  = errors.New("seeking is not allowed")

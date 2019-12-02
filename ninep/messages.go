@@ -405,6 +405,13 @@ const (
 
 func (qt QidType) IsDir() bool { return qt&QT_DIR != 0 }
 
+func (qt QidType) Mode() Mode {
+	var m Mode
+	if qt == QT_FILE {
+	}
+	return m
+}
+
 func (qt QidType) String() string {
 	parts := []string{}
 	if qt == QT_FILE {

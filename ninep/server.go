@@ -198,7 +198,6 @@ type serverConn struct {
 func (s *serverConn) tracef(f string, values ...interface{}) {
 	if s.srv.TraceLog != nil {
 		s.srv.TraceLog.Printf(f, values...)
-		fmt.Printf("hello world\n")
 	}
 }
 

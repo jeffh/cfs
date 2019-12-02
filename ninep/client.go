@@ -28,8 +28,32 @@ type cltChResponse struct {
 	err error
 }
 
-// A 9P client that supports low-level operations and higher-level functionality
-type Client struct {
+// TODO: before we can make this public, we need to audit what fields/methods should be public on Client
+type clientSocketStrategy interface {
+	WriteRequest(c *BasicClient, t *cltRequest) error
+	ReadLoop(ctx context.Context, c *BasicClient)
+}
+
+type Client interface {
+	// Core Client Protocol
+	Clunk(f Fid) error
+	Create(f Fid, name string, perm Mode, mode OpenMode) (q Qid, iounit uint32, err error)
+	Open(f Fid, flag OpenMode) (q Qid, iounit uint32, err error)
+	Read(f Fid, p []byte, offset uint64) (int, error)
+	Remove(f Fid) error
+	Stat(f Fid) (Stat, error)
+	Walk(f, newF Fid, path []string) ([]Qid, error)
+	Write(f Fid, p []byte, offset uint64) (int, error)
+	WriteStat(f Fid, s Stat) error
+
+	// Absent:
+	// Auth() - assumed the constructor will manage this
+	// Attach() - assumed the constructor will manage this
+	// Fs() - implementation specific construction right now. Although may be better to unify
+}
+
+// A 9P client that supports low-level operations and some higher-level functionality.
+type BasicClient struct {
 	m            sync.Mutex
 	rwc          net.Conn
 	requestPool  chan *cltRequest
@@ -45,18 +69,26 @@ type Client struct {
 	MaxMsgSize              uint32
 	MaxSimultaneousRequests uint
 	Dialer                  Dialer
+	MinMsgSize              uint32
 
 	Loggable
+
+	strategy clientSocketStrategy
+	writeReq func(t *cltRequest)
 }
 
-func (c *Client) dial(network, addr string) (net.Conn, error) {
+var _ FileSystemProxyClient = (*BasicClient)(nil)
+
+func (c *BasicClient) MaxMessageSize() uint32 { return c.MaxMsgSize }
+
+func (c *BasicClient) dial(network, addr string) (net.Conn, error) {
 	if c.Dialer == nil {
 		return net.Dial(network, addr)
 	}
 	return c.Dialer.Dial(network, addr)
 }
 
-func (c *Client) abortTransactions(err error) {
+func (c *BasicClient) abortTransactions(err error) {
 	c.mut.Lock()
 	for _, txn := range c.tagToTxns {
 		txn.ch <- cltChResponse{err: err}
@@ -66,20 +98,20 @@ func (c *Client) abortTransactions(err error) {
 	return
 }
 
-func (c *Client) getTransaction(t Tag) (cltTransaction, bool) {
+func (c *BasicClient) getTransaction(t Tag) (cltTransaction, bool) {
 	c.mut.Lock()
 	txn, ok := c.tagToTxns[t]
 	c.mut.Unlock()
 	return txn, ok
 }
 
-func (c *Client) putTransaction(t Tag, txn cltTransaction) {
+func (c *BasicClient) putTransaction(t Tag, txn cltTransaction) {
 	c.mut.Lock()
 	c.tagToTxns[t] = txn
 	c.mut.Unlock()
 }
 
-func (c *Client) sendRequest(txn *cltTransaction) <-chan cltChResponse {
+func (c *BasicClient) sendRequest(txn *cltTransaction) <-chan cltChResponse {
 	// TODO: pool create these channels?
 	txn.ch = make(chan cltChResponse, 1)
 	c.putTransaction(txn.req.tag, *txn)
@@ -93,7 +125,7 @@ func (c *Client) sendRequest(txn *cltTransaction) <-chan cltChResponse {
 
 // Returns an interface that conforms to the file system interface
 // Can be used once Connect*() are called and successful
-func (c *Client) Fs(user, mount string) (*FileSystemProxy, error) {
+func (c *BasicClient) Fs(user, mount string) (*FileSystemProxy, error) {
 	afid := NO_FID
 	f := Fid(1)
 	if c.Authorizee != nil {
@@ -117,7 +149,7 @@ func (c *Client) Fs(user, mount string) (*FileSystemProxy, error) {
 	return &FileSystemProxy{c: c, rootF: f, rootQ: root}, nil
 }
 
-func (c *Client) ConnectTLS(addr string, tlsCfg *tls.Config) error {
+func (c *BasicClient) ConnectTLS(addr string, tlsCfg *tls.Config) error {
 	var err error
 	c.rwc, err = tls.Dial("tcp", addr, tlsCfg)
 	if err != nil {
@@ -130,7 +162,7 @@ func (c *Client) ConnectTLS(addr string, tlsCfg *tls.Config) error {
 	return nil
 }
 
-func (c *Client) Connect(addr string) error {
+func (c *BasicClient) Connect(addr string) error {
 	var err error
 	c.rwc, err = c.dial("tcp", addr)
 	if err != nil {
@@ -143,7 +175,7 @@ func (c *Client) Connect(addr string) error {
 	return nil
 }
 
-func (c *Client) Close() error {
+func (c *BasicClient) Close() error {
 	c.m.Lock()
 	defer c.m.Unlock()
 	if c.readCancel != nil {
@@ -154,7 +186,7 @@ func (c *Client) Close() error {
 	return err
 }
 
-func (c *Client) connect() error {
+func (c *BasicClient) connect() error {
 	{
 		// cleanup / initialization
 		if c.readCancel != nil {
@@ -208,22 +240,27 @@ func (c *Client) connect() error {
 	{
 		ctx, cancel := context.WithCancel(context.Background())
 		c.readCancel = cancel
-		go c.readLoop(ctx)
+		strat := c.getStrategy()
+		go strat.ReadLoop(ctx, c)
 	}
 
 	// we're ready to talk
 	return nil
 }
 
-func (c *Client) writeRequest(t *cltRequest) error {
-	// TODO: GROT this for a different timeout mechnism?
-	// now := time.Now()
-	// c.rwc.SetReadDeadline(now.Add(c.Timeout))
-	// c.rwc.SetWriteDeadline(now.Add(c.Timeout))
-	return t.writeRequest(c.rwc)
+func (c *BasicClient) writeRequest(t *cltRequest) error {
+	strat := c.getStrategy()
+	return strat.WriteRequest(c, t)
 }
 
-func (c *Client) acceptRversion(txn *cltTransaction, maxMsgSize uint32) error {
+func (c *BasicClient) getStrategy() clientSocketStrategy {
+	if c.strategy == nil {
+		c.strategy = &defaultClientSocketStrategy{}
+	}
+	return c.strategy
+}
+
+func (c *BasicClient) acceptRversion(txn *cltTransaction, maxMsgSize uint32) error {
 	c.Tracef("Tversion(%d, %s)", maxMsgSize, VERSION_9P2000)
 	txn.req.Tversion(maxMsgSize, VERSION_9P2000)
 	if err := c.writeRequest(txn.req); err != nil {
@@ -253,11 +290,15 @@ func (c *Client) acceptRversion(txn *cltTransaction, maxMsgSize uint32) error {
 		return ErrBadFormat
 	}
 	c.MaxMsgSize = request.MsgSize()
+	if c.MinMsgSize > c.MaxMsgSize {
+		c.Errorf("server returned size lower than client supports: (server: %d < client: [gave: %d; min: %d])", size, maxMsgSize, c.MinMsgSize)
+		return ErrBadFormat
+	}
 
 	return nil
 }
 
-func (c *Client) allocTxn() cltTransaction {
+func (c *BasicClient) allocTxn() cltTransaction {
 	req := <-c.requestPool
 	req.reset()
 	txn := cltTransaction{
@@ -269,7 +310,7 @@ func (c *Client) allocTxn() cltTransaction {
 	return txn
 }
 
-func (c *Client) resetTxn(t Tag) cltTransaction {
+func (c *BasicClient) resetTxn(t Tag) cltTransaction {
 	c.mut.Lock()
 	oldTxn := c.tagToTxns[t]
 	if oldTxn.res != nil {
@@ -287,7 +328,7 @@ func (c *Client) resetTxn(t Tag) cltTransaction {
 	return txn
 }
 
-func (c *Client) release(t Tag) {
+func (c *BasicClient) release(t Tag) {
 	c.mut.Lock()
 	txn, ok := c.tagToTxns[t]
 	delete(c.tagToTxns, t)
@@ -303,7 +344,23 @@ func (c *Client) release(t Tag) {
 	}
 }
 
-func (c *Client) readLoop(ctx context.Context) {
+// Implements the clientSocketStrategy interface. Provides naive, sane behaviors:
+//
+// - Single write per request
+// - Single read per request
+type defaultClientSocketStrategy struct{}
+
+var _ clientSocketStrategy = (*defaultClientSocketStrategy)(nil)
+
+func (s *defaultClientSocketStrategy) WriteRequest(c *BasicClient, t *cltRequest) error {
+	// TODO: GROT this for a different timeout mechnism?
+	// now := time.Now()
+	// c.rwc.SetReadDeadline(now.Add(c.Timeout))
+	// c.rwc.SetWriteDeadline(now.Add(c.Timeout))
+	return t.writeRequest(c.rwc)
+}
+
+func (s *defaultClientSocketStrategy) ReadLoop(ctx context.Context, c *BasicClient) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -364,7 +421,7 @@ var mappedErrors []error = []error{
 	ErrMissingIterator,
 }
 
-func (c *Client) asError(r Rerror) error {
+func (c *BasicClient) asError(r Rerror) error {
 	msg := r.Ename()
 	// we want to preserve equality of errors to native os-styled errors
 	for _, e := range mappedErrors {
@@ -377,7 +434,7 @@ func (c *Client) asError(r Rerror) error {
 	return err
 }
 
-func (c *Client) Auth(afid Fid, user, mnt string) (Qid, error) {
+func (c *BasicClient) Auth(afid Fid, user, mnt string) (Qid, error) {
 	txn := c.allocTxn()
 	defer c.release(txn.req.tag)
 
@@ -402,7 +459,7 @@ func (c *Client) Auth(afid Fid, user, mnt string) (Qid, error) {
 	}
 }
 
-func (c *Client) Attach(fd, afid Fid, user, mnt string) (Qid, error) {
+func (c *BasicClient) Attach(fd, afid Fid, user, mnt string) (Qid, error) {
 	txn := c.allocTxn()
 	defer c.release(txn.req.tag)
 
@@ -428,7 +485,7 @@ func (c *Client) Attach(fd, afid Fid, user, mnt string) (Qid, error) {
 	}
 }
 
-func (c *Client) Walk(f, newF Fid, path []string) ([]Qid, error) {
+func (c *BasicClient) Walk(f, newF Fid, path []string) ([]Qid, error) {
 	txn := c.allocTxn()
 	defer c.release(txn.req.tag)
 
@@ -471,7 +528,7 @@ func (c *Client) Walk(f, newF Fid, path []string) ([]Qid, error) {
 	}
 }
 
-func (c *Client) Stat(f Fid) (Stat, error) {
+func (c *BasicClient) Stat(f Fid) (Stat, error) {
 	txn := c.allocTxn()
 	defer c.release(txn.req.tag)
 
@@ -498,7 +555,7 @@ func (c *Client) Stat(f Fid) (Stat, error) {
 	}
 }
 
-func (c *Client) WriteStat(f Fid, s Stat) error {
+func (c *BasicClient) WriteStat(f Fid, s Stat) error {
 	txn := c.allocTxn()
 	defer c.release(txn.req.tag)
 
@@ -523,7 +580,7 @@ func (c *Client) WriteStat(f Fid, s Stat) error {
 	}
 }
 
-func (c *Client) Read(f Fid, p []byte, offset uint64) (int, error) {
+func (c *BasicClient) Read(f Fid, p []byte, offset uint64) (int, error) {
 	txn := c.allocTxn()
 	defer c.release(txn.req.tag)
 
@@ -551,7 +608,7 @@ func (c *Client) Read(f Fid, p []byte, offset uint64) (int, error) {
 	}
 }
 
-func (c *Client) Clunk(f Fid) error {
+func (c *BasicClient) Clunk(f Fid) error {
 	txn := c.allocTxn()
 	defer c.release(txn.req.tag)
 
@@ -576,7 +633,7 @@ func (c *Client) Clunk(f Fid) error {
 	}
 }
 
-func (c *Client) Remove(f Fid) error {
+func (c *BasicClient) Remove(f Fid) error {
 	txn := c.allocTxn()
 	defer c.release(txn.req.tag)
 
@@ -602,7 +659,7 @@ func (c *Client) Remove(f Fid) error {
 }
 
 // Like WriteMsg, but conforms to golang's io.Writer interface (max num bytes possible, else error)
-func (c *Client) Write(f Fid, data []byte, offset uint64) (int, error) {
+func (c *BasicClient) Write(f Fid, data []byte, offset uint64) (int, error) {
 	txn := c.allocTxn()
 	defer c.release(txn.req.tag)
 
@@ -640,7 +697,7 @@ func (c *Client) Write(f Fid, data []byte, offset uint64) (int, error) {
 }
 
 // The 9p protocol-level write. Will only write as large as negotiated message buffers allow
-func (c *Client) WriteMsg(f Fid, data []byte, offset uint64) (uint32, error) {
+func (c *BasicClient) WriteMsg(f Fid, data []byte, offset uint64) (uint32, error) {
 	txn := c.allocTxn()
 	defer c.release(txn.req.tag)
 
@@ -673,7 +730,7 @@ func (c *Client) WriteMsg(f Fid, data []byte, offset uint64) (uint32, error) {
 	}
 }
 
-func (c *Client) Open(f Fid, m OpenMode) (q Qid, iounit uint32, err error) {
+func (c *BasicClient) Open(f Fid, m OpenMode) (q Qid, iounit uint32, err error) {
 	txn := c.allocTxn()
 	defer c.release(txn.req.tag)
 
@@ -700,7 +757,7 @@ func (c *Client) Open(f Fid, m OpenMode) (q Qid, iounit uint32, err error) {
 	}
 }
 
-func (c *Client) Create(f Fid, name string, perm Mode, mode OpenMode) (q Qid, iounit uint32, err error) {
+func (c *BasicClient) Create(f Fid, name string, perm Mode, mode OpenMode) (q Qid, iounit uint32, err error) {
 	txn := c.allocTxn()
 	defer c.release(txn.req.tag)
 
@@ -854,8 +911,20 @@ func (f *FileProxy) Delete() error {
 
 ///////////////////////
 
+// The contract that FileSystemProxy expects from the underlying 9p client
+type FileSystemProxyClient interface {
+	Client
+
+	// Extra - Max size the client uses for messaging. FS Proxy uses it for buffer sizes
+	MaxMessageSize() uint32
+
+	// Logging
+	Errorf(format string, values ...interface{})
+	Tracef(format string, values ...interface{})
+}
+
 type FileSystemProxy struct {
-	c     *Client
+	c     FileSystemProxyClient
 	rootF Fid
 	rootQ Qid
 
@@ -886,14 +955,14 @@ func (fs *FileSystemProxy) releaseFid(f Fid) {
 }
 
 func (fs *FileSystemProxy) walk(fid Fid, path string) (Qid, error) {
-	parts := PathSplit(path)[1:]
+	parts := PathSplit(path) //[1:]
 	qids, err := fs.c.Walk(fs.rootF, fid, parts)
 	if err != nil {
 		// Best attempt to notify server that we're dropping this fid
 		fs.c.Clunk(fid)
 		return nil, err
 	}
-	if len(qids) == 0 {
+	if len(qids) != len(parts) {
 		return nil, io.ErrUnexpectedEOF
 	}
 	return qids[len(qids)-1], nil
@@ -978,7 +1047,7 @@ type fileSystemProxyIterator struct {
 
 func (it *fileSystemProxyIterator) Reset() error {
 	it.rst = nil
-	it.buf = make([]byte, it.fp.fs.c.MaxMsgSize)
+	it.buf = make([]byte, it.fp.fs.c.MaxMessageSize())
 	it.offset = 0
 	return nil
 }
