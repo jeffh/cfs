@@ -22,9 +22,11 @@ type fidState struct {
 	m         sync.Mutex
 	serverFid Fid
 	path      []string
+	qtype     QidType
 	flag      OpenMode
 	mode      Mode
 	opened    bool
+	// TODO: someday: we should remember dir offsets for reconnects
 }
 
 // A 9P client that supports low-level operations and higher-level functionality
@@ -362,6 +364,7 @@ func (c *RecoverClient) Fs() (*FileSystemProxy, error) {
 		}
 		c.fids[cltF] = fidState{
 			serverFid: f,
+			qtype:     root.Type(),
 			path:      []string{""},
 			mode:      mode,
 		}
@@ -419,6 +422,7 @@ func (c *RecoverClient) Auth(afid Fid) (Qid, error) {
 		if !c.closing {
 			c.fids[afid] = fidState{
 				serverFid: srvAfid,
+				qtype:     qid.Type(),
 				path:      []string{""},
 				mode:      M_AUTH,
 			}
@@ -451,6 +455,7 @@ func (c *RecoverClient) Attach(fid Fid) (Qid, error) {
 		if !c.closing {
 			c.fids[fid] = fidState{
 				serverFid: srvFid,
+				qtype:     qid.Type(),
 				path:      []string{""},
 				mode:      mode,
 			}
@@ -500,6 +505,7 @@ func (c *RecoverClient) Walk(f, newF Fid, path []string) ([]Qid, error) {
 			copy(finalPath[len(state.path):], path)
 			c.fids[newF] = fidState{
 				serverFid: srvNewF,
+				qtype:     qid.Type(),
 				path:      finalPath,
 				mode:      mode,
 			}
@@ -547,7 +553,7 @@ func (c *RecoverClient) Clunk(f Fid) error {
 
 	// we need to honor delete-on-close behavior
 	var err error
-	if state.mode&M_EXCL != 0 {
+	if state.flag&ORCLOSE != 0 {
 		// As per spec: Remove implies Clunk
 		err = c.BasicClient.Remove(state.serverFid)
 	} else {
@@ -588,12 +594,23 @@ func (c *RecoverClient) Open(f Fid, m OpenMode) (q Qid, iounit uint32, err error
 	if err != nil {
 		return nil, 0, err
 	}
+	// no efficient to fetch again
+	c.m.Lock()
+	state := c.fids[f]
+	c.m.Unlock()
+
+	// TODO: it would be nice to consider how to support exclusive files
+	if state.qtype&QT_EXCL != 0 {
+		return nil, 0, ErrUnsupported
+	}
+
 	q, iounit, err = c.BasicClient.Open(srvF, m)
 	if err == nil {
 		// update fid state
 		c.m.Lock()
 		state := c.fids[f]
 		state.flag = m
+		state.qtype = q.Type()
 		c.fids[f] = state
 		c.m.Unlock()
 	}
@@ -601,6 +618,11 @@ func (c *RecoverClient) Open(f Fid, m OpenMode) (q Qid, iounit uint32, err error
 }
 
 func (c *RecoverClient) Create(f Fid, name string, perm Mode, mode OpenMode) (q Qid, iounit uint32, err error) {
+	// TODO: it would be nice to consider how to support exclusive files
+	if mode&M_EXCL != 0 {
+		return nil, 0, ErrUnsupported
+	}
+
 	srvF, err := c.translateFid(f)
 	if err != nil {
 		return nil, 0, err
