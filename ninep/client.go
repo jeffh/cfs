@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -54,11 +55,12 @@ type Client interface {
 
 // A 9P client that supports low-level operations and some higher-level functionality.
 type BasicClient struct {
-	m            sync.Mutex
-	rwc          net.Conn
-	requestPool  chan *cltRequest
-	responsePool chan *cltResponse
-	readCancel   context.CancelFunc
+	m                sync.Mutex
+	rwc              net.Conn
+	requestPool      chan *cltRequest
+	responsePool     chan *cltResponse
+	pendingResponses chan *cltResponse
+	readCancel       context.CancelFunc
 
 	mut       sync.Mutex
 	tagToTxns map[Tag]cltTransaction
@@ -80,6 +82,12 @@ type BasicClient struct {
 var _ FileSystemProxyClient = (*BasicClient)(nil)
 
 func (c *BasicClient) MaxMessageSize() uint32 { return c.MaxMsgSize }
+func (c *BasicClient) numInflightReqs() int {
+	c.mut.Lock()
+	size := len(c.tagToTxns)
+	c.mut.Unlock()
+	return size
+}
 
 func (c *BasicClient) dial(network, addr string) (net.Conn, error) {
 	if c.Dialer == nil {
@@ -92,6 +100,7 @@ func (c *BasicClient) abortTransactions(err error) {
 	c.mut.Lock()
 	for _, txn := range c.tagToTxns {
 		txn.ch <- cltChResponse{err: err}
+		close(txn.ch)
 	}
 	c.tagToTxns = make(map[Tag]cltTransaction)
 	c.mut.Unlock()
@@ -207,6 +216,10 @@ func (c *BasicClient) connect() error {
 		if c.MaxSimultaneousRequests == 0 {
 			c.MaxSimultaneousRequests = 1
 		}
+
+		c.requestPool = make(chan *cltRequest, c.MaxSimultaneousRequests)
+		c.responsePool = make(chan *cltResponse, c.MaxSimultaneousRequests)
+		c.pendingResponses = make(chan *cltResponse, c.MaxSimultaneousRequests)
 	}
 
 	{ // version exchange
@@ -222,8 +235,6 @@ func (c *BasicClient) connect() error {
 	}
 
 	{ // initialization
-		c.requestPool = make(chan *cltRequest, c.MaxSimultaneousRequests)
-		c.responsePool = make(chan *cltResponse, c.MaxSimultaneousRequests)
 		go func() {
 			for i := uint(0); i < c.MaxSimultaneousRequests; i++ {
 				t := createClientRequest(Tag(i), c.MaxMsgSize)
@@ -263,7 +274,7 @@ func (c *BasicClient) getStrategy() clientSocketStrategy {
 func (c *BasicClient) acceptRversion(txn *cltTransaction, maxMsgSize uint32) error {
 	c.Tracef("Tversion(%d, %s)", maxMsgSize, VERSION_9P2000)
 	txn.req.Tversion(maxMsgSize, VERSION_9P2000)
-	if err := c.writeRequest(txn.req); err != nil {
+	if err := txn.req.writeRequest(c.rwc); err != nil {
 		c.Errorf("failed to write version: %s", err)
 		return err
 	}
@@ -357,7 +368,11 @@ func (s *defaultClientSocketStrategy) WriteRequest(c *BasicClient, t *cltRequest
 	// now := time.Now()
 	// c.rwc.SetReadDeadline(now.Add(c.Timeout))
 	// c.rwc.SetWriteDeadline(now.Add(c.Timeout))
-	return t.writeRequest(c.rwc)
+	err := t.writeRequest(c.rwc)
+	if err == nil {
+		c.pendingResponses <- <-c.responsePool
+	}
+	return err
 }
 
 func (s *defaultClientSocketStrategy) ReadLoop(ctx context.Context, c *BasicClient) {
@@ -366,7 +381,7 @@ func (s *defaultClientSocketStrategy) ReadLoop(ctx context.Context, c *BasicClie
 		case <-ctx.Done():
 			c.abortTransactions(ctx.Err())
 			return
-		case res := <-c.responsePool:
+		case res := <-c.pendingResponses:
 			res.reset()
 			err := res.readReply(c.rwc)
 			// TODO: we rely on underlying locking behavior (for AAN) to
@@ -600,6 +615,7 @@ func (c *BasicClient) Read(f Fid, p []byte, offset uint64) (int, error) {
 		return len(dat), nil
 	case Rerror:
 		err := c.asError(r)
+		fmt.Fprintf(os.Stderr, "READ_ERROR: %#v\n", err)
 		c.Errorf("Expected Rread from server, got error: %s", err)
 		return 0, err
 	default:
@@ -937,6 +953,7 @@ func (fs *FileSystemProxy) allocFid() Fid {
 	fs.mut.Lock()
 	if fs.usedFids == nil {
 		fs.usedFids = make(map[Fid]bool)
+		fs.usedFids[fs.rootF] = true
 	}
 	for i := Fid(2); i < MAX_FID; i++ {
 		if _, ok := fs.usedFids[i]; !ok {

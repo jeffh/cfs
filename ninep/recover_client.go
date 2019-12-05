@@ -3,8 +3,19 @@ package ninep
 import (
 	"context"
 	"crypto/tls"
+	"net"
 	"sync"
 	"sync/atomic"
+	"time"
+)
+
+const (
+	defaultReadTimeout  time.Duration = 2 * time.Second
+	defaultWriteTimeout time.Duration = 2 * time.Second
+
+	// fids reserved by recover client
+	recoverAfid   Fid = 0
+	recoverMntFid Fid = 1
 )
 
 type fidState struct {
@@ -13,6 +24,7 @@ type fidState struct {
 	path      []string
 	flag      OpenMode
 	mode      Mode
+	opened    bool
 }
 
 // A 9P client that supports low-level operations and higher-level functionality
@@ -20,16 +32,37 @@ type RecoverClient struct {
 	BasicClient
 	User, Mount string
 
+	ReadTimeout  time.Duration // how long to wait for reads before attempting to reconnect
+	WriteTimeout time.Duration // how long to wait for writes before attempting to reconnect
+
 	nextClientFid uint32
 	nextServerFid uint32
 
 	m          sync.Mutex
 	fids       map[Fid]fidState // clientFid -> serverFid
 	serverFids []Fid            // allocated server fids
+	addr       string
+	tlsCfg     *tls.Config
+	usesAuth   bool
+	connectTLS bool
 	closing    bool
 }
 
 var _ FileSystemProxyClient = (*RecoverClient)(nil)
+
+func (c *RecoverClient) readTimeout() time.Duration {
+	if c.ReadTimeout == 0 {
+		return defaultReadTimeout
+	}
+	return c.ReadTimeout
+}
+
+func (c *RecoverClient) writeTimeout() time.Duration {
+	if c.WriteTimeout == 0 {
+		return defaultWriteTimeout
+	}
+	return c.WriteTimeout
+}
 
 func (c *RecoverClient) translateFid(client Fid) (server Fid, err error) {
 	var ok bool
@@ -86,6 +119,10 @@ func (c *RecoverClient) unsafeAllocServerFid() Fid {
 try:
 	for { // TODO: abandon after a certain amount of time
 		fid := Fid(atomic.AddUint32(&c.nextClientFid, 1))
+		// 0 and 1 are reserved (0 = auth, 1 = mount)
+		if fid == recoverAfid || fid == recoverMntFid {
+			continue try
+		}
 		for _, f := range c.serverFids {
 			if f == fid {
 				continue try
@@ -95,31 +132,192 @@ try:
 	}
 }
 
-var _ clientSocketStrategy = (*RecoverClient)(nil)
+func (c *RecoverClient) retryConnection() error {
+	const (
+		numRetries = 3
+	)
 
-func (_ *RecoverClient) WriteRequest(c *BasicClient, t *cltRequest) error {
-	return t.writeRequest(c.rwc)
+	c.m.Lock()
+	defer c.m.Unlock()
+
+	// TODO: manage timeouts
+
+	bc := c.BasicClient
+	bc.rwc.SetDeadline(time.Time{})
+	if err := bc.Close(); err != nil {
+		c.Errorf("retryConnection.close: %s\n", err)
+	}
+	var err error
+	for i := 0; i < numRetries; i++ {
+		// TODO: we need to timeout connect attempts as well
+		if c.connectTLS {
+			err = bc.ConnectTLS(c.addr, c.tlsCfg)
+		} else {
+			err = bc.Connect(c.addr)
+		}
+		if err == nil {
+			break
+		}
+	}
+	if err != nil {
+		return err
+	}
+
+	// TODO: we need to auth
+	afid := NO_FID
+	mtfid := Fid(1)
+	if c.usesAuth {
+		afid = 0
+		// TODO: we should retry auth attempts
+		_, err = bc.Auth(afid, c.User, c.Mount)
+		if err != nil {
+			return err
+		}
+	}
+	if err != nil {
+		return err
+	}
+	for i := 0; i < numRetries; i++ {
+		_, err = bc.Attach(mtfid, afid, c.User, c.Mount)
+		if err == nil {
+			break
+		}
+	}
+	if err != nil {
+		return err
+	}
+
+	// since we're a new 9p session, "push" our internal state to the remote
+	// server again
+
+	for _, state := range c.fids {
+		state.m.Lock()
+		if state.serverFid != recoverAfid && state.serverFid != recoverMntFid {
+			for i := 0; i < numRetries; i++ {
+				_, err = bc.Walk(recoverMntFid, state.serverFid, state.path)
+				if err != nil {
+					bc.Clunk(state.serverFid) // just because it's easier right now
+					continue                  // retry
+				}
+				if state.opened {
+					_, _, err = bc.Open(state.serverFid, state.flag)
+					if err != nil {
+						e := bc.Clunk(state.serverFid) // just because it's easier right now
+						if e != nil {
+							return err
+						}
+						continue // retry
+					}
+				}
+			}
+		}
+		state.m.Unlock()
+
+		if err != nil {
+			// failed
+			return err
+		}
+	}
+
+	return err
 }
 
-func (_ *RecoverClient) ReadLoop(ctx context.Context, c *BasicClient) {
+var _ clientSocketStrategy = (*RecoverClient)(nil)
+
+func (rc *RecoverClient) WriteRequest(c *BasicClient, t *cltRequest) error {
+	const numTries = 3
+	tries := 0
+	for {
+		now := time.Now()
+		c.rwc.SetWriteDeadline(now.Add(rc.writeTimeout()))
+		err := t.writeRequest(c.rwc)
+		if err == nil {
+			c.pendingResponses <- <-c.responsePool
+		}
+
+		if e, ok := err.(net.Error); ok {
+			if e.Temporary() {
+				continue
+			}
+			if e.Timeout() {
+				if tries < numTries {
+					tries++
+				} else {
+					retryErr := rc.retryConnection()
+					if retryErr != nil {
+						return err
+					}
+					tries = 0
+				}
+				continue
+			}
+			return err
+		} else {
+			return err
+		}
+	}
+}
+
+func (rc *RecoverClient) ReadLoop(ctx context.Context, c *BasicClient) {
+	retry := make(chan bool, c.MaxSimultaneousRequests)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-retry:
+			loop:
+				for {
+					select {
+					case <-retry:
+						continue
+					default:
+						break loop
+					}
+				}
+				retryErr := rc.retryConnection()
+				if retryErr != nil {
+					c.Errorf("Error read timeout: %s", retryErr)
+					rc.Close()
+					return
+				}
+			}
+		}
+	}()
+
+readLoop:
 	for {
 		select {
 		case <-ctx.Done():
 			c.abortTransactions(ctx.Err())
 			return
-		case res := <-c.responsePool:
+		case res := <-c.pendingResponses:
 			res.reset()
-			err := res.readReply(c.rwc)
-			if err != nil {
-				c.Errorf("Error reading from server: %s", err)
-				c.abortTransactions(err)
-				return
+		readAttempt:
+			for {
+				c.rwc.SetReadDeadline(time.Now().Add(rc.readTimeout()))
+				err := res.readReply(c.rwc)
+
+				if IsTimeoutErr(err) {
+					retry <- true
+					continue readAttempt
+				}
+				if IsTemporaryErr(err) {
+					continue readAttempt
+				}
+				if err != nil {
+					c.Errorf("Error reading from server: %s", err)
+					c.abortTransactions(err)
+					return
+				} else {
+					break readAttempt
+				}
 			}
 
 			txn, ok := c.getTransaction(res.reqTag())
 			if !ok {
 				c.Errorf("Server returned unrecognized tag: %d", res.reqTag())
-				continue
+				continue readLoop
 			}
 			c.Tracef("Server tag: %d", res.Reply().Tag())
 			txn.res = res
@@ -135,11 +333,14 @@ func (_ *RecoverClient) ReadLoop(ctx context.Context, c *BasicClient) {
 //
 // Uses User and Mount fields in RecoverClient
 func (c *RecoverClient) Fs() (*FileSystemProxy, error) {
+	c.m.Lock()
+	cltF := c.unsafeAllocClientFid()
+	c.m.Unlock()
 	afid := NO_FID
-	f := Fid(1)
+	f := recoverMntFid
 	if c.Authorizee != nil {
-		afid = Fid(0)
-		_, err := c.Auth(afid)
+		afid = recoverAfid
+		_, err := c.BasicClient.Auth(afid, c.User, c.Mount)
 		if err == nil {
 			err = c.Authorizee.Prove(context.Background(), c.User, c.Mount)
 			if err != nil {
@@ -151,27 +352,43 @@ func (c *RecoverClient) Fs() (*FileSystemProxy, error) {
 			err = nil
 		}
 	}
-	root, err := c.Attach(f, afid)
+	root, err := c.BasicClient.Attach(f, afid, c.User, c.Mount)
 	if err != nil {
 		return nil, err
+	} else {
+		mode := Mode(0)
+		if root.Type().IsDir() {
+			mode |= M_DIR
+		}
+		c.fids[cltF] = fidState{
+			serverFid: f,
+			path:      []string{""},
+			mode:      mode,
+		}
 	}
-	return &FileSystemProxy{c: c, rootF: f, rootQ: root}, nil
+	return &FileSystemProxy{c: c, rootF: cltF, rootQ: root}, nil
 }
 
-func (c *RecoverClient) init() {
+func (c *RecoverClient) init(usingTLS bool, addr string, tlscfg *tls.Config) {
+	c.m.Lock()
 	c.BasicClient.strategy = c
 	c.BasicClient.MinMsgSize = c.BasicClient.MaxMsgSize
 	c.fids = make(map[Fid]fidState)
+	c.fids[recoverMntFid] = fidState{}
 	c.closing = false
+	c.connectTLS = usingTLS
+	c.addr = addr
+	c.tlsCfg = tlscfg
+	c.m.Unlock()
 }
 
 func (c *RecoverClient) ConnectTLS(addr string, tlsCfg *tls.Config) error {
-	c.init()
+	c.init(true, addr, tlsCfg)
 	return c.BasicClient.ConnectTLS(addr, tlsCfg)
 }
 
 func (c *RecoverClient) Connect(addr string) error {
-	c.init()
+	c.init(false, addr, nil)
 	return c.BasicClient.Connect(addr)
 }
 
@@ -213,27 +430,17 @@ func (c *RecoverClient) Auth(afid Fid) (Qid, error) {
 	return qid, err
 }
 
-func (c *RecoverClient) Attach(fid, afid Fid) (Qid, error) {
-	var srvAfid Fid
-
+// func (c *RecoverClient) Attach(fid, afid Fid) (Qid, error) {
+func (c *RecoverClient) Attach(fid Fid) (Qid, error) {
 	c.m.Lock()
 	srvFid, ok := c.unsafeCreateFidTranslation(fid)
+	c.m.Unlock()
 	if !ok {
-		c.m.Unlock()
 		return nil, ErrFidExists
 	}
-	if afid == NO_FID {
-		srvAfid = NO_FID
-	} else {
-		srvAfid, ok = c.unsafeTranslateFid(afid)
-		if !ok {
-			c.m.Unlock()
-			return nil, ErrUnrecognizedFid
-		}
-	}
-	c.m.Unlock()
 
-	qid, err := c.BasicClient.Attach(srvFid, srvAfid, c.User, c.Mount)
+	qids, err := c.BasicClient.Walk(recoverMntFid, srvFid, []string{})
+	qid := qids[len(qids)-1]
 	// record fid state
 	if err == nil {
 		c.m.Lock()

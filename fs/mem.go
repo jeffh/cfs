@@ -270,16 +270,33 @@ func (m *Mem) Stat(path string) (os.FileInfo, error) {
 }
 
 func (m *Mem) WriteStat(path string, s ninep.Stat) error {
+	var (
+		n        *memNode
+		err      error
+		filename string
+	)
 	parts := ninep.PathSplit(path)
 	last := len(parts) - 1
-	n, err := m.traverse(parts[:last-1])
-	if err != nil {
-		return err
+	if last > 0 {
+		n, err = m.traverse(parts[:last-1])
+		if err != nil {
+			return err
+		}
+		filename = parts[last]
+	} else if last == 0 {
+		n = &m.Root
+		filename = parts[last]
+		if filename == "" {
+			return ninep.ErrInvalidAccess
+		}
+	} else {
+		// cannot write state on root dir
+		return ninep.ErrInvalidAccess
 	}
 
-	if child := n.FindChild(parts[last]); child != nil {
+	if child := n.FindChild(filename); child != nil {
 		if !child.isFile {
-			err = fmt.Errorf("Wstat: Cannot open file: %s", parts[last])
+			err = fmt.Errorf("Wstat: Cannot open file: %s", filename)
 		}
 		// for restoring:
 		// "Either all the changes in wstat request happen, or none of them does:

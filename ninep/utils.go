@@ -40,7 +40,7 @@ func readUpTo(r io.Reader, p []byte) (int, error) {
 		m, e := r.Read(p[n:])
 		n += m
 		if IsTimeoutErr(e) {
-			return 0, err
+			return 0, e
 		} else if IsTemporaryErr(e) {
 			continue
 		}
