@@ -492,8 +492,10 @@ func (c *RecoverClient) Walk(f, newF Fid, path []string) ([]Qid, error) {
 		if !c.closing {
 			mode := Mode(0)
 			state := c.fids[f]
+			var qt QidType
 			if len(qids) > 0 {
 				qid := qids[len(qids)-1]
+				qt = qid.Type()
 				if qid.Type().IsDir() {
 					mode |= M_DIR
 				}
@@ -505,7 +507,7 @@ func (c *RecoverClient) Walk(f, newF Fid, path []string) ([]Qid, error) {
 			copy(finalPath[len(state.path):], path)
 			c.fids[newF] = fidState{
 				serverFid: srvNewF,
-				qtype:     qid.Type(),
+				qtype:     qt,
 				path:      finalPath,
 				mode:      mode,
 			}
@@ -619,7 +621,7 @@ func (c *RecoverClient) Open(f Fid, m OpenMode) (q Qid, iounit uint32, err error
 
 func (c *RecoverClient) Create(f Fid, name string, perm Mode, mode OpenMode) (q Qid, iounit uint32, err error) {
 	// TODO: it would be nice to consider how to support exclusive files
-	if mode&M_EXCL != 0 {
+	if perm&M_EXCL != 0 {
 		return nil, 0, ErrUnsupported
 	}
 
