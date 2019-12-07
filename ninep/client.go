@@ -121,7 +121,6 @@ func (c *BasicClient) putTransaction(t Tag, txn cltTransaction) {
 }
 
 func (c *BasicClient) sendRequest(txn *cltTransaction) <-chan cltChResponse {
-	// TODO: pool create these channels?
 	txn.ch = make(chan cltChResponse, 1)
 	c.putTransaction(txn.req.tag, *txn)
 	if err := c.writeRequest(txn.req); err != nil {
@@ -364,10 +363,6 @@ type defaultClientSocketStrategy struct{}
 var _ clientSocketStrategy = (*defaultClientSocketStrategy)(nil)
 
 func (s *defaultClientSocketStrategy) WriteRequest(c *BasicClient, t *cltRequest) error {
-	// TODO: GROT this for a different timeout mechnism?
-	// now := time.Now()
-	// c.rwc.SetReadDeadline(now.Add(c.Timeout))
-	// c.rwc.SetWriteDeadline(now.Add(c.Timeout))
 	err := t.writeRequest(c.rwc)
 	if err == nil {
 		c.pendingResponses <- <-c.responsePool
@@ -384,13 +379,6 @@ func (s *defaultClientSocketStrategy) ReadLoop(ctx context.Context, c *BasicClie
 		case res := <-c.pendingResponses:
 			res.reset()
 			err := res.readReply(c.rwc)
-			// TODO: we rely on underlying locking behavior (for AAN) to
-			// early-quit blocked reads/writes, but that means we have a chance
-			// to receive this error.
-			// if IsClosedSocket(err) {
-			// 	txn.ch <- cltChResponse{err: err}
-			// 	return
-			// }
 			if err != nil {
 				c.Errorf("Error reading from server: %s", err)
 				c.abortTransactions(err)
@@ -988,7 +976,6 @@ func (fs *FileSystemProxy) walk(fid Fid, path string) (Qid, error) {
 //////////
 
 func (fs *FileSystemProxy) MakeDir(path string, mode Mode) error {
-	// TODO: make directory recursively?
 	fid := fs.allocFid()
 
 	prefix := ""
@@ -1062,6 +1049,8 @@ type fileSystemProxyIterator struct {
 	offset int
 }
 
+var _ FileInfoIterator = (*fileSystemProxyIterator)(nil)
+
 func (it *fileSystemProxyIterator) Reset() error {
 	it.rst = nil
 	it.buf = make([]byte, it.fp.fs.c.MaxMessageSize())
@@ -1087,19 +1076,30 @@ func (it *fileSystemProxyIterator) NextFileInfo() (os.FileInfo, error) {
 	}
 
 	var fi os.FileInfo
-	n, err := it.fp.ReadAt(it.buf, int64(it.offset))
-	// TODO: support reading more than one stat
-	if n > 0 {
-		it.rst = it.buf[:n]
-		for len(it.rst) > 0 {
+	var err error
+
+	if len(it.rst) > 0 {
+		var st Stat
+		st, it.rst, err = readStat(it.fp.fs, it.rst)
+		if err != nil {
+			return nil, err
+		}
+		fi = StatFileInfo{st.Clone()}
+	}
+
+	if fi == nil {
+		var n int
+		n, err = it.fp.ReadAt(it.buf, int64(it.offset))
+		if n > 0 {
+			it.rst = it.buf[:n]
 			var st Stat
 			st, it.rst, err = readStat(it.fp.fs, it.rst)
 			if err != nil {
 				return nil, err
 			}
 			fi = StatFileInfo{st.Clone()}
+			it.offset += n
 		}
-		it.offset += n
 	}
 
 	it.fp.fs.c.Tracef("NextFileInfo() -> %#v, %v", fi, err)

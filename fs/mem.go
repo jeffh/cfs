@@ -74,6 +74,8 @@ func (b *memFileHandle) Close() error { return nil }
 type memNode struct {
 	name   string
 	isFile bool
+	mode   Mode
+	flag   OpenMode
 
 	m        sync.RWMutex
 	children []memNode
@@ -172,7 +174,7 @@ func (m *Mem) MakeDir(path string, mode ninep.Mode) error {
 		return err
 	}
 
-	nc := memNode{name: parts[last], modTime: time.Now()}
+	nc := memNode{name: parts[last], modTime: time.Now(), mode: mode}
 	n.m.Lock()
 	n.children = append(n.children, nc)
 	n.m.Unlock()
@@ -195,7 +197,12 @@ func (m *Mem) CreateFile(path string, flag ninep.OpenMode, mode ninep.Mode) (nin
 			return nil, fmt.Errorf("Topen: Cannot create file where dir exists: %s", n.name)
 		}
 	} else {
-		nc := memNode{name: parts[len(parts)-1], isFile: true, modTime: time.Now()}
+		nc := memNode{
+			name:   parts[len(parts)-1],
+			isFile: true, modTime: time.Now(),
+			flag: flag,
+			mode: mode,
+		}
 		parent.m.Lock()
 		parent.children = append(parent.children, nc)
 		n = &parent.children[len(parent.children)-1]

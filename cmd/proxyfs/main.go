@@ -137,7 +137,6 @@ func main() {
 	}
 
 	srv := ninep.NewServer(fsys, srvErrLogger, srvTraceLogger)
-	// TODO: allow aan dialer
 	if certFile != "" && keyFile != "" {
 		err = srv.ListenAndServeTLS(addr, certFile, keyFile, nil)
 	} else {

@@ -627,7 +627,6 @@ func (o *objectNode) Info() (os.FileInfo, error) {
 
 	key := o.key
 	object := o.obj
-	// TODO: should we cache the object fetch?
 	if o.obj == nil {
 		input := &s3.ListObjectsV2Input{
 			Bucket:  aws.String(o.bucketName),

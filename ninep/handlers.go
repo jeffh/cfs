@@ -80,7 +80,6 @@ func (h *directoryHandle) ReadAt(p []byte, offset int64) (int, error) {
 	size := next.Nbytes()
 	if len(p) < size {
 		fmt.Printf("%d < %d\n", len(p), size)
-		// TODO: return nil one time to indicate too small of a read
 		return 0, io.ErrShortBuffer
 	}
 	copy(p, next.Bytes())
@@ -365,11 +364,10 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 			h.Tracef("srv: Twalk: using WalkableFileSystem")
 			size := int(m.NumWname())
 			parts := make([]string, 0, size)
-			h.Tracef("srv: Twalk: size: %#v\n", m.NumWname())
-			for i := 0; i < size; i++ {
-				// TODO: Wname(i) is O(n) which we could optimize for this case
-				h.Tracef("srv: Twalk: path: %#v\n", m.Wname(i))
-				name := cleanPath(m.Wname(i))
+			h.Tracef("srv: Twalk: size: %#v\n", size)
+			for _, uncleanName := range m.Wnames() {
+				h.Tracef("srv: Twalk: path: %#v\n", uncleanName)
+				name := cleanPath(uncleanName)
 				if strings.Contains(name, string(os.PathSeparator)) {
 					h.Errorf("srv: Twalk: invalid walk element for %s: %v", m.Fid(), name)
 					w.Rerrorf("invalid walk element: %v", name)
@@ -419,9 +417,8 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 			}
 		} else {
 			h.Tracef("srv: Twalk: not using WalkableFileSystem")
-			for i, size := 0, int(m.NumWname()); i < size; i++ {
-				// TODO: Wname(i) is O(n) which we could optimize for this case
-				name := cleanPath(m.Wname(i))
+			for _, uncleanName := range m.Wnames() {
+				name := cleanPath(uncleanName)
 				if name == "/" {
 					path = "/"
 				} else if strings.Contains(name, string(os.PathSeparator)) {

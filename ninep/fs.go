@@ -88,6 +88,8 @@ type fileInfoSliceIterator struct {
 	index int
 }
 
+var _ FileInfoIterator = (*fileInfoSliceIterator)(nil)
+
 func FileInfoSliceIterator(fi []os.FileInfo) FileInfoIterator {
 	return &fileInfoSliceIterator{fi, 0}
 }

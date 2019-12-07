@@ -165,15 +165,19 @@ func (c *RecoverClient) retryConnection() error {
 		return err
 	}
 
-	// TODO: we need to auth
 	afid := NO_FID
 	mtfid := Fid(1)
 	if c.usesAuth {
 		afid = 0
 		// TODO: we should retry auth attempts
-		_, err = bc.Auth(afid, c.User, c.Mount)
-		if err != nil {
-			return err
+		for i := 0; i < numRetries; i++ {
+			_, err = bc.Auth(afid, c.User, c.Mount)
+			if IsTimeoutErr(err) || IsTemporaryErr(err) {
+				continue // retry
+			}
+			if err != nil {
+				return err
+			}
 		}
 	}
 	if err != nil {

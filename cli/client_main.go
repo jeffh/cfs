@@ -30,7 +30,7 @@ func MainClient(fn func(c ninep.Client, fs *ninep.FileSystemProxy) error) {
 	flag.IntVar(&timeout, "timeout", 5, "Timeout in seconds for client requests")
 	flag.BoolVar(&trace, "trace", false, "Print trace of 9p server to stdout")
 	flag.BoolVar(&errLog, "err", false, "Print errors of 9p server to stderr")
-	flag.BoolVar(&recov, "recover", false, "Use recover client for talking over flaky networks")
+	flag.BoolVar(&recov, "recover", false, "Use recover client for talking over flaky/unreliable networks")
 
 	flag.Parse()
 

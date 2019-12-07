@@ -572,7 +572,10 @@ func (s Stat) fill(name, uid, gid, muid string) {
 	// s.muid().SetStringAndLen(muid)
 }
 
-// TODO: use global instead?
+// Useful for creating a WriteStat stat that only wants fsync.
+//
+// Due to the 9p2000 spec, SyncStat is the "zero-value" of Stat. Non-string
+// fields can be modified to only request that field to be modified.
 func SyncStat() Stat {
 	st := NewStat("", "", "", "")
 	st.SetType(NoTouchU16)
@@ -585,6 +588,7 @@ func SyncStat() Stat {
 	return st
 }
 
+// Like SyncStat(), but allows setting the file name.
 func SyncStatWithName(name string) Stat {
 	st := NewStat(name, "", "", "")
 	st.SetType(NoTouchU16)
@@ -913,6 +917,17 @@ func (r Twalk) wname(i int) msgString {
 	return msgString(r[off:])
 }
 func (r Twalk) Wname(i int) string { return r.wname(i).String() }
+func (r Twalk) Wnames() []string {
+	names := make([]string, 0, 16)
+	off := msgOffset + 10
+	size := int(r.NumWname())
+	for j := 0; j < size; j++ {
+		mstr := msgString(r[off:])
+		names = append(names, mstr.String())
+		off += mstr.Nbytes()
+	}
+	return names
+}
 
 /////////////////////////////////////
 // size[4] Rwalk tag[2] nwqid[2] nwqid*(wqid[13])

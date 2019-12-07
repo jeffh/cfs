@@ -295,6 +295,8 @@ type fileInfoNodeIterator struct {
 	it NodeIterator
 }
 
+var _ FileInfoIterator = (*fileInfoNodeIterator)(nil)
+
 func (i *fileInfoNodeIterator) NextFileInfo() (os.FileInfo, error) {
 	node, err := i.it.NextNode()
 	if err != nil {
