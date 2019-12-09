@@ -5,31 +5,48 @@ import (
 	"os"
 	"time"
 
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/jeffh/cfs/ninep"
 )
+
+func stringPtrOrNil(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
 
 type S3Ctx struct {
 	Session *session.Session
 	Client  *s3.S3
 }
 
+// Reasonable default configuration of NewFs(), an empty string of endpoint
+// defaults to AWS' S3 service
+func NewBasicFs(endpoint string) ninep.FileSystem {
+	cfg := &aws.Config{
+		Endpoint: stringPtrOrNil(endpoint),
+	}
+	sess := session.Must(session.NewSession())
+	svc := s3.New(sess, cfg)
+	ctx := S3Ctx{
+		Session: sess,
+		Client:  svc,
+	}
+
+	return NewFs(&ctx)
+}
+
 func NewFs(s3c *S3Ctx) ninep.FileSystem {
 	return &ninep.SimpleWalkableFileSystem{
 		ninep.SimpleFileSystem{
 			Root: ninep.StaticRootDir(
-				dynamicCtlFile("ctl", func(r io.Reader, w io.Writer) {
-					rp := r.(*io.PipeReader)
-					wp := w.(*io.PipeWriter)
-					rp.CloseWithError(ninep.ErrUnsupported)
-					wp.CloseWithError(ninep.ErrUnsupported)
-				}),
-				staticDir("presigned"),
 				&buckets{
 					ninep.SimpleFileInfo{
 						FIName:    "buckets",
-						FIMode:    os.ModeDir | 0777,
+						FIMode:    os.ModeDir | 0755,
 						FIModTime: time.Now(),
 					},
 					s3c,

@@ -74,8 +74,8 @@ func (b *memFileHandle) Close() error { return nil }
 type memNode struct {
 	name   string
 	isFile bool
-	mode   Mode
-	flag   OpenMode
+	mode   ninep.Mode
+	flag   ninep.OpenMode
 
 	m        sync.RWMutex
 	children []memNode

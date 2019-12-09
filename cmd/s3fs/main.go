@@ -6,10 +6,6 @@ import (
 	"github.com/jeffh/cfs/cli"
 	"github.com/jeffh/cfs/fs/s3fs"
 	"github.com/jeffh/cfs/ninep"
-
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3"
 )
 
 func stringPtrOrNil(s string) *string {
@@ -27,16 +23,6 @@ func main() {
 	flag.StringVar(&endpoint, "endpoint", "", "The S3 endpoint to use, defaults to AWS S3's builtin endpoint.")
 
 	cli.BasicServerMain(func() ninep.FileSystem {
-		cfg := &aws.Config{
-			Endpoint: stringPtrOrNil(endpoint),
-		}
-		sess := session.Must(session.NewSession())
-		svc := s3.New(sess, cfg)
-		ctx := s3fs.S3Ctx{
-			Session: sess,
-			Client:  svc,
-		}
-
-		return s3fs.NewFs(&ctx)
+		return s3fs.NewBasicFs(endpoint)
 	})
 }

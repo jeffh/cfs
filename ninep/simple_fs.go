@@ -329,11 +329,21 @@ func (d *StaticReadOnlyDir) CreateDir(name string, mode Mode) error {
 	return ErrUnsupported
 }
 
+func StaticDir(name string, children ...Node) *StaticReadOnlyDir {
+	return &StaticReadOnlyDir{
+		SimpleFileInfo: SimpleFileInfo{
+			FIName: name,
+			FIMode: os.ModeDir | 0755,
+		},
+		Children: children,
+	}
+}
+
 func StaticRootDir(children ...Node) *StaticReadOnlyDir {
 	return &StaticReadOnlyDir{
 		SimpleFileInfo: SimpleFileInfo{
 			FIName: "",
-			FIMode: os.ModeDir | 0777,
+			FIMode: os.ModeDir | 0755,
 		},
 		Children: children,
 	}

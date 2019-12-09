@@ -20,16 +20,11 @@ import (
 //
 // Directory tree:
 //  /objects/data/<key>
-//  /objects/etag/<key>
-//  /objects/storage-class/<key>
-//  /objects/version/<key>
-//  /objects/.../<key>
-//  /create-object
+//  /objects/metadata/<key>
+//  /objects/presigned-download-urls/<key>
+//  /objects/presigned-upload-urls/<key>
 //  /acl
 //  /cors
-//  /encryption
-//  /logging
-//  /location
 
 type buckets struct {
 	ninep.SimpleFileInfo
