@@ -82,7 +82,7 @@ func (o *objectNode) List() (ninep.NodeIterator, error) {
 		prefix:     o.key,
 		itr:        itr,
 	}
-	return itr, nil
+	return it, nil
 }
 
 // func (o *objectNode) Walk(subpath []string) ([]ninep.Node, error) {
