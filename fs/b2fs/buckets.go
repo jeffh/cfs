@@ -39,6 +39,7 @@ func (b *buckets) getBuckets(ignoreCache bool) ([]*b2.Bucket, error) {
 	if now.After(b.expires) || b.cache == nil || ignoreCache {
 		var bkts []*b2.Bucket
 		bkts, err = b.b2c.Client.ListBuckets(ctx)
+		fmt.Printf("[B2.buckets.List] ListBuckets()\n")
 		if err == nil {
 			b.cache = bkts
 		}
@@ -79,9 +80,7 @@ func (b *buckets) Delete(name string) error {
 }
 
 func (b *buckets) List() (ninep.NodeIterator, error) {
-	ctx := context.Background()
 	buckets, err := b.getBuckets(false) // TODO: set true once we implement walk
-	fmt.Printf("[B2.buckets.List] ListBuckets()\n")
 	if err != nil {
 		return nil, err
 	}
@@ -100,98 +99,10 @@ func (b *buckets) List() (ninep.NodeIterator, error) {
 	return ninep.MakeNodeSliceIterator(nodes), nil
 }
 
-// func (b *buckets) Walk(subpath []string) ([]ninep.Node, error) {
-// 	size := len(subpath)
-// 	if size < 1 {
-// 		return nil, nil
-// 	}
-
-// 	var (
-// 		nodes []ninep.Node
-// 		err   error
-// 	)
-
-// 	bucket := subpath[0]
-// 	subpath = subpath[1:]
-
-// 	bNode := &bucketNode{
-// 		s3c:        b.s3c,
-// 		bucketName: bucket,
-// 	}
-
-// 	nodes = append(nodes, bNode)
-// 	if size > 1 {
-// 		operation := subpath[0]
-// 		subpath = subpath[1:]
-// 		switch operation {
-// 		case "objects":
-// 			sNode := objectsRoot("objects", b.s3c, bucket)
-// 			nodes = append(nodes, sNode)
-
-// 			if size > 2 {
-// 				staticDir := subpath[0]
-// 				subpath = subpath[1:]
-
-// 				objectTree := func(s3c *S3Ctx, subpath []string, dir, bucket string, op objectOperation, nodes []ninep.Node) ([]ninep.Node, error) {
-// 					var err error
-// 					var node ninep.Node = objectsForBucket(s3c, dir, bucket, op)
-// 					nodes = append(nodes, node)
-// 					if size > 3 && (subpath[0] != "." && subpath[0] != "") {
-// 						var objNodes []ninep.Node
-// 						objNodes, err = objectsOrObjectForBucket(s3c, bucket, subpath, op)
-// 						if err == nil {
-// 							nodes = append(nodes, objNodes...)
-// 						}
-// 					} else {
-// 						// repeat if "." is at the end...
-// 						for _, p := range subpath {
-// 							if p == "." {
-// 								nodes = append(nodes, node)
-// 							} else {
-// 								break
-// 							}
-// 						}
-// 					}
-// 					return nodes, err
-// 				}
-
-// 				switch staticDir {
-// 				case dirObjectData:
-// 					nodes, err = objectTree(b.s3c, subpath, dirObjectData, bucket, opData, nodes)
-// 				case dirObjectPresignedDownloadUrls:
-// 					nodes, err = objectTree(b.s3c, subpath, dirObjectPresignedDownloadUrls, bucket, opPresignedDownloadUrl, nodes)
-// 				case dirObjectPresignedUploadUrl:
-// 					nodes, err = objectTree(b.s3c, subpath, dirObjectPresignedUploadUrl, bucket, opPresignedUploadUrl, nodes)
-// 				case dirObjectMetadata:
-// 					nodes, err = objectTree(b.s3c, subpath, dirObjectMetadata, bucket, opMetadata, nodes)
-// 				case ".", "":
-// 					nodes = append(nodes, sNode)
-// 				default:
-// 					err = os.ErrNotExist
-// 				}
-// 			}
-// 		case "acl":
-// 			nodes = append(nodes, bucketAclFile(b.s3c, bucket))
-// 		case "cors":
-// 			nodes = append(nodes, bucketCorsFile(b.s3c, bucket))
-// 		case ".", "":
-// 			nodes = append(nodes, bNode)
-// 		default:
-// 			err = os.ErrNotExist
-// 		}
-// 	}
-
-// 	if err != nil {
-// 		return nil, err
-// 	} else {
-// 		return nodes, err
-// 	}
-
-// }
-
 func (b *buckets) CreateFile(name string, flag ninep.OpenMode, mode ninep.Mode) (ninep.FileHandle, error) {
 	return nil, ErrUseMkDirToCreateBucket
 }
+
 func (b *buckets) CreateDir(name string, mode ninep.Mode) error {
 	ctx := context.Background()
 	bType := b2.BucketType(b.bucketType)

@@ -12,6 +12,7 @@ require (
 	github.com/gogo/protobuf v1.3.1 // indirect
 	github.com/google/shlex v0.0.0-20181106134648-c34317bd91bf
 	github.com/gorilla/mux v1.7.3 // indirect
+	github.com/jeffh/blazer v0.5.3
 	github.com/kurin/blazer v0.5.3
 	github.com/morikuni/aec v1.0.0 // indirect
 	github.com/opencontainers/go-digest v1.0.0-rc1 // indirect
