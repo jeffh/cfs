@@ -196,14 +196,16 @@ func (o *objectNode) DeleteWithMode(name string, m ninep.Mode) error {
 	}
 	return nil
 }
+
 func (o *objectNode) Delete(name string) error {
+	var err error
 	ctx := context.Background()
 	object := o.obj
 	key := filepath.Join(o.getKey(), name)
 	if object == nil {
 		object = o.bucket.Object(key)
 	}
-	err := object.Delete(ctx)
+	err = object.Delete(ctx)
 	fmt.Printf("Delete(%#v) | %#v -> %v\n", name, key, err)
 	return mapB2ErrToNinep(err)
 }
@@ -288,7 +290,6 @@ type objectsItr struct {
 func (itr *objectsItr) NextNode() (ninep.Node, error) {
 	if itr.itr.Next() {
 		obj := itr.itr.Object()
-		fmt.Printf("NExtNode: %#v | %#v | %#v\n", obj.Name(), itr.prefix, itr.nameOffset)
 		file := &objectNode{
 			b2c:        itr.b2c,
 			bucket:     itr.bucket,

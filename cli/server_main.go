@@ -49,10 +49,10 @@ func BasicServerMain(createfs func() ninep.FileSystem) {
 	var fsys ninep.FileSystem = createfs()
 
 	if tracefs {
-		fsys = fs.TraceFileSystem{
-			Fs:       fsys,
-			Loggable: ninep.Loggable{log.New(os.Stdout, "[err] ", log.LstdFlags), log.New(os.Stdout, "[trace] ", log.LstdFlags)},
-		}
+		fsys = fs.TraceFs(
+			fsys,
+			ninep.Loggable{log.New(os.Stdout, "[err] ", log.LstdFlags), log.New(os.Stdout, "[trace] ", log.LstdFlags)},
+		)
 	}
 
 	srv := ninep.NewServer(fsys, errLogger, traceLogger)

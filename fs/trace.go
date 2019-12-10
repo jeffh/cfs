@@ -6,6 +6,17 @@ import (
 	ninep "github.com/jeffh/cfs/ninep"
 )
 
+func TraceFs(fs ninep.FileSystem, l ninep.Loggable) ninep.FileSystem {
+	if f, ok := fs.(ninep.WalkableFileSystem); ok {
+		return &WalkableTraceFileSystem{
+			TraceFileSystem{fs, l},
+			f,
+		}
+	} else {
+		return &TraceFileSystem{fs, l}
+	}
+}
+
 // Loggable
 type TraceFileHandle struct {
 	H    ninep.FileHandle
@@ -148,4 +159,35 @@ func (f TraceFileSystem) Delete(path string) error {
 		f.Errorf("FS.Delete(%v) => %s", path, err)
 	}
 	return err
+}
+
+func (f TraceFileSystem) DeleteWithMode(path string, mode ninep.Mode) error {
+	if fs, ok := f.Fs.(ninep.DeleteWithModeFileSystem); ok {
+		f.Tracef("FS.DeleteWithMode(%v, %s)", path, mode)
+		err := fs.DeleteWithMode(path, mode)
+		if err != nil {
+			f.Errorf("FS.DeleteWithMode(%v, %s) => %s", path, mode, err)
+		}
+		return err
+	} else {
+		return f.Delete(path)
+	}
+}
+
+////////////////////
+
+type WalkableTraceFileSystem struct {
+	TraceFileSystem
+	Wfs ninep.WalkableFileSystem
+}
+
+var _ ninep.WalkableFileSystem = (*WalkableTraceFileSystem)(nil)
+
+func (f *WalkableTraceFileSystem) Walk(parts []string) ([]os.FileInfo, error) {
+	f.TraceFileSystem.Tracef("FS.Walk(%v)", parts)
+	infos, err := f.Wfs.Walk(parts)
+	if err != nil {
+		f.TraceFileSystem.Errorf("FS.Walk(%v) => %s", parts, err)
+	}
+	return infos, err
 }

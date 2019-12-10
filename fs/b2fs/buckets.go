@@ -115,6 +115,10 @@ func (b *buckets) CreateDir(name string, mode ninep.Mode) error {
 	return mapB2ErrToNinep(err)
 }
 
+func (b *buckets) Walk(subpath []string) ([]ninep.Node, error) {
+	return ninep.WalkPassthrough(b, subpath)
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 
 type bucketNode struct {

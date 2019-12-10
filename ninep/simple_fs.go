@@ -805,3 +805,28 @@ func WalkTrail(root Node, path []string) ([]Node, error) {
 
 	return history, nil
 }
+
+// Like WalkTrail, but used for a node that doesn't support Walk, but wants to allow children to utilize Walk
+func WalkPassthrough(root Node, path []string) ([]Node, error) {
+	currNode := root
+	parts := path
+	if len(parts) == 0 {
+		return []Node{currNode}, nil
+	}
+	history := make([]Node, 0, len(parts))
+	node, info, err := FindChild(currNode, parts[0])
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() && len(parts) > 1 {
+		return nil, os.ErrNotExist
+	}
+
+	history = append(history, node)
+	moreNodes, err := WalkTrail(node, parts[1:])
+	if err != nil {
+		return history, err
+	}
+	history = append(history, moreNodes...)
+	return history, nil
+}
