@@ -196,7 +196,7 @@ func (o *objectNode) DeleteWithMode(name string, m ninep.Mode) error {
 			object = o.bucket.Object(key)
 		}
 		err := object.Delete(ctx)
-		fmt.Printf("DeleteWithMode(%#v, %s) -> %v\n", name, m, key, err)
+		fmt.Printf("DeleteWithMode(%#v, %s) -> %v %s\n", name, m, key, err)
 		return mapB2ErrToNinep(err)
 	}
 	return nil
