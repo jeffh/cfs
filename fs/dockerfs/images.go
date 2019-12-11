@@ -23,7 +23,7 @@ func imageDir(c *client.Client, name string, img types.ImageSummary) ninep.Node 
 		staticStringFile("size", createdAt, fmt.Sprintf("%d", img.Size)),
 		staticStringFile("shared_size", createdAt, fmt.Sprintf("%d", img.SharedSize)),
 		staticStringFile("virtual_size", createdAt, fmt.Sprintf("%d", img.VirtualSize)),
-		dynamicCtlFile("image", func(r io.Reader, w io.Writer) {
+		dynamicCtlFile("image", func(m ninep.OpenMode, r io.Reader, w io.Writer) {
 			wr := w.(*io.PipeWriter)
 			refs := []string{img.ID}
 			for _, tag := range img.RepoTags {
@@ -65,8 +65,8 @@ func imageListAs(c *client.Client, fn func(results []ninep.Node, img types.Image
 	return children, nil
 }
 
-func imagesCtl(c *client.Client) func(io.Reader, io.Writer) {
-	return func(rdr io.Reader, w io.Writer) {
+func imagesCtl(c *client.Client) func(ninep.OpenMode, io.Reader, io.Writer) {
+	return func(m ninep.OpenMode, rdr io.Reader, w io.Writer) {
 		r := ninep.LineReader{R: rdr}
 		for {
 			cmd, readErr := r.ReadLine()
@@ -222,8 +222,8 @@ func imagesCtl(c *client.Client) func(io.Reader, io.Writer) {
 	}
 }
 
-func imageLoadCtl(c *client.Client) func(io.Reader, io.Writer) {
-	return func(r io.Reader, w io.Writer) {
+func imageLoadCtl(c *client.Client) func(ninep.OpenMode, io.Reader, io.Writer) {
+	return func(m ninep.OpenMode, r io.Reader, w io.Writer) {
 		wr := w.(*io.PipeWriter)
 		out, err := c.ImageLoad(context.Background(), r, false)
 		if err != nil {
@@ -239,8 +239,8 @@ func imageLoadCtl(c *client.Client) func(io.Reader, io.Writer) {
 	}
 }
 
-func imageBuildCtl(c *client.Client) func(io.Reader, io.Writer) {
-	return func(r io.Reader, w io.Writer) {
+func imageBuildCtl(c *client.Client) func(ninep.OpenMode, io.Reader, io.Writer) {
+	return func(m ninep.OpenMode, r io.Reader, w io.Writer) {
 		lr := &ninep.LineReader{R: r}
 		line, err := lr.ReadLine()
 		if err != nil {
@@ -299,8 +299,8 @@ func imageBuildCtl(c *client.Client) func(io.Reader, io.Writer) {
 	}
 }
 
-func imageExportCtl(c *client.Client) func(io.Reader, io.Writer) {
-	return func(r io.Reader, w io.Writer) {
+func imageExportCtl(c *client.Client) func(ninep.OpenMode, io.Reader, io.Writer) {
+	return func(m ninep.OpenMode, r io.Reader, w io.Writer) {
 		wr := w.(*io.PipeWriter)
 		imageIdsByLine, err := ioutil.ReadAll(r)
 		if err != nil {

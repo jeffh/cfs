@@ -1,7 +1,9 @@
 package ninep
 
 import (
+	"bufio"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"unicode"
@@ -69,6 +71,31 @@ func (kv KVMap) GetAll(k string) []string {
 	return v
 }
 
+func (kv KVMap) GetAllInt64s(k string) []int64 {
+	v, _ := kv[k]
+	i := make([]int64, 0, len(v))
+	for _, value := range v {
+		n, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			n = 0
+		}
+		i = append(i, n)
+	}
+	return i
+}
+func (kv KVMap) GetAllInts(k string) []int {
+	v, _ := kv[k]
+	i := make([]int, 0, len(v))
+	for _, value := range v {
+		n, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			n = 0
+		}
+		i = append(i, int(n))
+	}
+	return i
+}
+
 func (kv KVMap) GetOne(k string) string {
 	v, _ := kv[k]
 	if len(v) > 0 {
@@ -78,8 +105,10 @@ func (kv KVMap) GetOne(k string) string {
 }
 
 func strBool(s string) bool {
-	return s == "true" || s == "t" || s == "yes" || s == "y"
+	return s == "true" || s == "t" || s == "yes" || s == "y" || s == "ok"
 }
+
+func (kv KVMap) Has(k string) bool { _, ok := kv[k]; return ok }
 
 func (kv KVMap) GetOneBool(k string) bool { return strBool(kv.GetOne(k)) }
 func (kv KVMap) GetOneInt64(k string) int64 {
@@ -89,11 +118,54 @@ func (kv KVMap) GetOneInt64(k string) int64 {
 	}
 	return n
 }
+func (kv KVMap) GetOnePrefix(prefix string) map[string]string {
+	m := make(map[string]string)
+	size := len(prefix)
+	for k, v := range kv {
+		if strings.HasPrefix(k, prefix) {
+			key := k[size:]
+			if len(v) > 0 {
+				m[key] = v[0]
+			}
+		}
+	}
+	return m
+}
 func (kv KVMap) GetAllPrefix(prefix string) KVMap {
 	m := make(KVMap)
 	size := len(prefix)
 	for k, v := range kv {
 		if strings.HasPrefix(k, prefix) {
+			key := k[size:]
+			m[key] = v
+		}
+	}
+	return m
+}
+func (kv KVMap) GetOnePrefixOrNil(prefix string) map[string]string {
+	var m map[string]string
+	size := len(prefix)
+	for k, v := range kv {
+		if strings.HasPrefix(k, prefix) {
+			if m == nil {
+				m = make(map[string]string)
+			}
+			key := k[size:]
+			if len(v) > 0 {
+				m[key] = v[0]
+			}
+		}
+	}
+	return m
+}
+func (kv KVMap) GetAllPrefixOrNil(prefix string) KVMap {
+	var m KVMap
+	size := len(prefix)
+	for k, v := range kv {
+		if strings.HasPrefix(k, prefix) {
+			if m == nil {
+				m = make(KVMap)
+			}
 			key := k[size:]
 			m[key] = v
 		}
@@ -137,4 +209,42 @@ func ParseKeyValues(value string) KVMap {
 	}
 
 	return m
+}
+
+func ProcessKeyValuesLineLoop(r io.Reader, maxLineLen int, do func(k KVMap, err error) (ok bool)) {
+	if maxLineLen == 0 {
+		maxLineLen = 4096
+	}
+	in := bufio.NewReaderSize(r, maxLineLen)
+	for {
+		line, isPrefix, err := in.ReadLine()
+		if err != nil {
+			if err != io.EOF {
+				if do(nil, err) {
+					continue
+				}
+			}
+			return
+		}
+		if isPrefix {
+			// the line is too long, skip
+			for isPrefix {
+				_, isPrefix, err = in.ReadLine()
+				if err != nil {
+					if err != io.EOF {
+						if do(nil, err) {
+							continue
+						}
+					}
+					return
+				}
+			}
+		} else {
+			kv := ParseKeyValues(string(line))
+			if do(kv, nil) {
+				continue
+			}
+			return
+		}
+	}
 }

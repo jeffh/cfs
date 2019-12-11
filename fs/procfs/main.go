@@ -102,7 +102,7 @@ type Fd struct {
 	SocketRemoteAddr string
 }
 
-func procCtl(r io.Reader, w io.Writer) {
+func procCtl(m ninep.OpenMode, r io.Reader, w io.Writer) {
 }
 
 func procDir(pid Pid) func() ([]ninep.Node, error) {
@@ -206,7 +206,7 @@ func dynamicDir(name string, resolve func() ([]ninep.Node, error)) *ninep.Dynami
 	}
 }
 
-func dynamicCtlFile(name string, thread func(r io.Reader, w io.Writer)) *ninep.SimpleFile {
+func dynamicCtlFile(name string, thread func(m ninep.OpenMode, r io.Reader, w io.Writer)) *ninep.SimpleFile {
 	return ninep.CtlFile(name, 0777, time.Time{}, thread)
 }
 

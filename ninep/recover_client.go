@@ -3,6 +3,7 @@ package ninep
 import (
 	"context"
 	"crypto/tls"
+	"io"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -144,13 +145,14 @@ func (c *RecoverClient) retryConnection() error {
 
 	// TODO: manage timeouts
 
-	bc := c.BasicClient
+	bc := &c.BasicClient
 	bc.rwc.SetDeadline(time.Time{})
 	if err := bc.Close(); err != nil {
 		c.Errorf("retryConnection.close: %s\n", err)
 	}
 	var err error
 	for i := 0; i < numRetries; i++ {
+		c.Tracef("retry connection (attempt=%d)", i)
 		// TODO: we need to timeout connect attempts as well
 		if c.connectTLS {
 			err = bc.ConnectTLS(c.addr, c.tlsCfg)
@@ -271,14 +273,16 @@ func (rc *RecoverClient) ReadLoop(ctx context.Context, c *BasicClient) {
 			select {
 			case <-ctx.Done():
 				return
-			case <-retry:
-			loop:
+			case _, ok := <-retry:
+				if !ok {
+					return
+				}
 				for {
 					select {
 					case <-retry:
 						continue
 					default:
-						break loop
+						break
 					}
 				}
 				retryErr := rc.retryConnection()
@@ -304,6 +308,10 @@ readLoop:
 				c.rwc.SetReadDeadline(time.Now().Add(rc.readTimeout()))
 				err := res.readReply(c.rwc)
 
+				if isClosedErr(err) || err == io.EOF {
+					c.abortTransactions(err)
+					return
+				}
 				if IsTimeoutErr(err) {
 					retry <- true
 					continue readAttempt

@@ -385,13 +385,21 @@ func (h *RWFileHandle) ReadAt(p []byte, off int64) (n int, err error) {
 	if h.R == nil {
 		return 0, io.EOF
 	}
-	return h.R.Read(p)
+	n, err = h.R.Read(p)
+	if err == io.ErrClosedPipe {
+		err = io.EOF
+	}
+	return n, err
 }
 func (h *RWFileHandle) WriteAt(p []byte, off int64) (n int, err error) {
 	if h.W == nil {
 		return 0, io.EOF
 	}
-	return h.W.Write(p)
+	n, err = h.W.Write(p)
+	if err == io.ErrClosedPipe {
+		err = io.EOF
+	}
+	return n, err
 }
 func (h *RWFileHandle) Sync() error { return nil }
 func (h *RWFileHandle) Close() error {

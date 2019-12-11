@@ -58,9 +58,13 @@ func (o *objectNode) getKey() string {
 	return o.key
 }
 
+func (o *objectNode) listObjects(ctx context.Context, key string) *b2.ObjectIterator {
+	return listObjects(ctx, o.bucket, o.op, key)
+}
+
 func (o *objectNode) List() (ninep.NodeIterator, error) {
 	ctx := context.Background()
-	itr := o.bucket.List(ctx, b2.ListPrefix(o.key))
+	itr := o.listObjects(ctx, o.key)
 	fmt.Printf("[B2] ListObjects(_, %#v) | %v\n", o.key, o.getName())
 	it := &objectsItr{
 		b2c:        o.b2c,
@@ -78,7 +82,7 @@ func (o *objectNode) Walk(subpath []string) ([]ninep.Node, error) {
 	}
 	key := filepath.Join(o.getKey(), filepath.Join(subpath...))
 	ctx := context.Background()
-	itr := o.bucket.List(ctx, b2.ListPrefix(key))
+	itr := o.listObjects(ctx, key)
 	fmt.Printf("[B2.objectNode.Walk] List(%#v, %#v)\n", o.bucket.Name(), key)
 	nodes := make([]ninep.Node, 0, len(subpath))
 	for itr.Next() {
@@ -150,6 +154,7 @@ func (o *objectNode) Walk(subpath []string) ([]ninep.Node, error) {
 			}
 		}
 	}
+	fmt.Printf("[B2.objectNode.Walk] NODES: %#v\n", nodes)
 	return nodes, itr.Err()
 }
 
@@ -172,7 +177,7 @@ func (o *objectNode) DeleteWithMode(name string, m ninep.Mode) error {
 	ctx := context.Background()
 	if m.IsDir() {
 		key += "/"
-		itr := o.bucket.List(ctx, b2.ListHidden(), b2.ListPrefix(key))
+		itr := o.listObjects(ctx, key)
 		for itr.Next() {
 			obj := itr.Object()
 			if deleteErr := obj.Delete(ctx); deleteErr != nil {
@@ -288,8 +293,11 @@ type objectsItr struct {
 }
 
 func (itr *objectsItr) NextNode() (ninep.Node, error) {
-	if itr.itr.Next() {
+	for itr.itr.Next() {
 		obj := itr.itr.Object()
+		if !strings.HasPrefix(obj.Name(), itr.prefix+"/") {
+			continue
+		}
 		file := &objectNode{
 			b2c:        itr.b2c,
 			bucket:     itr.bucket,
@@ -307,9 +315,21 @@ func (itr *objectsItr) NextNode() (ninep.Node, error) {
 	return nil, err
 }
 
+func listObjects(ctx context.Context, b *b2.Bucket, op objectOperation, key string) *b2.ObjectIterator {
+	switch op {
+	case opData, opPresignedDownloadUrl, opMetadata:
+		return b.List(ctx, b2.ListPrefix(key))
+	case opVersions:
+		return b.List(ctx, b2.ListPrefix(key), b2.ListHidden())
+	case opUnfinishedUploads:
+		return b.List(ctx, b2.ListPrefix(key), b2.ListUnfinished())
+	}
+	panic("Unsupported")
+}
+
 func (itr *objectsItr) Reset() error {
 	ctx := context.Background()
-	itr.itr = itr.bucket.List(ctx, b2.ListPrefix(itr.prefix))
+	itr.itr = listObjects(ctx, itr.bucket, itr.op, itr.prefix)
 	return nil
 }
 

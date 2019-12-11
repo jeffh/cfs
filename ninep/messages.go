@@ -169,7 +169,7 @@ func (m OpenMode) IsReadable() bool {
 
 // IsWriteOnly() || IsReadWrite()
 func (m OpenMode) IsWriteable() bool {
-	return m&OWRITE != 0
+	return m.IsWriteOnly() || m.IsReadWrite()
 }
 
 func (m OpenMode) String() string {

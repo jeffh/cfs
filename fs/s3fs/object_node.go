@@ -115,8 +115,8 @@ func objectFileHandle(s3c *S3Ctx, bucketName, objectKey string, op objectOperati
 			go func() {
 				defer wr.Close()
 				defer rw.Close()
+				in := bufio.NewReaderSize(wr, 4096)
 				for {
-					in := bufio.NewReaderSize(wr, 4096)
 					line, isPrefix, err := in.ReadLine()
 					if err != nil {
 						if err != io.EOF {

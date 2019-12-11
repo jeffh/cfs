@@ -96,8 +96,8 @@ func objectFileHandle(bucket *b2.Bucket, object *b2.Object, objectKey string, op
 			go func() {
 				defer wr.Close()
 				defer rw.Close()
+				in := bufio.NewReaderSize(wr, 4096)
 				for {
-					in := bufio.NewReaderSize(wr, 4096)
 					line, isPrefix, err := in.ReadLine()
 					if err != nil {
 						if err != io.EOF {
@@ -244,6 +244,9 @@ func objectFileHandle(bucket *b2.Bucket, object *b2.Object, objectKey string, op
 			}()
 			h.R = r
 		}
+	case opVersions:
+	case opUnfinishedUploads:
+		panic("unimplemented")
 	}
 	return h, nil
 }

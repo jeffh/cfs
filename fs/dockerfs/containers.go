@@ -42,8 +42,8 @@ func containerDir(c *client.Client, name string, ct types.Container) ninep.Node 
 		)
 	}
 
-	containerLogs := func(opt types.ContainerLogsOptions) func(r io.Reader, w io.Writer) {
-		return func(r io.Reader, w io.Writer) {
+	containerLogs := func(opt types.ContainerLogsOptions) func(m ninep.OpenMode, r io.Reader, w io.Writer) {
+		return func(m ninep.OpenMode, r io.Reader, w io.Writer) {
 			wr := w.(*io.PipeWriter)
 			out, err := c.ContainerLogs(context.Background(), ct.ID, opt)
 			if err != nil {
@@ -81,7 +81,7 @@ func containerDir(c *client.Client, name string, ct types.Container) ninep.Node 
 			ShowStderr: true,
 			Tail:       "all",
 		})),
-		dynamicCtlFile("stats", func(r io.Reader, w io.Writer) {
+		dynamicCtlFile("stats", func(m ninep.OpenMode, r io.Reader, w io.Writer) {
 			wr := w.(*io.PipeWriter)
 			out, err := c.ContainerStats(context.Background(), ct.ID, true)
 			if err != nil {
@@ -131,7 +131,7 @@ func containerDir(c *client.Client, name string, ct types.Container) ninep.Node 
 				}
 			}
 		}),
-		dynamicCtlFile("stats.json", func(r io.Reader, w io.Writer) {
+		dynamicCtlFile("stats.json", func(m ninep.OpenMode, r io.Reader, w io.Writer) {
 			wr := w.(*io.PipeWriter)
 			out, err := c.ContainerStats(context.Background(), ct.ID, true)
 			if err != nil {
@@ -145,7 +145,7 @@ func containerDir(c *client.Client, name string, ct types.Container) ninep.Node 
 				return
 			}
 		}),
-		dynamicCtlFile("ctl", func(r io.Reader, w io.Writer) {
+		dynamicCtlFile("ctl", func(m ninep.OpenMode, r io.Reader, w io.Writer) {
 			okOrErr := func(wr *io.PipeWriter, err error) bool {
 				if err != nil {
 					wr.CloseWithError(err)
@@ -289,8 +289,8 @@ func containerListByState(c *client.Client, opts types.ContainerListOptions, sta
 	return containerListAs(c, opts, containerById)
 }
 
-func containersCtl(c *client.Client, opts types.ContainerListOptions) func(io.Reader, io.Writer) {
-	return func(rdr io.Reader, w io.Writer) {
+func containersCtl(c *client.Client, opts types.ContainerListOptions) func(ninep.OpenMode, io.Reader, io.Writer) {
+	return func(m ninep.OpenMode, rdr io.Reader, w io.Writer) {
 		r := ninep.LineReader{R: rdr}
 		wr := w.(*io.PipeWriter)
 		var lastContainerID string

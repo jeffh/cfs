@@ -80,7 +80,7 @@ func staticStringFile(name string, modTime time.Time, contents string) *ninep.Si
 	return ninep.StaticReadOnlyFile(name, 0444, modTime, []byte(contents))
 }
 
-func dynamicCtlFile(name string, thread func(r io.Reader, w io.Writer)) *ninep.SimpleFile {
+func dynamicCtlFile(name string, thread func(m ninep.OpenMode, r io.Reader, w io.Writer)) *ninep.SimpleFile {
 	return ninep.CtlFile(name, 0777, time.Time{}, thread)
 }
 

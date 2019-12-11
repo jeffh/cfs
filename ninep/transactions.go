@@ -6,8 +6,10 @@ import (
 )
 
 func zero(b []byte) {
-	for i := range b {
-		b[i] = 0
+	if b != nil {
+		for i := range b {
+			b[i] = 0
+		}
 	}
 }
 

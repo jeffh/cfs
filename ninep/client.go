@@ -99,7 +99,10 @@ func (c *BasicClient) dial(network, addr string) (net.Conn, error) {
 func (c *BasicClient) abortTransactions(err error) {
 	c.mut.Lock()
 	for _, txn := range c.tagToTxns {
-		txn.ch <- cltChResponse{err: err}
+		select {
+		case txn.ch <- cltChResponse{err: err}:
+		case <-time.After(1 * time.Second):
+		}
 		close(txn.ch)
 	}
 	c.tagToTxns = make(map[Tag]cltTransaction)
@@ -189,6 +192,18 @@ func (c *BasicClient) Close() error {
 	if c.readCancel != nil {
 		go c.readCancel()
 		c.readCancel = nil
+		if c.requestPool != nil {
+			close(c.requestPool)
+			c.requestPool = nil
+		}
+		if c.responsePool != nil {
+			close(c.responsePool)
+			c.responsePool = nil
+		}
+		if c.pendingResponses != nil {
+			close(c.pendingResponses)
+			c.pendingResponses = nil
+		}
 	}
 	err := c.rwc.Close()
 	return err
@@ -216,9 +231,11 @@ func (c *BasicClient) connect() error {
 			c.MaxSimultaneousRequests = 1
 		}
 
+		c.m.Lock()
 		c.requestPool = make(chan *cltRequest, c.MaxSimultaneousRequests)
 		c.responsePool = make(chan *cltResponse, c.MaxSimultaneousRequests)
 		c.pendingResponses = make(chan *cltResponse, c.MaxSimultaneousRequests)
+		c.m.Unlock()
 	}
 
 	{ // version exchange
@@ -308,16 +325,19 @@ func (c *BasicClient) acceptRversion(txn *cltTransaction, maxMsgSize uint32) err
 	return nil
 }
 
-func (c *BasicClient) allocTxn() cltTransaction {
-	req := <-c.requestPool
-	req.reset()
-	txn := cltTransaction{
-		req: req,
+func (c *BasicClient) allocTxn() (cltTransaction, bool) {
+	req, ok := <-c.requestPool
+	var txn cltTransaction
+	if ok {
+		req.reset()
+		txn = cltTransaction{
+			req: req,
+		}
+		c.mut.Lock()
+		c.tagToTxns[req.tag] = txn
+		c.mut.Unlock()
 	}
-	c.mut.Lock()
-	c.tagToTxns[req.tag] = txn
-	c.mut.Unlock()
-	return txn
+	return txn, ok
 }
 
 func (c *BasicClient) resetTxn(t Tag) cltTransaction {
@@ -438,7 +458,10 @@ func (c *BasicClient) asError(r Rerror) error {
 }
 
 func (c *BasicClient) Auth(afid Fid, user, mnt string) (Qid, error) {
-	txn := c.allocTxn()
+	txn, ok := c.allocTxn()
+	if !ok {
+		return nil, io.ErrUnexpectedEOF
+	}
 	defer c.release(txn.req.tag)
 
 	txn.req.Tauth(afid, user, mnt)
@@ -463,7 +486,10 @@ func (c *BasicClient) Auth(afid Fid, user, mnt string) (Qid, error) {
 }
 
 func (c *BasicClient) Attach(fd, afid Fid, user, mnt string) (Qid, error) {
-	txn := c.allocTxn()
+	txn, ok := c.allocTxn()
+	if !ok {
+		return nil, io.ErrUnexpectedEOF
+	}
 	defer c.release(txn.req.tag)
 
 	c.Tracef("Tattach(%d, %d, %#v, %#v)", fd, afid, user, mnt)
@@ -489,7 +515,10 @@ func (c *BasicClient) Attach(fd, afid Fid, user, mnt string) (Qid, error) {
 }
 
 func (c *BasicClient) Walk(f, newF Fid, path []string) ([]Qid, error) {
-	txn := c.allocTxn()
+	txn, ok := c.allocTxn()
+	if !ok {
+		return nil, io.ErrUnexpectedEOF
+	}
 	defer c.release(txn.req.tag)
 
 	txn.req.Twalk(f, newF, path)
@@ -532,7 +561,10 @@ func (c *BasicClient) Walk(f, newF Fid, path []string) ([]Qid, error) {
 }
 
 func (c *BasicClient) Stat(f Fid) (Stat, error) {
-	txn := c.allocTxn()
+	txn, ok := c.allocTxn()
+	if !ok {
+		return nil, io.ErrUnexpectedEOF
+	}
 	defer c.release(txn.req.tag)
 
 	txn.req.Tstat(f)
@@ -559,7 +591,10 @@ func (c *BasicClient) Stat(f Fid) (Stat, error) {
 }
 
 func (c *BasicClient) WriteStat(f Fid, s Stat) error {
-	txn := c.allocTxn()
+	txn, ok := c.allocTxn()
+	if !ok {
+		return io.ErrUnexpectedEOF
+	}
 	defer c.release(txn.req.tag)
 
 	txn.req.Twstat(f, s)
@@ -584,7 +619,10 @@ func (c *BasicClient) WriteStat(f Fid, s Stat) error {
 }
 
 func (c *BasicClient) Read(f Fid, p []byte, offset uint64) (int, error) {
-	txn := c.allocTxn()
+	txn, ok := c.allocTxn()
+	if !ok {
+		return 0, io.ErrUnexpectedEOF
+	}
 	defer c.release(txn.req.tag)
 
 	c.Tracef("Read(%s, []byte(%d), %v)", f, len(p), offset)
@@ -613,7 +651,10 @@ func (c *BasicClient) Read(f Fid, p []byte, offset uint64) (int, error) {
 }
 
 func (c *BasicClient) Clunk(f Fid) error {
-	txn := c.allocTxn()
+	txn, ok := c.allocTxn()
+	if !ok {
+		return io.ErrUnexpectedEOF
+	}
 	defer c.release(txn.req.tag)
 
 	txn.req.Tclunk(f)
@@ -638,7 +679,10 @@ func (c *BasicClient) Clunk(f Fid) error {
 }
 
 func (c *BasicClient) Remove(f Fid) error {
-	txn := c.allocTxn()
+	txn, ok := c.allocTxn()
+	if !ok {
+		return io.ErrUnexpectedEOF
+	}
 	defer c.release(txn.req.tag)
 
 	txn.req.Tremove(f)
@@ -664,7 +708,10 @@ func (c *BasicClient) Remove(f Fid) error {
 
 // Like WriteMsg, but conforms to golang's io.Writer interface (max num bytes possible, else error)
 func (c *BasicClient) Write(f Fid, data []byte, offset uint64) (int, error) {
-	txn := c.allocTxn()
+	txn, ok := c.allocTxn()
+	if !ok {
+		return 0, io.ErrUnexpectedEOF
+	}
 	defer c.release(txn.req.tag)
 
 	size := len(data)
@@ -702,7 +749,10 @@ func (c *BasicClient) Write(f Fid, data []byte, offset uint64) (int, error) {
 
 // The 9p protocol-level write. Will only write as large as negotiated message buffers allow
 func (c *BasicClient) WriteMsg(f Fid, data []byte, offset uint64) (uint32, error) {
-	txn := c.allocTxn()
+	txn, ok := c.allocTxn()
+	if !ok {
+		return 0, io.ErrUnexpectedEOF
+	}
 	defer c.release(txn.req.tag)
 
 	size := len(data)
@@ -735,7 +785,10 @@ func (c *BasicClient) WriteMsg(f Fid, data []byte, offset uint64) (uint32, error
 }
 
 func (c *BasicClient) Open(f Fid, m OpenMode) (q Qid, iounit uint32, err error) {
-	txn := c.allocTxn()
+	txn, ok := c.allocTxn()
+	if !ok {
+		return nil, 0, io.ErrUnexpectedEOF
+	}
 	defer c.release(txn.req.tag)
 
 	txn.req.Topen(f, m)
@@ -762,7 +815,10 @@ func (c *BasicClient) Open(f Fid, m OpenMode) (q Qid, iounit uint32, err error) 
 }
 
 func (c *BasicClient) Create(f Fid, name string, perm Mode, mode OpenMode) (q Qid, iounit uint32, err error) {
-	txn := c.allocTxn()
+	txn, ok := c.allocTxn()
+	if !ok {
+		return nil, 0, io.ErrUnexpectedEOF
+	}
 	defer c.release(txn.req.tag)
 
 	txn.req.Tcreate(f, name, uint32(perm), mode)

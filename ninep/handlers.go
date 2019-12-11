@@ -530,6 +530,7 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 		if n == 0 {
 			if err == io.EOF {
 				w.Rread(0)
+				h.Tracef("srv: Tread: EOF: fid %d", m.Fid())
 				return
 			}
 			h.Errorf("srv: Tread: error: fid %d couldn't read: %s", m.Fid(), err)

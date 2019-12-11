@@ -1,6 +1,9 @@
 package ninep
 
-import "errors"
+import (
+	"errors"
+	"strings"
+)
 
 var (
 	ErrBadFormat = errors.New("Unrecognized 9P protocol")
@@ -20,3 +23,7 @@ var (
 	// error from functions that require an iterator given to it (and not nil)
 	ErrMissingIterator = errors.New("Internal error, no iterator returned, but got no error")
 )
+
+func isClosedErr(err error) bool {
+	return err != nil && strings.Index(err.Error(), "use of closed network connection") != -1
+}

@@ -405,6 +405,7 @@ func (s *serverConn) dispatch(ctx context.Context, txn *srvTransaction) {
 			txn.Rflush()
 
 		default:
+			s.tracef("Receive request tag %d", tag)
 			s.handler.Handle9P(ctx, m, txn)
 			if !txn.handled {
 				txn.Rerrorf("not implemented")
@@ -419,7 +420,7 @@ func (s *serverConn) dispatch(ctx context.Context, txn *srvTransaction) {
 	// handle dispatch result
 	select {
 	case <-ctx.Done(): // we can't dissocTag above this otherwise this branch will always resolve
-		txn.Rerrorf("canceling message")
+		txn.Rerrorf("canceling message: %d", req.Tag())
 		s.dissocTag(req.Tag())
 
 	default:

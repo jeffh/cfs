@@ -534,7 +534,7 @@ func DynamicReadOnlyFile(name string, mode os.FileMode, modTime time.Time, open 
 	}
 }
 
-func CtlFile(name string, mode os.FileMode, modTime time.Time, thread func(r io.Reader, w io.Writer)) *SimpleFile {
+func CtlFile(name string, mode os.FileMode, modTime time.Time, thread func(m OpenMode, r io.Reader, w io.Writer)) *SimpleFile {
 	return &SimpleFile{
 		FileInfo: &SimpleFileInfo{
 			FIName:    name,
@@ -545,7 +545,7 @@ func CtlFile(name string, mode os.FileMode, modTime time.Time, thread func(r io.
 			r1, w1 := io.Pipe()
 			r2, w2 := io.Pipe()
 			go func() {
-				thread(r1, w2)
+				thread(m, r1, w2)
 				r1.Close()
 				w2.Close()
 			}()
@@ -674,6 +674,7 @@ func FindChild(root Node, name string) (Node, os.FileInfo, error) {
 
 				if info.Name() == name {
 					foundNode = node
+					err = nil
 					break
 				}
 			}
@@ -775,6 +776,7 @@ func WalkTrail(root Node, path []string) ([]Node, error) {
 	history := make([]Node, 0, len(parts))
 	// history = append(history, currNode)
 
+	last := len(parts) - 1
 	for i, part := range parts {
 		var (
 			node Node
@@ -795,7 +797,7 @@ func WalkTrail(root Node, path []string) ([]Node, error) {
 			return nil, err
 		}
 
-		if !info.IsDir() {
+		if last != i && !info.IsDir() {
 			return nil, os.ErrNotExist
 		}
 
@@ -823,10 +825,12 @@ func WalkPassthrough(root Node, path []string) ([]Node, error) {
 	}
 
 	history = append(history, node)
-	moreNodes, err := WalkTrail(node, parts[1:])
-	if err != nil {
-		return history, err
+	if len(parts) > 1 {
+		moreNodes, err := WalkTrail(node, parts[1:])
+		if err != nil {
+			return history, err
+		}
+		history = append(history, moreNodes...)
 	}
-	history = append(history, moreNodes...)
 	return history, nil
 }
