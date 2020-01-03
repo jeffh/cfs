@@ -1,4 +1,4 @@
-package dirfs
+package fs
 
 import (
 	"fmt"
