@@ -155,7 +155,7 @@ func (ufs *unionFS) Delete(path string) error {
 	return os.ErrNotExist
 }
 
-// NewBasicUnionFS creates a new Plan9-styled union fs - only top-level directory is unioned.
+// NewBasicUnionFS creates a new union fs - where all directories are unioned.
 // File systems are accessed in order until one file system can provide. This means the top-most
 // directories of each file system is joined. File and directories in each
 // top-level directory are shared.
