@@ -1,4 +1,4 @@
-package fs
+package dirfs
 
 import (
 	"fmt"
@@ -15,24 +15,29 @@ import (
 
 ////////////////////////////////////////////////
 
-// Implements a basic file system to the local file system with a given root dir
+// Dir implements a basic file system to the local file system with a given root dir.
+// The type represents the root directory for this file system
 type Dir string
 
+// MakeDir creates a local directory as subdirectory of the root directory of Dir
 func (d Dir) MakeDir(path string, mode ninep.Mode) error {
 	fullPath := filepath.Join(string(d), path)
 	return os.Mkdir(fullPath, mode.ToOsMode()&os.ModePerm)
 }
 
+// CreateFile creates a new file as a descendent of the root directory of Dir
 func (d Dir) CreateFile(path string, flag ninep.OpenMode, mode ninep.Mode) (ninep.FileHandle, error) {
 	fullPath := filepath.Join(string(d), path)
 	return os.OpenFile(fullPath, flag.ToOsFlag()|os.O_CREATE, mode.ToOsMode())
 }
 
+// OpenFile opens an existing file that is a descendent of the root directory of Dir for reading/writing
 func (d Dir) OpenFile(path string, flag ninep.OpenMode) (ninep.FileHandle, error) {
 	fullPath := filepath.Join(string(d), path)
 	return os.OpenFile(fullPath, flag.ToOsFlag(), 0)
 }
 
+// ListDir lists all files and directories in a given subdirectory
 func (d Dir) ListDir(path string) (ninep.FileInfoIterator, error) {
 	fullPath := filepath.Join(string(d), path)
 	infos, err := ioutil.ReadDir(fullPath)
@@ -56,6 +61,7 @@ func (d Dir) ListDir(path string) (ninep.FileInfoIterator, error) {
 	return ninep.FileInfoSliceIterator(infos), nil
 }
 
+// Stat returns information about a given file or directory
 func (d Dir) Stat(path string) (os.FileInfo, error) {
 	fullPath := filepath.Join(string(d), path)
 	info, err := os.Stat(fullPath)
@@ -74,6 +80,7 @@ func (d Dir) Stat(path string) (os.FileInfo, error) {
 	return info, err
 }
 
+// WriteStat updates file or directory metadata.
 func (d Dir) WriteStat(path string, s ninep.Stat) error {
 	fullPath := filepath.Join(string(d), path)
 	// for restoring:
@@ -113,26 +120,26 @@ func (d Dir) WriteStat(path string, s ninep.Stat) error {
 		}()
 	}
 
-	changeGid := !s.GidNoTouch()
-	changeUid := !s.UidNoTouch()
+	changeGID := !s.GidNoTouch()
+	changeUID := !s.UidNoTouch()
 	// NOTE(jeff): technically, the spec disallows changing uids
-	// if changeUid != "" {
+	// if changeUID != "" {
 	// 	return errChangeUidNotAllowed
 	// }
-	if changeGid || changeUid {
-		oldUid := -1
-		oldGid := -1
+	if changeGID || changeUID {
+		oldUID := -1
+		oldGID := -1
 
 		statT, ok := info.Sys().(*syscall.Stat_t)
 		if !ok {
 			return ninep.ErrUnsupported
 		}
-		oldUid = int(statT.Uid)
-		oldGid = int(statT.Gid)
+		oldUID = int(statT.Uid)
+		oldGID = int(statT.Gid)
 
 		uid := -1
 		gid := -1
-		if changeUid {
+		if changeUID {
 			var usr *user.User
 			usr, err = user.Lookup(s.Uid())
 			if err != nil {
@@ -143,7 +150,7 @@ func (d Dir) WriteStat(path string, s ninep.Stat) error {
 				return err
 			}
 		}
-		if changeGid {
+		if changeGID {
 			var grp *user.Group
 			grp, err = user.LookupGroup(s.Gid())
 			if err != nil {
@@ -155,11 +162,11 @@ func (d Dir) WriteStat(path string, s ninep.Stat) error {
 			}
 		}
 
-		if changeUid && changeGid {
+		if changeUID && changeGID {
 			err = os.Chown(fullPath, uid, gid)
-		} else if changeGid {
+		} else if changeGID {
 			err = os.Chown(fullPath, -1, gid)
-		} else if changeUid {
+		} else if changeUID {
 			err = os.Chown(fullPath, uid, -1)
 		}
 		if err != nil {
@@ -167,7 +174,7 @@ func (d Dir) WriteStat(path string, s ninep.Stat) error {
 		}
 		defer func() {
 			if err != nil {
-				os.Chown(fullPath, oldUid, oldGid)
+				os.Chown(fullPath, oldUID, oldGID)
 			}
 		}()
 	}
@@ -210,6 +217,7 @@ func (d Dir) WriteStat(path string, s ninep.Stat) error {
 	return err
 }
 
+// Delete a file or directory. Deleting the root directory will be an error.
 func (d Dir) Delete(path string) error {
 	fullPath := filepath.Join(string(d), path)
 	if fullPath == string(d) {
