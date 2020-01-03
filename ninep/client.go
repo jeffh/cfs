@@ -858,6 +858,8 @@ type FileProxy struct {
 	info os.FileInfo
 }
 
+var _ FileHandle = (*FileProxy)(nil)
+
 func (f *FileProxy) Type() QidType     { return f.qid.Type() }
 func (f *FileProxy) IsDir() bool       { return f.qid.Type().IsDir() }
 func (f *FileProxy) IsSymLink() bool   { return f.qid.Type()&QT_SYMLINK != 0 }

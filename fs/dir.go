@@ -50,7 +50,7 @@ func (d Dir) ListDir(path string) (ninep.FileInfoIterator, error) {
 			return nil, err
 		}
 
-		if fullPath == string(d) {
+		if fullPath == string(d) && (info.Name() == "" || info.Name() == ".") {
 			info = ninep.FileInfoWithName(info, "")
 		}
 

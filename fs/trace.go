@@ -1,7 +1,9 @@
 package fs
 
 import (
+	"fmt"
 	"os"
+	"strings"
 
 	ninep "github.com/jeffh/cfs/ninep"
 )
@@ -120,9 +122,17 @@ func (f TraceFileSystem) ListDir(path string) (ninep.FileInfoIterator, error) {
 		itr.Reset()
 	}
 	if len(v) > 20 {
-		f.Tracef("FS.ListDir(%v) => (%#v..., %s)", path, v[:20], err)
+		sb := []string{}
+		for _, j := range v[:20] {
+			sb = append(sb, fmt.Sprintf("FileInfo[%#v]", j.Name()))
+		}
+		f.Tracef("FS.ListDir(%v) => (%#v..., %s)", path, strings.Join(sb, ", "), err)
 	} else {
-		f.Tracef("FS.ListDir(%v) => (%#v, %s)", path, v, err)
+		sb := []string{}
+		for _, j := range v {
+			sb = append(sb, fmt.Sprintf("FileInfo[%#v]", j.Name()))
+		}
+		f.Tracef("FS.ListDir(%v) => (%#v, %s)", path, strings.Join(sb, ", "), err)
 	}
 	if err != nil {
 		f.Errorf("FS.ListDir(%v) => (_, %s)", path, err)
