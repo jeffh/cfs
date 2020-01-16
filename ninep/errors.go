@@ -24,6 +24,8 @@ var (
 	ErrMissingIterator = errors.New("Internal error, no iterator returned, but got no error")
 )
 
+var ErrServerClosed = errors.New("server closed")
+
 func isClosedErr(err error) bool {
 	return err != nil && strings.Index(err.Error(), "use of closed network connection") != -1
 }

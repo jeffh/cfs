@@ -56,6 +56,19 @@ const (
 	DefaultMaxInflightRequestsPerSession = 10
 )
 
+type onceCloseListener struct {
+	net.Listener
+	once     sync.Once
+	closeErr error
+}
+
+func (oc *onceCloseListener) Close() error {
+	oc.once.Do(oc.close)
+	return oc.closeErr
+}
+
+func (oc *onceCloseListener) close() { oc.closeErr = oc.Listener.Close() }
+
 type Server struct {
 	Loggable
 	Handler Handler
@@ -68,6 +81,10 @@ type Server struct {
 	TLSConfig *tls.Config
 
 	MaxMsgSize uint32
+
+	mu       sync.Mutex
+	listener net.Listener
+	doneChan chan struct{}
 }
 
 // Provides an easy way to create a server (you can still construct the Server
@@ -83,6 +100,29 @@ func NewServer(fs FileSystem, errLogger, traceLogger Logger) *Server {
 			Loggable: loggable,
 		},
 		Loggable: loggable,
+	}
+}
+
+func (s *Server) getDoneChan() <-chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.getDoneChanLocked()
+}
+
+func (s *Server) getDoneChanLocked() chan struct{} {
+	if s.doneChan == nil {
+		s.doneChan = make(chan struct{})
+	}
+	return s.doneChan
+}
+
+func (s *Server) closeDoneChanLocked() {
+	ch := s.getDoneChanLocked()
+	select {
+	case <-ch:
+		// already closed
+	default:
+		close(ch)
 	}
 }
 
@@ -108,6 +148,10 @@ func (s *Server) ServeTLS(l net.Listener, certFile, keyFile string) error {
 
 func (s *Server) Serve(l net.Listener) error {
 	s.Tracef("listening on %s", l.Addr())
+	l = &onceCloseListener{Listener: l}
+	s.mu.Lock()
+	s.listener = l
+	s.mu.Unlock()
 
 	if s.InitialTimeout == 0 {
 		s.InitialTimeout = DefaultInitialTimeout
@@ -129,6 +173,11 @@ func (s *Server) Serve(l net.Listener) error {
 	for {
 		conn, err := l.Accept()
 		if err != nil {
+			select {
+			case <-s.getDoneChan():
+				return ErrServerClosed
+			default:
+			}
 			if IsTemporaryErr(err) {
 				retries++
 				wait := time.Duration(math.Min(math.Pow(float64(10*time.Millisecond), float64(retries)), float64(maxWait)))
@@ -175,6 +224,15 @@ func (s *Server) ListenAndServeTLS(addr string, certFile, keyFile string, d Dial
 		return err
 	}
 	return s.ServeTLS(ln, certFile, keyFile)
+}
+
+func (s *Server) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closeDoneChanLocked()
+	err := s.listener.Close()
+	s.listener = nil
+	return err
 }
 
 /////////////////////////////////////////////////////////////
