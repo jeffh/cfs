@@ -242,7 +242,11 @@ func (rc *RecoverClient) WriteRequest(c *BasicClient, t *cltRequest) error {
 		c.rwc.SetWriteDeadline(now.Add(rc.writeTimeout()))
 		err := t.writeRequest(c.rwc)
 		if err == nil {
-			c.pendingResponses <- <-c.responsePool
+			res := <-c.responsePool
+			if res == nil {
+				panic(fmt.Errorf("res is nil: %v\n", res))
+			}
+			c.pendingResponses <- res
 		}
 
 		if e, ok := err.(net.Error); ok {

@@ -16,23 +16,32 @@ import (
 )
 
 // A helper function for starting a fuse mount point
-func MountAndServeFS(f ninep.FileSystem, mountpoint string, opts ...fuse.MountOption) error {
-	defer fuse.Unmount(mountpoint)
+func MountAndServeFS(ctx context.Context, f ninep.FileSystem, mountpoint string, opts ...fuse.MountOption) error {
 	c, err := fuse.Mount(mountpoint, opts...)
 	if err != nil {
 		return err
 	}
-	defer c.Close()
 
-	err = fs.Serve(c, &Fs{Fs: f})
-	if err != nil {
-		return err
-	}
+	subctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	defer c.Close()
+	defer fuse.Unmount(mountpoint)
+
+	errCh := make(chan error)
+	go func() {
+		errCh <- fs.Serve(c, &Fs{Fs: f})
+	}()
 
 	// check if the mount process has an error to report
 	<-c.Ready
 	if err := c.MountError; err != nil {
 		return err
+	}
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-subctx.Done():
 	}
 	return nil
 }
