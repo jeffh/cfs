@@ -3,6 +3,7 @@ package ninep
 import (
 	"errors"
 	"strings"
+	"syscall"
 )
 
 var (
@@ -28,4 +29,15 @@ var ErrServerClosed = errors.New("server closed")
 
 func isClosedErr(err error) bool {
 	return err != nil && strings.Index(err.Error(), "use of closed network connection") != -1
+}
+
+func isRetryable(err error) bool {
+	return errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, syscall.EAGAIN) ||
+		errors.Is(err, syscall.EALREADY) ||
+		errors.Is(err, syscall.EBUSY) ||
+		errors.Is(err, syscall.EINTR) ||
+		errors.Is(err, syscall.EINPROGRESS) ||
+		errors.Is(err, syscall.ETIMEDOUT) ||
+		errors.Is(err, syscall.ETIME)
 }

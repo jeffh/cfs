@@ -3,6 +3,7 @@ package ninep
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -190,6 +191,7 @@ func (c *RecoverClient) retryConnection() error {
 		if err == nil {
 			break
 		}
+		fmt.Printf("Attach error: %s\n")
 	}
 	if err != nil {
 		return err
@@ -247,7 +249,7 @@ func (rc *RecoverClient) WriteRequest(c *BasicClient, t *cltRequest) error {
 			if e.Temporary() {
 				continue
 			}
-			if e.Timeout() {
+			if e.Timeout() || isRetryable(e) {
 				if tries < numTries {
 					tries++
 				} else {
@@ -260,6 +262,17 @@ func (rc *RecoverClient) WriteRequest(c *BasicClient, t *cltRequest) error {
 				continue
 			}
 			return err
+		} else if isRetryable(e) {
+			if tries < numTries {
+				tries++
+			} else {
+				retryErr := rc.retryConnection()
+				if retryErr != nil {
+					return err
+				}
+				tries = 0
+			}
+			continue
 		} else {
 			return err
 		}

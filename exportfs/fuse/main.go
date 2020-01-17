@@ -17,6 +17,7 @@ import (
 
 // A helper function for starting a fuse mount point
 func MountAndServeFS(f ninep.FileSystem, mountpoint string, opts ...fuse.MountOption) error {
+	defer fuse.Unmount(mountpoint)
 	c, err := fuse.Mount(mountpoint, opts...)
 	if err != nil {
 		return err
