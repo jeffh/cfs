@@ -59,6 +59,7 @@ func MainClient(fn func(c ninep.Client, fs *ninep.FileSystemProxy) error) {
 	}
 
 	if recov {
+		fmt.Printf("Using recover client\n")
 		clt := ninep.RecoverClient{
 			BasicClient: ninep.BasicClient{
 				Timeout: time.Duration(timeout) * time.Second,
