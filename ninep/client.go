@@ -81,6 +81,13 @@ type BasicClient struct {
 
 var _ FileSystemProxyClient = (*BasicClient)(nil)
 
+func (c *BasicClient) pendingResponsesCh() chan *cltResponse {
+	c.m.Lock()
+	ch := c.pendingResponses
+	c.m.Unlock()
+	return ch
+}
+
 func (c *BasicClient) MaxMessageSize() uint32 { return c.MaxMsgSize }
 func (c *BasicClient) numInflightReqs() int {
 	c.mut.Lock()
@@ -385,18 +392,22 @@ var _ clientSocketStrategy = (*defaultClientSocketStrategy)(nil)
 func (s *defaultClientSocketStrategy) WriteRequest(c *BasicClient, t *cltRequest) error {
 	err := t.writeRequest(c.rwc)
 	if err == nil {
-		c.pendingResponses <- <-c.responsePool
+		c.pendingResponsesCh() <- <-c.responsePool
 	}
 	return err
 }
 
 func (s *defaultClientSocketStrategy) ReadLoop(ctx context.Context, c *BasicClient) {
+	pendingResponses := c.pendingResponsesCh()
 	for {
 		select {
 		case <-ctx.Done():
 			c.abortTransactions(ctx.Err())
 			return
-		case res := <-c.pendingResponses:
+		case res, ok := <-pendingResponses:
+			if !ok {
+				return
+			}
 			res.reset()
 			err := res.readReply(c.rwc)
 			if err != nil {
