@@ -1,4 +1,4 @@
-package unionfs
+package mirrorfs
 
 import (
 	"os"
@@ -18,14 +18,52 @@ func init() {
 	}
 }
 
-type unionFS struct {
-	fsms  []proxy.FileSystemMount // for reading
-	wfsms []proxy.FileSystemMount // for writing
+type WALOperationKind int
+
+const (
+	WALOpCreateFile WALOperationKind = iota
+	WALOpMakeDir
+	WALOpOpenFile
+	WALOpWriteStat
+	WALOpDelete
+	WALOpFileWrite
+	WALOpFileClose
+)
+
+type WALOperationState int
+
+const (
+	WALOpStateRequested WALOperationState = iota
+	WALOpStateValid
+	WALOpStateStarted
+	WALOpStateFinished
+)
+
+type WALOperation struct {
+	Id   uint64
+	Kind WALOperationKind
+	Path string
+
+	// confirmed by other members
+	State WALOperationState
+
+	// create/open
+	Flag ninep.Flag
+	Mode ninep.Mode
+
+	// write
+	Data   []byte
+	Offset int64
 }
 
-var _ ninep.FileSystem = (*unionFS)(nil)
+type mirrorFS struct {
+	walFS proxy.FileSystemMount   // for WAL log
+	fsms  []proxy.FileSystemMount // for reading/writing
+}
 
-func (ufs *unionFS) MakeDir(path string, mode ninep.Mode) error {
+var _ ninep.FileSystem = (*mirrorFS)(nil)
+
+func (ufs *mirrorFS) MakeDir(path string, mode ninep.Mode) error {
 	for i, fsm := range ufs.wfsms {
 		err := fsm.FS.MakeDir(filepath.Join(fsm.Prefix, path), mode)
 		if err != nil {
@@ -41,7 +79,7 @@ func (ufs *unionFS) MakeDir(path string, mode ninep.Mode) error {
 	}
 	return nil
 }
-func (ufs *unionFS) CreateFile(path string, flag ninep.OpenMode, mode ninep.Mode) (ninep.FileHandle, error) {
+func (ufs *mirrorFS) CreateFile(path string, flag ninep.OpenMode, mode ninep.Mode) (ninep.FileHandle, error) {
 	hs := make([]ninep.FileHandle, 0, len(ufs.wfsms))
 	for i, fsm := range ufs.wfsms {
 		h, err := fsm.FS.CreateFile(filepath.Join(fsm.Prefix, path), flag, mode)
@@ -59,7 +97,7 @@ func (ufs *unionFS) CreateFile(path string, flag ninep.OpenMode, mode ninep.Mode
 	}
 	return &fanoutHandle{ufs.wfsms, hs, path}, nil
 }
-func (ufs *unionFS) OpenFile(path string, flag ninep.OpenMode) (ninep.FileHandle, error) {
+func (ufs *mirrorFS) OpenFile(path string, flag ninep.OpenMode) (ninep.FileHandle, error) {
 	targetFSMs := ufs.wfsms
 	if flag.IsReadOnly() {
 		targetFSMs = ufs.fsms
@@ -81,14 +119,14 @@ func (ufs *unionFS) OpenFile(path string, flag ninep.OpenMode) (ninep.FileHandle
 	}
 	return &fanoutHandle{fsms, hs, path}, nil
 }
-func (ufs *unionFS) ListDir(path string) (ninep.FileInfoIterator, error) {
+func (ufs *mirrorFS) ListDir(path string) (ninep.FileInfoIterator, error) {
 	uitr := makeUnionIterator(path, ufs.fsms)
 	if !uitr.hasDir() {
 		return nil, os.ErrNotExist
 	}
 	return uitr, nil
 }
-func (ufs *unionFS) Stat(path string) (os.FileInfo, error) {
+func (ufs *mirrorFS) Stat(path string) (os.FileInfo, error) {
 	for _, fsm := range ufs.fsms {
 		fi, err := fsm.FS.Stat(filepath.Join(fsm.Prefix, path))
 		if err == os.ErrNotExist {
@@ -101,7 +139,7 @@ func (ufs *unionFS) Stat(path string) (os.FileInfo, error) {
 	}
 	return nil, os.ErrNotExist
 }
-func (ufs *unionFS) WriteStat(path string, s ninep.Stat) error {
+func (ufs *mirrorFS) WriteStat(path string, s ninep.Stat) error {
 	for _, fsm := range ufs.fsms {
 		err := fsm.FS.WriteStat(filepath.Join(fsm.Prefix, path), s)
 		if err == os.ErrNotExist {
@@ -114,7 +152,7 @@ func (ufs *unionFS) WriteStat(path string, s ninep.Stat) error {
 	}
 	return os.ErrNotExist
 }
-func (ufs *unionFS) Delete(path string) error {
+func (ufs *mirrorFS) Delete(path string) error {
 	for _, fsm := range ufs.fsms {
 		err := fsm.FS.Delete(filepath.Join(fsm.Prefix, path))
 		if err == os.ErrNotExist {
@@ -128,10 +166,14 @@ func (ufs *unionFS) Delete(path string) error {
 	return os.ErrNotExist
 }
 
-// New creates a new union fs - where all directories are unioned.
-// File systems are accessed in order until one file system can provide. This means the top-most
-// directories of each file system is joined. File and directories in each
-// top-level directory are shared.
+// New creates a new mirror fs - where two directories in two file servers are mirrored.
+//
+// THis means each file system will receive writes and one will receive a read.
+// More underlying file systems will slow down writes since all needs to be
+// conformed.
+//
+// As an implementation detail, mirrorfs creates a dir call .mirrorfs where all
+// internal book-keeping belongs. Primarily information about WALs.
 //
 // For example, given [fs1, fs2]:
 //
@@ -158,5 +200,5 @@ func (ufs *unionFS) Delete(path string) error {
 // All writes occur on the first file system (fs1) in the slice.
 //
 func New(fses []proxy.FileSystemMount) ninep.FileSystem {
-	return &unionFS{fses, []proxy.FileSystemMount{fses[0]}}
+	return &mirrorFs{fses}
 }

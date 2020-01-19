@@ -3,11 +3,12 @@ package unionfs
 import (
 	"io"
 
+	"github.com/jeffh/cfs/fs/proxy"
 	"github.com/jeffh/cfs/ninep"
 )
 
 type fanoutHandle struct {
-	fsms []FileSystemMount
+	fsms []proxy.FileSystemMount
 	hs   []ninep.FileHandle
 	path string
 }

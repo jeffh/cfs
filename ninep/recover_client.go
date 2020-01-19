@@ -318,7 +318,12 @@ readLoop:
 		case <-ctx.Done():
 			c.abortTransactions(ctx.Err())
 			return
-		case res := <-c.pendingResponses:
+		case res, ok := <-c.pendingResponses:
+			if !ok {
+				// I guess we're done reading....
+				c.Errorf("pending read queue closed")
+				return
+			}
 			res.reset()
 		readAttempt:
 			for {

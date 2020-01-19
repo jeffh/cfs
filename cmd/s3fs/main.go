@@ -6,6 +6,7 @@ import (
 	"github.com/jeffh/cfs/cli"
 	"github.com/jeffh/cfs/fs/s3fs"
 	"github.com/jeffh/cfs/ninep"
+	"github.com/kardianos/service"
 )
 
 func stringPtrOrNil(s string) *string {
@@ -22,7 +23,12 @@ func main() {
 
 	flag.StringVar(&endpoint, "endpoint", "", "The S3 endpoint to use, defaults to AWS S3's builtin endpoint.")
 
-	cli.BasicServerMain(func() ninep.FileSystem {
+	cfg := &service.Config{
+		Name:        "s3fs",
+		DisplayName: "S3 File System Service",
+		Description: "Provides a 9p file system that exposes buckets on AWS S3 (or compatible service)",
+	}
+	cli.ServiceMain(cfg, func() ninep.FileSystem {
 		return s3fs.NewBasicFs(endpoint)
 	})
 }

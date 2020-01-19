@@ -7,8 +7,10 @@ import (
 	"time"
 
 	"github.com/jeffh/cfs/cli"
+	"github.com/jeffh/cfs/fs/proxy"
 	"github.com/jeffh/cfs/fs/unionfs"
 	"github.com/jeffh/cfs/ninep"
+	"github.com/kardianos/service"
 )
 
 func main() {
@@ -28,9 +30,15 @@ func main() {
 		}
 	}()
 
-	cli.BasicServerMain(func() ninep.FileSystem {
-		fsmc := unionfs.ParseMounts(flag.Args())
-		fsm := make([]unionfs.FileSystemMount, 0, len(fsmc))
+	cfg := &service.Config{
+		Name:        "unionfs",
+		DisplayName: "Union File System Service",
+		Description: "Provides a 9p file system that merges several file systems into one",
+	}
+
+	cli.ServiceMain(cfg, func() ninep.FileSystem {
+		fsmc := proxy.ParseMounts(flag.Args())
+		fsm := make([]proxy.FileSystemMount, 0, len(fsmc))
 		if recov {
 			for _, c := range fsmc {
 				clt := ninep.RecoverClient{
@@ -51,7 +59,7 @@ func main() {
 					os.Exit(1)
 				}
 
-				fsm = append(fsm, unionfs.FileSystemMount{
+				fsm = append(fsm, proxy.FileSystemMount{
 					FS:     fs,
 					Prefix: c.Prefix,
 				})
@@ -74,12 +82,12 @@ func main() {
 					os.Exit(1)
 				}
 
-				fsm = append(fsm, unionfs.FileSystemMount{
+				fsm = append(fsm, proxy.FileSystemMount{
 					FS:     fs,
 					Prefix: c.Prefix,
 				})
 			}
 		}
-		return unionfs.NewUnionFS(fsm)
+		return unionfs.New(fsm)
 	})
 }

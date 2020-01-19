@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/jeffh/cfs/fs/proxy"
 	"github.com/jeffh/cfs/ninep"
 )
 
@@ -13,13 +14,13 @@ type unionIterator struct {
 	lastErr error
 
 	fsmsOffset int
-	fsms       []FileSystemMount
+	fsms       []proxy.FileSystemMount
 	seenPaths  map[string]bool
 
 	path string
 }
 
-func makeUnionIterator(path string, fsms []FileSystemMount) *unionIterator {
+func makeUnionIterator(path string, fsms []proxy.FileSystemMount) *unionIterator {
 	return &unionIterator{path: path, fsms: fsms}
 }
 
