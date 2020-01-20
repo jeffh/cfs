@@ -133,7 +133,7 @@ func (o *objectNode) Walk(subpath []string) ([]ninep.Node, error) {
 		} else {
 			for i, part := range subpath {
 				var dirMode os.FileMode
-				if strings.HasSuffix(part, "/") || strings.HasPrefix(object.Name(), key) {
+				if strings.HasSuffix(part, "/") || objectHasPrefix(object.Name(), key) {
 					dirMode = os.ModeDir
 				}
 				name := part
@@ -153,8 +153,19 @@ func (o *objectNode) Walk(subpath []string) ([]ninep.Node, error) {
 				})
 			}
 		}
+		// TODO: we need a better approach to this
+		if len(nodes) > len(subpath) {
+			break
+		}
 	}
-	fmt.Printf("[B2.objectNode.Walk] NODES: %#v\n", nodes)
+	// nodeStr := []string{}
+	// for _, n := range nodes {
+	// 	in, err := n.Info()
+	// 	if err == nil {
+	// 		nodeStr = append(nodeStr, in.Name())
+	// 	}
+	// }
+	// fmt.Printf("[B2.objectNode.Walk] NODES: %#v\n", nodeStr)
 	return nodes, itr.Err()
 }
 
@@ -283,6 +294,16 @@ func objectsForBucket(b2c *B2Ctx, dirname string, bkt *b2.Bucket, op objectOpera
 
 ////////////////////////////////
 
+func objectHasPrefix(objectName, keyPrefix string) bool {
+	key := keyPrefix
+	if key == "." || key == "" {
+		key = ""
+	} else {
+		key += "/"
+	}
+	return strings.HasPrefix(objectName, key)
+}
+
 type objectsItr struct {
 	b2c        *B2Ctx
 	bucket     *b2.Bucket
@@ -295,7 +316,7 @@ type objectsItr struct {
 func (itr *objectsItr) NextNode() (ninep.Node, error) {
 	for itr.itr.Next() {
 		obj := itr.itr.Object()
-		if !strings.HasPrefix(obj.Name(), itr.prefix+"/") {
+		if !objectHasPrefix(obj.Name(), itr.prefix) {
 			continue
 		}
 		file := &objectNode{
@@ -316,6 +337,9 @@ func (itr *objectsItr) NextNode() (ninep.Node, error) {
 }
 
 func listObjects(ctx context.Context, b *b2.Bucket, op objectOperation, key string) *b2.ObjectIterator {
+	if key == "." {
+		key = ""
+	}
 	switch op {
 	case opData, opPresignedDownloadUrl, opMetadata:
 		return b.List(ctx, b2.ListPrefix(key))
