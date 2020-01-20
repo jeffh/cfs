@@ -2,6 +2,7 @@ package cli
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/user"
@@ -74,26 +75,20 @@ func MainClient(fn func(c ninep.Client, fs *ninep.FileSystemProxy) error) {
 		}
 
 		if err = clt.Connect(addr); err != nil {
-			if errLogger != nil {
-				errLogger.Printf("Failed to connect to 9p server: %s\n", err)
-			}
+			fmt.Fprintf(os.Stderr, "Failed to connect to 9p server: %s\n", err)
 			os.Exit(1)
 		}
 		defer clt.Close()
 
 		fs, err := clt.Fs()
 		if err != nil {
-			if errLogger != nil {
-				errLogger.Printf("Failed to attach to 9p server: %s\n", err)
-			}
+			fmt.Fprintf(os.Stderr, "Failed to attach to 9p server: %s\n", err)
 			os.Exit(1)
 		}
 
 		err = fn(&clt, fs)
 		if err != nil {
-			if errLogger != nil {
-				errLogger.Printf("Failed: %s\n", err)
-			}
+			fmt.Fprintf(os.Stderr, "Failed: %s\n", err)
 			os.Exit(1)
 		}
 	} else {
@@ -106,26 +101,20 @@ func MainClient(fn func(c ninep.Client, fs *ninep.FileSystemProxy) error) {
 		}
 
 		if err = clt.Connect(addr); err != nil {
-			if errLogger != nil {
-				errLogger.Printf("Failed to connect to 9p server: %s\n", err)
-			}
+			fmt.Fprintf(os.Stderr, "Failed to connect to 9p server: %s\n", err)
 			os.Exit(1)
 		}
 		defer clt.Close()
 
 		fs, err := clt.Fs(usr, mount)
 		if err != nil {
-			if errLogger != nil {
-				errLogger.Printf("Failed to attach to 9p server: %s\n", err)
-			}
+			fmt.Fprintf(os.Stderr, "Failed to attach to 9p server: %s\n", err)
 			os.Exit(1)
 		}
 
 		err = fn(&clt, fs)
 		if err != nil {
-			if errLogger != nil {
-				errLogger.Printf("Failed: %s\n", err)
-			}
+			fmt.Fprintf(os.Stderr, "Failed: %s\n", err)
 			os.Exit(1)
 		}
 	}

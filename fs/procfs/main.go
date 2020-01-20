@@ -165,23 +165,40 @@ func procDir(pid Pid) func() ([]ninep.Node, error) {
 	}
 }
 
-func procList() ([]ninep.Node, error) {
-	pids, err := pidsList(QUERY_ALL)
-	if err != nil {
-		return nil, err
+func procList(readOnly bool) func() ([]ninep.Node, error) {
+	return func() ([]ninep.Node, error) {
+		pids, err := pidsList(QUERY_ALL)
+		if err != nil {
+			return nil, err
+		}
+		sort.Sort(SortablePids(pids))
+		var nodes []ninep.Node
+		if readOnly {
+			nodes = make([]ninep.Node, len(pids))
+			for i, pid := range pids {
+				nodes[i] = dynamicDir(strconv.Itoa(int(pid)), procDir(pid))
+			}
+		} else {
+			nodes = make([]ninep.Node, len(pids)+1)
+			nodes[0] = dynamicCtlFile("ctl", procCtl)
+			for i, pid := range pids {
+				nodes[i+1] = dynamicDir(strconv.Itoa(int(pid)), procDir(pid))
+			}
+		}
+		return nodes, nil
 	}
-	sort.Sort(SortablePids(pids))
-	nodes := make([]ninep.Node, len(pids)+1)
-	nodes[0] = dynamicCtlFile("ctl", procCtl)
-	for i, pid := range pids {
-		nodes[i+1] = dynamicDir(strconv.Itoa(int(pid)), procDir(pid))
-	}
-	return nodes, nil
 }
 
 func NewFs() ninep.FileSystem {
 	fs := &ninep.SimpleFileSystem{
-		Root: ninep.DynamicRootDir(procList),
+		Root: ninep.DynamicRootDir(procList(false)),
+	}
+	return fs
+}
+
+func NewReadOnlyFs() ninep.FileSystem {
+	fs := &ninep.SimpleFileSystem{
+		Root: ninep.DynamicRootDir(procList(true)),
 	}
 	return fs
 }
