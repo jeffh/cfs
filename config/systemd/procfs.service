@@ -1,5 +1,5 @@
 [Unit]
-Description=Monitor and Manage Local Processes via Plan9 9P protocol
+Description=procfs
 Requires=network-online.target
 
 [Service]
