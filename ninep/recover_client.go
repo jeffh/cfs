@@ -191,7 +191,6 @@ func (c *RecoverClient) retryConnection() error {
 		if err == nil {
 			break
 		}
-		fmt.Printf("Attach error: %s\n")
 	}
 	if err != nil {
 		return err
