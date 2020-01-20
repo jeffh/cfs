@@ -155,16 +155,17 @@ const (
 	OTRUNC  = 0x10
 	OCEXEC  = 0x20 // close on exec
 	ORCLOSE = 0x40 // remove on close
+
+	OMODE = 3
 )
 
-func (m OpenMode) IsReadOnly() bool  { return m&ORDWR == OREAD }
-func (m OpenMode) IsWriteOnly() bool { return m&ORDWR == OWRITE }
-func (m OpenMode) IsReadWrite() bool { return m&ORDWR == ORDWR }
+func (m OpenMode) IsReadOnly() bool  { return m&OMODE == OREAD }
+func (m OpenMode) IsWriteOnly() bool { return m&OMODE == OWRITE }
+func (m OpenMode) IsReadWrite() bool { return m&OMODE == ORDWR }
 
 // IsReadOnly() || IsReadWrite()
 func (m OpenMode) IsReadable() bool {
-	f := m & ORDWR
-	return f == OREAD || f == ORDWR
+	return m.IsReadOnly() || m.IsReadWrite()
 }
 
 // IsWriteOnly() || IsReadWrite()
@@ -176,11 +177,9 @@ func (m OpenMode) String() string {
 	res := []string{}
 	if m.IsReadOnly() {
 		res = append(res, "OREAD")
-	}
-	if m.IsWriteOnly() {
+	} else if m.IsWriteOnly() {
 		res = append(res, "OWRITE")
-	}
-	if m.IsReadWrite() {
+	} else if m.IsReadWrite() {
 		res = append(res, "ORDWR")
 	}
 	if m&OTRUNC != 0 {
@@ -197,13 +196,11 @@ func (m OpenMode) String() string {
 
 func (m OpenMode) ToOsFlag() int {
 	var flags int
-	if m&OREAD == 0 {
+	if m.IsReadOnly() {
 		flags |= os.O_RDONLY
-	}
-	if m&OWRITE != 0 {
+	} else if m.IsWriteOnly() {
 		flags |= os.O_WRONLY
-	}
-	if m&ORDWR != 0 {
+	} else if m.IsReadWrite() {
 		flags |= os.O_RDWR
 	}
 	if m&OTRUNC != 0 {

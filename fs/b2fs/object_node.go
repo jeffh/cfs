@@ -169,13 +169,13 @@ func objectFileHandle(bucket *b2.Bucket, object *b2.Object, objectKey string, op
 				_, err = io.Copy(wtr, r)
 				if err != nil {
 					wtr.Close()
-					w.CloseWithError(err)
+					w.CloseWithError(mapB2ErrToNinep(err))
 					r.Close()
 					return
 				}
 				err = wtr.Close()
 
-				w.CloseWithError(err)
+				w.CloseWithError(mapB2ErrToNinep(err))
 				r.Close()
 			}()
 			h.W = w

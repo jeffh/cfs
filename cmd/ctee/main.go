@@ -46,7 +46,7 @@ func main() {
 		} else {
 			flags = ninep.OWRITE
 		}
-		flags = flags | ninep.OTRUNC
+		flags |= ninep.OTRUNC
 
 		if os.IsNotExist(err) {
 			h, err = fs.CreateFile(path, flags, 0664)
