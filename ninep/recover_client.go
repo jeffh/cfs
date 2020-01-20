@@ -246,7 +246,7 @@ func (rc *RecoverClient) WriteRequest(c *BasicClient, t *cltRequest) error {
 			if res == nil {
 				panic(fmt.Errorf("res is nil: %v\n", res))
 			}
-			c.pendingResponses <- res
+			c.pendingResponsesCh() <- res
 		}
 
 		if e, ok := err.(net.Error); ok {
@@ -312,17 +312,20 @@ func (rc *RecoverClient) ReadLoop(ctx context.Context, c *BasicClient) {
 		}
 	}()
 
+	pendingResponses := c.pendingResponsesCh()
+
 readLoop:
 	for {
 		select {
 		case <-ctx.Done():
 			c.abortTransactions(ctx.Err())
 			return
-		case res, ok := <-c.pendingResponses:
+		case res, ok := <-pendingResponses:
 			if !ok {
 				// I guess we're done reading....
+				pendingResponses = c.pendingResponsesCh()
 				c.Errorf("pending read queue closed")
-				return
+				continue
 			}
 			res.reset()
 		readAttempt:

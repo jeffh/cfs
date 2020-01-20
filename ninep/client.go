@@ -406,7 +406,8 @@ func (s *defaultClientSocketStrategy) ReadLoop(ctx context.Context, c *BasicClie
 			return
 		case res, ok := <-pendingResponses:
 			if !ok {
-				return
+				pendingResponses = c.pendingResponsesCh()
+				continue
 			}
 			res.reset()
 			err := res.readReply(c.rwc)
