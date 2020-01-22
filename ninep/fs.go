@@ -230,6 +230,20 @@ func (f *fileInfoWithUsers) Uid() string        { return f.uid }
 func (f *fileInfoWithUsers) Gid() string        { return f.gid }
 func (f *fileInfoWithUsers) Muid() string       { return f.muid }
 
+type fileInfoWithSize struct {
+	os.FileInfo
+	newSize int64
+}
+
+func (f *fileInfoWithSize) Size() int64 { return f.newSize }
+
+func FileInfoWithSize(fi os.FileInfo, size int64) os.FileInfo {
+	return &fileInfoWithSize{
+		FileInfo: fi,
+		newSize:  size,
+	}
+}
+
 /////////////////////////////////////////////////
 
 type handleReaderWriter struct {

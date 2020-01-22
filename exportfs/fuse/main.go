@@ -2,6 +2,7 @@ package fuse
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"os/user"
@@ -16,10 +17,14 @@ import (
 )
 
 // A helper function for starting a fuse mount point
-func MountAndServeFS(ctx context.Context, f ninep.FileSystem, mountpoint string, opts ...fuse.MountOption) error {
+func MountAndServeFS(ctx context.Context, f ninep.FileSystem, loggable ninep.Loggable, mountpoint string, opts ...fuse.MountOption) error {
 	c, err := fuse.Mount(mountpoint, opts...)
 	if err != nil {
 		return err
+	}
+
+	fscfg := FsConfig{
+		Loggable: loggable,
 	}
 
 	subctx, cancel := context.WithCancel(ctx)
@@ -29,7 +34,7 @@ func MountAndServeFS(ctx context.Context, f ninep.FileSystem, mountpoint string,
 
 	errCh := make(chan error)
 	go func() {
-		errCh <- fs.Serve(c, &Fs{Fs: f})
+		errCh <- fs.Serve(c, &Fs{Fs: f, Config: fscfg})
 	}()
 
 	// check if the mount process has an error to report
@@ -73,6 +78,7 @@ var _ fs.NodeCreater = (*Dir)(nil)
 var _ fs.NodeMkdirer = (*Dir)(nil)
 var _ fs.NodeRemover = (*Dir)(nil)
 var _ fs.NodeSetattrer = (*Dir)(nil)
+var _ fs.NodeSetxattrer = (*Dir)(nil)
 var _ fs.NodeRenamer = (*Dir)(nil)
 var _ fs.NodeStringLookuper = (*Dir)(nil)
 var _ fs.HandleReadDirAller = (*Dir)(nil)
@@ -91,14 +97,14 @@ func (n *Dir) errorf(format string, values ...interface{}) {
 }
 
 func (n *Dir) Attr(ctx context.Context, a *fuse.Attr) error {
-	n.tracef("[%v]Dir.Attr()\n", n.path)
+	n.tracef("Dir.Attr(%v)\n", n.path)
 	st, err := n.fs.Stat(n.path)
 	if err != nil {
 		return mapErr(err)
 	}
 	stat := st.Sys().(ninep.Stat)
-	// a.Inode = stat.Qid().Path()
-	a.Size = uint64(st.Size())
+	a.Inode = stat.Qid().Path()
+	// a.Size = uint64(stat.Length())
 	a.Mode = st.Mode()
 	mtime := st.ModTime()
 	a.Atime = time.Unix(int64(stat.Atime()), 0)
@@ -146,6 +152,12 @@ func (n *Dir) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.
 		st.SetMode(ninep.ModeFromOS(req.Mode))
 	}
 	return mapErr(n.fs.WriteStat(n.path, st))
+}
+
+func (n *Dir) Setxattr(ctx context.Context, req *fuse.SetxattrRequest) error {
+	// technically, we can't support this because we're not the underlying fs,
+	// but not implementing this causes errors when using cp (in macos).
+	return nil
 }
 
 func (n *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDir fs.Node) error {
@@ -228,6 +240,7 @@ func (n *Dir) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.Cr
 	mode := flagModeToMode(req.Flags, req.Mode)
 
 	if req.Flags&fuse.OpenCreate == 0 {
+		fmt.Printf("FUSE: did not get OpenCreate\n")
 		return nil, nil, syscall.EINVAL
 	}
 
@@ -235,9 +248,13 @@ func (n *Dir) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.Cr
 		return nil, nil, syscall.EINVAL
 	} else {
 		h, err := n.fs.CreateFile(path, flg, mode)
+		fmt.Printf("CreateFile(%#v, %s, %s) => %s\n", path, flg, mode, err)
 		if err != nil {
 			return nil, nil, mapErr(err)
 		}
+
+		// resp.Flags |= fuse.OpenDirectIO | fuse.OpenPurgeUBC
+		resp.Flags |= fuse.OpenPurgeUBC
 
 		return &File{n.fs, path, n.config}, &FileHandle{n.fs, path, h, n.config}, nil
 	}
@@ -274,6 +291,7 @@ var _ fs.Node = (*File)(nil)
 var _ fs.NodeStringLookuper = (*File)(nil)
 var _ fs.NodeOpener = (*File)(nil)
 var _ fs.NodeSetattrer = (*File)(nil)
+var _ fs.NodeSetxattrer = (*File)(nil)
 var _ fs.NodeFsyncer = (*File)(nil)
 
 func (n *File) tracef(format string, values ...interface{}) {
@@ -284,23 +302,25 @@ func (n *File) errorf(format string, values ...interface{}) {
 }
 
 func (n *File) Attr(ctx context.Context, a *fuse.Attr) error {
-	n.tracef("[%v]File.Attr()\n", n.path)
+	n.tracef("File.Attr(%#v)\n", n.path)
 	st, err := n.fs.Stat(n.path)
 	if err != nil {
 		return mapErr(err)
 	}
 	stat := st.Sys().(ninep.Stat)
-	// a.Inode = stat.Qid().Path()
+	a.Inode = stat.Qid().Path()
 	a.Mode = st.Mode()
 	a.Atime = time.Unix(int64(stat.Atime()), 0)
 	a.Mtime = st.ModTime()
-	a.Size = uint64(st.Size())
+	a.Ctime = a.Mtime
+	a.Crtime = a.Mtime
+	a.Size = stat.Length()
 	if !n.config.doNotMapIds {
 		username := stat.Uid()
 		usr, err := user.Lookup(username)
 		if err == nil {
 			uid, err := strconv.Atoi(usr.Uid)
-			n.tracef("[%v]Dir.Attr() -> %s\n", n.path, err)
+			n.tracef("File.Attr(%#v).Atoi(uid=%s) -> %s\n", n.path, usr.Uid, err)
 			if err != nil {
 				return err
 			}
@@ -311,7 +331,7 @@ func (n *File) Attr(ctx context.Context, a *fuse.Attr) error {
 		grp, err := user.LookupGroup(groupname)
 		if err == nil {
 			gid, err := strconv.Atoi(grp.Gid)
-			n.tracef("[%v]Dir.Attr() -> %s\n", n.path, err)
+			n.tracef("File.Attr(%#v).Atoi(gid=%s) -> %s\n", n.path, grp.Gid, err)
 			if err != nil {
 				return err
 			}
@@ -322,8 +342,7 @@ func (n *File) Attr(ctx context.Context, a *fuse.Attr) error {
 }
 
 func (n *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.SetattrResponse) error {
-	n.tracef("[%v]File.Setattr()\n", n.path)
-	st := ninep.NewStat("", "", "", "")
+	st := ninep.SyncStat()
 	if req.Valid.Size() {
 		st.SetLength(req.Size)
 	}
@@ -336,7 +355,15 @@ func (n *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse
 	if req.Valid.Mode() {
 		st.SetMode(ninep.ModeFromOS(req.Mode))
 	}
+	n.tracef("[%v]File.Setattr() %s -> %s\n", n.path, req.Valid, st)
 	return mapErr(n.fs.WriteStat(n.path, st))
+}
+
+func (n *File) Setxattr(ctx context.Context, req *fuse.SetxattrRequest) error {
+	fmt.Printf("SETXATTR %s\n", req)
+	// technically, we can't support this because we're not the underlying fs,
+	// but not implementing this causes errors when using cp (in macos).
+	return nil
 }
 
 func (n *File) Lookup(ctx context.Context, name string) (fs.Node, error) {
@@ -351,13 +378,15 @@ func (n *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenR
 		return nil, mapErr(err)
 	}
 	stat := st.Sys().(ninep.Stat)
-	h, err := n.fs.OpenFile(n.path, ninep.OpenMode(req.Flags)) // TODO: convert openflags
-	n.tracef("FUSE: FILE OPEN: %#v %v\n", n.path, err)
+	mode := ninep.OpenMode(req.Flags & fuse.OpenAccessModeMask) // TODO: convert openflags
+	h, err := n.fs.OpenFile(n.path, mode)
+	n.tracef("FUSE: FILE OPEN: %#v %s %v\n", n.path, mode, err)
 	if err != nil {
 		return nil, mapErr(err)
 	}
 	resp.Handle = fuse.HandleID(stat.Qid().Path())
-	resp.Flags = fuse.OpenDirectIO
+	// resp.Flags |= fuse.OpenDirectIO | fuse.OpenPurgeUBC
+	resp.Flags |= fuse.OpenPurgeUBC
 	// TODO: support appendonly (OpenNonSeekable)
 	return &FileHandle{n.fs, n.path, h, n.config}, nil
 }
@@ -426,11 +455,11 @@ func (h *FileHandle) Flush(ctx context.Context, req *fuse.FlushRequest) error {
 
 func flagToOpenMode(flg fuse.OpenFlags) ninep.OpenMode {
 	var m ninep.OpenMode
-	if flg&fuse.OpenReadWrite != 0 {
+	if flg&fuse.OpenAccessModeMask == fuse.OpenReadWrite {
 		m = ninep.ORDWR
-	} else if flg&fuse.OpenWriteOnly != 0 {
+	} else if flg&fuse.OpenAccessModeMask == fuse.OpenWriteOnly {
 		m = ninep.OWRITE
-	} else if flg&fuse.OpenReadOnly != 0 {
+	} else if flg&fuse.OpenWriteOnly == fuse.OpenReadOnly {
 		m = ninep.OREAD
 	}
 

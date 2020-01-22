@@ -226,22 +226,15 @@ const (
 	M_TYPE = M_DIR | M_APPEND | M_EXCL | M_MOUNT | M_TMP
 
 	// Mask for the permissions bits
-	M_PERM = M_READ | M_WRITE | M_EXEC
+	M_PERM = 0777
 )
 
 func (m Mode) IsDir() bool { return m&M_DIR != 1 }
 
 func (m Mode) String() string {
 	res := []string{}
-	if m&M_READ != 0 {
-		res = append(res, "M_READ")
-	}
-	if m&M_WRITE != 0 {
-		res = append(res, "M_WRITE")
-	}
-	if m&M_EXEC != 0 {
-		res = append(res, "M_EXEC")
-	}
+	perm := os.FileMode(m & M_PERM)
+	res = append(res, perm.String())
 	if m&M_DIR != 0 {
 		res = append(res, "M_DIR")
 	}

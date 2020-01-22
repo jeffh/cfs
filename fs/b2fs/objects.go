@@ -158,14 +158,16 @@ func (o *objectNode) Walk(subpath []string) ([]ninep.Node, error) {
 			break
 		}
 	}
-	// nodeStr := []string{}
-	// for _, n := range nodes {
-	// 	in, err := n.Info()
-	// 	if err == nil {
-	// 		nodeStr = append(nodeStr, in.Name())
-	// 	}
-	// }
-	// fmt.Printf("[B2.objectNode.Walk] NODES: %#v\n", nodeStr)
+	nodeStr := []string{}
+	for _, n := range nodes {
+		in, err := n.Info()
+		if err == nil {
+			nodeStr = append(nodeStr, in.Name())
+		} else {
+			nodeStr = append(nodeStr, fmt.Sprintf("<error: %s>", err))
+		}
+	}
+	fmt.Printf("[B2.objectNode.Walk] NODES: %#v\n", nodeStr)
 	return nodes, itr.Err()
 }
 

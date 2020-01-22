@@ -557,6 +557,7 @@ func (c *RecoverClient) Walk(f, newF Fid, path []string) ([]Qid, error) {
 }
 
 func (c *RecoverClient) Stat(f Fid) (Stat, error) {
+	c.Tracef("Stat(%d)", f)
 	srvF, err := c.translateFid(f)
 	if err != nil {
 		return Stat{}, err
@@ -565,6 +566,7 @@ func (c *RecoverClient) Stat(f Fid) (Stat, error) {
 }
 
 func (c *RecoverClient) WriteStat(f Fid, s Stat) error {
+	c.Tracef("WriteStat(%d, _)", f)
 	srvF, err := c.translateFid(f)
 	if err != nil {
 		return err
@@ -628,6 +630,7 @@ func (c *RecoverClient) WriteMsg(f Fid, data []byte, offset uint64) (uint32, err
 }
 
 func (c *RecoverClient) Open(f Fid, m OpenMode) (q Qid, iounit uint32, err error) {
+	c.Tracef("Open(%d, %d)", f, m)
 	srvF, err := c.translateFid(f)
 	if err != nil {
 		return nil, 0, err
@@ -656,6 +659,7 @@ func (c *RecoverClient) Open(f Fid, m OpenMode) (q Qid, iounit uint32, err error
 }
 
 func (c *RecoverClient) Create(f Fid, name string, perm Mode, mode OpenMode) (q Qid, iounit uint32, err error) {
+	c.Tracef("Create(%d, %#v, %s, %d)", f, name, perm, mode)
 	// TODO: it would be nice to consider how to support exclusive files
 	if perm&M_EXCL != 0 {
 		return nil, 0, ErrUnsupported

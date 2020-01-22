@@ -573,6 +573,7 @@ func (c *BasicClient) Walk(f, newF Fid, path []string) ([]Qid, error) {
 }
 
 func (c *BasicClient) Stat(f Fid) (Stat, error) {
+	c.Tracef("Stat(%d)", f)
 	txn, ok := c.allocTxn()
 	if !ok {
 		return nil, io.ErrUnexpectedEOF
@@ -603,6 +604,7 @@ func (c *BasicClient) Stat(f Fid) (Stat, error) {
 }
 
 func (c *BasicClient) WriteStat(f Fid, s Stat) error {
+	c.Tracef("WriteStat(%d, _)", f)
 	txn, ok := c.allocTxn()
 	if !ok {
 		return io.ErrUnexpectedEOF
@@ -797,6 +799,7 @@ func (c *BasicClient) WriteMsg(f Fid, data []byte, offset uint64) (uint32, error
 }
 
 func (c *BasicClient) Open(f Fid, m OpenMode) (q Qid, iounit uint32, err error) {
+	c.Tracef("Open(%d, %s)", f, m)
 	txn, ok := c.allocTxn()
 	if !ok {
 		return nil, 0, io.ErrUnexpectedEOF
@@ -827,6 +830,7 @@ func (c *BasicClient) Open(f Fid, m OpenMode) (q Qid, iounit uint32, err error) 
 }
 
 func (c *BasicClient) Create(f Fid, name string, perm Mode, mode OpenMode) (q Qid, iounit uint32, err error) {
+	c.Tracef("Create(%d, %#v, %s, %d)", f, name, perm, mode)
 	txn, ok := c.allocTxn()
 	if !ok {
 		return nil, 0, io.ErrUnexpectedEOF

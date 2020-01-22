@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 
@@ -30,13 +31,22 @@ func main() {
 			mountpoint = flag.Arg(1)
 		}
 
+		var logger ninep.Logger = log.New(os.Stderr, "", log.LstdFlags)
+		loggable := ninep.Loggable{
+			ErrorLog: logger,
+			TraceLog: logger,
+		}
+
 		return efuse.MountAndServeFS(
 			ctx,
 			fs,
+			loggable,
 			mountpoint,
 			fuse.FSName("9pfuse"),
 			fuse.Subtype("9pfusefs"),
-			fuse.VolumeName("9P Client File System"),
+			fuse.VolumeName("exportfs"),
+			fuse.NoBrowse(),
+			fuse.NoAppleXattr(),
 			fuse.NoAppleDouble(),
 		)
 	})
