@@ -872,7 +872,7 @@ type FileProxy struct {
 	qid Qid
 
 	// cache
-	info os.FileInfo
+	st Stat
 }
 
 var _ FileHandle = (*FileProxy)(nil)
@@ -897,33 +897,51 @@ func (f *FileProxy) Traverse(path string) (*FileProxy, error) {
 }
 
 // Returns file info of the fid. Caches the value locally and uses that when available
-func (f *FileProxy) Stat() (os.FileInfo, error) {
-	if f.info != nil {
-		st, err := f.fs.c.Stat(f.fid)
-		if err != nil {
-			return nil, err
-		}
-		f.info = st.FileInfo()
+func (f *FileProxy) FileInfo() (os.FileInfo, error) {
+	st, err := f.Stat()
+	if err != nil {
+		return nil, err
 	}
-	return f.info, nil
+	return st.FileInfo(), err
 }
 
 // Returns file info of the fid. Unlike FileProxy.Stat(), this always fetches
 // from the server The new value will still be cached.
-func (f *FileProxy) FetchStat() (os.FileInfo, error) {
+func (f *FileProxy) FetchFileInfo() (os.FileInfo, error) {
+	st, err := f.FetchStat()
+	if err != nil {
+		return nil, err
+	}
+	return st.FileInfo(), err
+}
+
+// Returns file info of the fid. Caches the value locally and uses that when available
+func (f *FileProxy) Stat() (Stat, error) {
+	if f.st == nil {
+		st, err := f.fs.c.Stat(f.fid)
+		if err != nil {
+			return nil, err
+		}
+		f.st = st
+	}
+	return f.st, nil
+}
+
+// Returns file info of the fid. Unlike FileProxy.Stat(), this always fetches
+// from the server The new value will still be cached.
+func (f *FileProxy) FetchStat() (Stat, error) {
 	st, err := f.fs.c.Stat(f.fid)
 	if err != nil {
 		return nil, err
 	}
-	info := st.FileInfo()
-	f.info = info
-	return info, nil
+	f.st = st
+	return st, nil
 }
 
 func (f *FileProxy) WriteStat(st Stat) error {
 	err := f.fs.c.WriteStat(f.fid, st)
 	if err == nil {
-		f.info = nil
+		f.st = nil
 	}
 	return err
 }

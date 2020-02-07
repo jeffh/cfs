@@ -14,11 +14,15 @@ import (
 func main() {
 	var (
 		recursive bool
+		noAttrs   bool // disable copying stat
+		allAttrs  bool // also copy timestamps, if noAttrs is false
 
 		exitCode int
 	)
 
 	flag.BoolVar(&recursive, "r", false, "Recursively copy directories")
+	flag.BoolVar(&noAttrs, "n", false, "Don't copy file mode attributes")
+	flag.BoolVar(&allAttrs, "a", false, "copy all file timestamps")
 
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "cp for CFS - Copy files and directories\n")
@@ -128,13 +132,42 @@ func main() {
 			runtime.Goexit()
 		}
 
+		srcSt, err := srcNode.Stat()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error stat-ing file on source fs: %s: %s\n", srcPath, err)
+			exitCode = 2
+			runtime.Goexit()
+		}
+
 		w := ninep.Writer(dstNode)
 		r := ninep.Reader(srcNode)
 		_, err = io.Copy(w, r)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error while copying: %s", err)
+			if dstIsParent {
+				err = dstNode.Delete()
+				fmt.Fprintf(os.Stderr, "Failed to delete file since copying failed: %s%s\n", dstAddr, dstPath)
+			}
+
 			exitCode = 4
 			runtime.Goexit()
+		}
+
+		if !noAttrs || allAttrs {
+			st := ninep.SyncStat()
+			if !noAttrs {
+				st.SetMode(srcSt.Mode())
+			}
+			if allAttrs {
+				st.SetAtime(srcSt.Atime())
+				st.SetMtime(srcSt.Mtime())
+			}
+			err = dstNode.WriteStat(st)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to copy file attributes: %s%s\n", dstAddr, dstPath)
+				exitCode = 3
+				runtime.Goexit()
+			}
 		}
 	}
 }
