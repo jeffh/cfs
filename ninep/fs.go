@@ -248,23 +248,25 @@ func FileInfoWithSize(fi os.FileInfo, size int64) os.FileInfo {
 
 type handleReaderWriter struct {
 	h      FileHandle
-	offset int64
+	Offset int64
 }
 
 func (r *handleReaderWriter) Read(p []byte) (int, error) {
-	n, err := r.h.ReadAt(p, r.offset)
-	r.offset += int64(n)
+	n, err := r.h.ReadAt(p, r.Offset)
+	r.Offset += int64(n)
 	return n, err
 }
 
 func (r *handleReaderWriter) Write(p []byte) (int, error) {
-	n, err := r.h.WriteAt(p, r.offset)
-	r.offset += int64(n)
+	n, err := r.h.WriteAt(p, r.Offset)
+	r.Offset += int64(n)
 	return n, err
 }
 
-func Reader(h FileHandle) io.Reader { return &handleReaderWriter{h, 0} }
-func Writer(h FileHandle) io.Writer { return &handleReaderWriter{h, 0} }
+func ReaderStartingAt(h FileHandle, start int64) io.Reader { return &handleReaderWriter{h, start} }
+func WriterStartingAt(h FileHandle, start int64) io.Writer { return &handleReaderWriter{h, start} }
+func Reader(h FileHandle) io.Reader                        { return &handleReaderWriter{h, 0} }
+func Writer(h FileHandle) io.Writer                        { return &handleReaderWriter{h, 0} }
 
 /////////////////////////////////////////////////
 

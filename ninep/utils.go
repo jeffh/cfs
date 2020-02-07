@@ -6,6 +6,24 @@ import (
 	"strings"
 )
 
+// Returns the parent path of the given path, or leave unchanged if cannot go up any more directories
+func Dirname(path string) string {
+	i := strings.LastIndex(path, "/")
+	if i == -1 {
+		return path
+	}
+	return path[:i+1]
+}
+
+// Returns the file of the given path
+func Basename(path string) string {
+	i := strings.LastIndex(path, "/")
+	if i == -1 {
+		return path
+	}
+	return path[i+1:]
+}
+
 func IsClosedSocket(err error) bool {
 	return err != nil && strings.Index(err.Error(), "use of closed network connection") != -1
 }

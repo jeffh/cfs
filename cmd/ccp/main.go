@@ -1,0 +1,141 @@
+package main
+
+import (
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"runtime"
+
+	"github.com/jeffh/cfs/cli"
+	"github.com/jeffh/cfs/ninep"
+)
+
+func main() {
+	var (
+		recursive bool
+
+		exitCode int
+	)
+
+	flag.BoolVar(&recursive, "r", false, "Recursively copy directories")
+
+	flag.Usage = func() {
+		fmt.Fprintf(flag.CommandLine.Output(), "cp for CFS - Copy files and directories\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [OPTIONS] SRC_HOST SRC_PATH DEST_HOST DEST_PATH \n", os.Args[0])
+		fmt.Fprintf(flag.CommandLine.Output(), "\n", os.Args[0])
+		fmt.Fprintf(flag.CommandLine.Output(), "Where SRC_HOST & DEST_HOST are host addr or 'LOCAL' for local file system\n", os.Args[0])
+		flag.PrintDefaults()
+	}
+
+	cfg := cli.ClientConfig{}
+	cfg.SetFlags(nil)
+
+	flag.Parse()
+
+	if flag.NArg() < 4 {
+		flag.Usage()
+		os.Exit(1)
+	}
+
+	defer func() { os.Exit(exitCode) }()
+
+	srcAddr, srcPath := flag.Arg(0), flag.Arg(1)
+	dstAddr, dstPath := flag.Arg(2), flag.Arg(3)
+
+	cfg.PrintPrefix = "[src] "
+
+	srcClt, srcFs, err := cfg.CreateFs(srcAddr)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error connecting to source fs: %s\n", err)
+		exitCode = 2
+		runtime.Goexit()
+	}
+	defer srcClt.Close()
+
+	cfg.PrintPrefix = "[dst] "
+	dstClt, dstFs, err := cfg.CreateFs(dstAddr)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error connecting to destination fs: %s\n", err)
+		exitCode = 3
+		runtime.Goexit()
+	}
+	defer dstClt.Close()
+
+	srcNode, err := srcFs.Traverse(srcPath)
+	{
+		if os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "Path does not exist on source fs: %s\n", srcPath)
+			exitCode = 2
+			runtime.Goexit()
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error accessing path on source fs: %s\n", err)
+			exitCode = 2
+			runtime.Goexit()
+		}
+
+		if srcNode.IsDir() && !recursive {
+			srcNode.Close()
+			fmt.Fprintf(os.Stderr, "Use -r to copy directories\n")
+			exitCode = 2
+			runtime.Goexit()
+		}
+	}
+	defer srcNode.Close()
+
+	dstNode, err := dstFs.Traverse(dstPath)
+	dstIsParent := false
+	{
+		if os.IsNotExist(err) {
+			dstNode, err = dstFs.Traverse(ninep.Dirname(dstPath))
+			dstIsParent = true
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error accessing path on destination fs: %s: %s\n", dstPath, err)
+			exitCode = 3
+			runtime.Goexit()
+		}
+	}
+	defer dstNode.Close()
+
+	// technically '-r' is not very plan9 like, but we don't have the luxury of being the host os' file system
+	// plan9 systems would normally do `(cd DIR && tar c .) | (cd DIR && tar x)` aliased as `dircp`.
+	if srcNode.IsDir() {
+		fmt.Fprintf(os.Stderr, "Unsupported: directory copy\n")
+		exitCode = 4
+		runtime.Goexit()
+	} else {
+		if dstIsParent {
+			fmt.Printf("Creating file: %s\n", ninep.Basename(dstPath))
+			dstNode, err = dstNode.Create(ninep.Basename(dstPath), ninep.OWRITE|ninep.OTRUNC, 0644)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error creating file on destination fs: %s: %s\n", dstPath, err)
+				exitCode = 3
+				runtime.Goexit()
+			}
+		} else {
+			if err = dstNode.Open(ninep.OWRITE | ninep.OTRUNC); err != nil {
+				fmt.Fprintf(os.Stderr, "Error opening file on destination fs: %s: %s\n", dstPath, err)
+				exitCode = 3
+				runtime.Goexit()
+			}
+		}
+
+		if err = srcNode.Open(ninep.OREAD); err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening file on source fs: %s: %s\n", srcPath, err)
+			exitCode = 2
+			runtime.Goexit()
+		}
+
+		w := ninep.Writer(dstNode)
+		r := ninep.Reader(srcNode)
+		n, err := io.Copy(w, r)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error while copying: ", err)
+			exitCode = 4
+			runtime.Goexit()
+		}
+		fmt.Printf("Copied %s%s -> %s%s (%d bytes)\n", srcAddr, srcPath, dstAddr, dstPath, n)
+	}
+}

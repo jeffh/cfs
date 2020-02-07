@@ -36,6 +36,7 @@ type clientSocketStrategy interface {
 }
 
 type Client interface {
+	io.Closer
 	// Core Client Protocol
 	Clunk(f Fid) error
 	Create(f Fid, name string, perm Mode, mode OpenMode) (q Qid, iounit uint32, err error)
@@ -957,6 +958,12 @@ func (f *FileProxy) Open(flag OpenMode) error {
 	}
 	return err
 }
+
+// Produces a reader that starts at given offset. Assumes you've called Create() or Open() with read first
+func (f *FileProxy) Reader(start int64) io.Reader { return ReaderStartingAt(f, start) }
+
+// Produces a write that starts at given offset. Assumes you've called Create() or Open() with write first
+func (f *FileProxy) Writer(start int64) io.Writer { return WriterStartingAt(f, start) }
 
 func (f *FileProxy) ReadAt(p []byte, offset int64) (int, error) {
 	size, err := f.fs.c.Read(f.fid, p, uint64(offset))
