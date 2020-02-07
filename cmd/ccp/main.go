@@ -23,8 +23,8 @@ func main() {
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "cp for CFS - Copy files and directories\n")
 		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [OPTIONS] SRC_HOST SRC_PATH DEST_HOST DEST_PATH \n", os.Args[0])
-		fmt.Fprintf(flag.CommandLine.Output(), "\n", os.Args[0])
-		fmt.Fprintf(flag.CommandLine.Output(), "Where SRC_HOST & DEST_HOST are host addr or 'LOCAL' for local file system\n", os.Args[0])
+		fmt.Fprintf(flag.CommandLine.Output(), "\n")
+		fmt.Fprintf(flag.CommandLine.Output(), "Where SRC_HOST & DEST_HOST are host addr or 'LOCAL' for local file system\n")
 		flag.PrintDefaults()
 	}
 
@@ -130,12 +130,11 @@ func main() {
 
 		w := ninep.Writer(dstNode)
 		r := ninep.Reader(srcNode)
-		n, err := io.Copy(w, r)
+		_, err = io.Copy(w, r)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error while copying: ", err)
+			fmt.Fprintf(os.Stderr, "Error while copying: %s", err)
 			exitCode = 4
 			runtime.Goexit()
 		}
-		fmt.Printf("Copied %s%s -> %s%s (%d bytes)\n", srcAddr, srcPath, dstAddr, dstPath, n)
 	}
 }
