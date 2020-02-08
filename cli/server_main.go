@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -13,41 +14,59 @@ import (
 	"github.com/kardianos/service"
 )
 
-func BasicServerMain(createfs func() ninep.FileSystem) {
-	var (
-		addr    string
-		trace   bool
-		errLog  bool
-		tracefs bool
+type ServerConfig struct {
+	Addr string
 
-		certFile string
-		keyFile  string
+	PrintTraceMessages   bool
+	PrintTraceFSMessages bool
+	PrintErrorMessages   bool
 
-		readTimeout int
-	)
+	PrintPrefix string
 
-	flag.StringVar(&addr, "addr", "localhost:564", "The address and port to listen the 9p server. Defaults to 'localhost:564'.")
-	flag.BoolVar(&trace, "trace", false, "Print trace of 9p server to stdout")
-	flag.BoolVar(&tracefs, "tracefs", false, "Print trace of 9p FileSystem interface to stdout")
-	flag.BoolVar(&errLog, "err", false, "Print errors of 9p server to stderr")
-	flag.StringVar(&certFile, "certfile", "", "Accept only TLS wrapped connections. Also needs to specify keyfile flag.")
-	flag.StringVar(&keyFile, "keyfile", "", "Accept only TLS wrapped connections. Also needs to specify certfile flag.")
-	flag.IntVar(&readTimeout, "read-timeout", 0, "Timeout for reading from client connections in seconds. Defaults to 30 minutes")
+	CertFile string
+	KeyFile  string
 
-	flag.Parse()
+	ReadTimeoutInSeconds int
 
+	Dialer ninep.Dialer // defaults to net
+
+	Stdout io.Writer
+	Stderr io.Writer
+}
+
+func (c *ServerConfig) SetFlags(f Flags) {
+	if f == nil {
+		f = &StdFlags{}
+	}
+	f.IntVar(&c.ReadTimeoutInSeconds, "rtimeout", 5, "Timeout in seconds for client requests")
+	f.BoolVar(&c.PrintTraceMessages, "trace", false, "Print trace of 9p server to stdout")
+	f.BoolVar(&c.PrintTraceFSMessages, "tracefs", false, "Print trace of 9p server to stdout")
+	f.BoolVar(&c.PrintErrorMessages, "err", false, "Print errors of 9p server to stderr")
+	f.StringVar(&c.CertFile, "certfile", "", "Accept only TLS wrapped connections. Also needs to specify keyfile flag.")
+	f.StringVar(&c.KeyFile, "keyfile", "", "Accept only TLS wrapped connections. Also needs to specify certfile flag.")
+	f.StringVar(&c.Addr, "addr", "localhost:6666", "The address and port for the 9p server to listen to")
+}
+
+func (c *ServerConfig) CreateServer(createfs func() ninep.FileSystem) *ninep.Server {
 	var traceLogger, errLogger ninep.Logger
 
-	if trace {
-		traceLogger = log.New(os.Stdout, "", log.LstdFlags)
+	if c.Stdout == nil {
+		c.Stdout = os.Stdout
 	}
-	if errLog {
-		errLogger = log.New(os.Stderr, "", log.LstdFlags)
+	if c.Stderr == nil {
+		c.Stderr = os.Stderr
+	}
+
+	if c.PrintTraceMessages {
+		traceLogger = log.New(c.Stdout, c.PrintPrefix, log.LstdFlags)
+	}
+	if c.PrintErrorMessages {
+		errLogger = log.New(c.Stderr, c.PrintPrefix, log.LstdFlags)
 	}
 
 	var fsys ninep.FileSystem = createfs()
 
-	if tracefs {
+	if c.PrintTraceFSMessages {
 		fsys = fs.TraceFs(
 			fsys,
 			ninep.Loggable{log.New(os.Stdout, "[err] ", log.LstdFlags), log.New(os.Stdout, "[trace] ", log.LstdFlags)},
@@ -55,16 +74,36 @@ func BasicServerMain(createfs func() ninep.FileSystem) {
 	}
 
 	srv := ninep.NewServer(fsys, errLogger, traceLogger)
-	srv.ReadTimeout = time.Duration(readTimeout) * time.Second
-	var d ninep.Dialer
+	srv.ReadTimeout = time.Duration(c.ReadTimeoutInSeconds) * time.Second
+	return srv
+}
+
+func (c *ServerConfig) ListenAndServe(srv *ninep.Server) error {
+	var d ninep.Dialer = c.Dialer
 	var err error
-	if certFile != "" && keyFile != "" {
-		err = srv.ListenAndServeTLS(addr, certFile, keyFile, d)
+	if c.CertFile != "" && c.KeyFile != "" {
+		err = srv.ListenAndServeTLS(c.Addr, c.CertFile, c.KeyFile, d)
 	} else {
-		err = srv.ListenAndServe(addr, d)
+		err = srv.ListenAndServe(c.Addr, d)
 	}
-	if errLogger != nil {
-		errLogger.Printf("Error: %s", err)
+	return err
+}
+
+func (c *ServerConfig) CreateServerAndListen(createfs func() ninep.FileSystem) error {
+	srv := c.CreateServer(createfs)
+	return c.ListenAndServe(srv)
+}
+
+func BasicServerMain(createfs func() ninep.FileSystem) {
+	var cfg ServerConfig
+
+	cfg.SetFlags(nil)
+
+	flag.Parse()
+
+	err := cfg.CreateServerAndListen(createfs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
 	}
 }
 
@@ -132,65 +171,27 @@ func (p *srv) run() error {
 }
 
 func srvMain(stdout, stderr io.Writer, createfs func() ninep.FileSystem) (start func(exit chan struct{})) {
-	var (
-		addr    string
-		trace   bool
-		errLog  bool
-		tracefs bool
+	cfg := ServerConfig{
+		Stdout: stdout,
+		Stderr: stderr,
+	}
 
-		certFile string
-		keyFile  string
-
-		readTimeout int
-	)
-
-	flag.StringVar(&addr, "addr", "localhost:564", "The address and port to listen the 9p server. Defaults to 'localhost:564'.")
-	flag.BoolVar(&trace, "trace", false, "Print trace of 9p server to stdout")
-	flag.BoolVar(&tracefs, "tracefs", false, "Print trace of 9p FileSystem interface to stdout")
-	flag.BoolVar(&errLog, "err", false, "Print errors of 9p server to stderr")
-	flag.StringVar(&certFile, "certfile", "", "Accept only TLS wrapped connections. Also needs to specify keyfile flag.")
-	flag.StringVar(&keyFile, "keyfile", "", "Accept only TLS wrapped connections. Also needs to specify certfile flag.")
-	flag.IntVar(&readTimeout, "timeout", 0, "Timeout for reading from client connections in seconds. Defaults to 30 minutes")
+	cfg.SetFlags(nil)
 
 	flag.Parse()
 
-	var traceLogger, errLogger ninep.Logger
-
-	if trace {
-		traceLogger = log.New(stdout, "", log.LstdFlags)
-	}
-	if errLog {
-		errLogger = log.New(stderr, "", log.LstdFlags)
-	}
-
-	var fsys ninep.FileSystem = createfs()
-
-	if tracefs {
-		fsys = fs.TraceFs(
-			fsys,
-			ninep.Loggable{log.New(os.Stdout, "[err] ", log.LstdFlags), log.New(os.Stdout, "[trace] ", log.LstdFlags)},
-		)
-	}
-
-	srv := ninep.NewServer(fsys, errLogger, traceLogger)
-	srv.ReadTimeout = time.Duration(readTimeout) * time.Second
+	srv := cfg.CreateServer(createfs)
 	return func(exit chan struct{}) {
-		var d ninep.Dialer
 		ctx, cancel := context.WithCancel(context.Background())
 		go func() {
 			<-exit
 			cancel()
 		}()
 		go func() {
-			var err error
 			defer cancel()
-			if certFile != "" && keyFile != "" {
-				err = srv.ListenAndServeTLS(addr, certFile, keyFile, d)
-			} else {
-				err = srv.ListenAndServe(addr, d)
-			}
-			if errLogger != nil {
-				errLogger.Printf("Error: %s", err)
+			err := cfg.ListenAndServe(srv)
+			if err != nil {
+				fmt.Fprintf(cfg.Stdout, "Error: %s\n", err)
 			}
 		}()
 		<-ctx.Done()

@@ -140,8 +140,9 @@ func main() {
 			dst *ninep.FileProxy
 		}
 
-		stack := make([]stackNode, 0)
-		stack = append(stack, stackNode{it, srcNode, dstNode})
+		stack := []stackNode{
+			stackNode{it, srcNode, dstNode},
+		}
 
 		for len(stack) > 0 {
 			last := stack[len(stack)-1]
@@ -154,17 +155,11 @@ func main() {
 			}
 
 			if src.IsDir() {
-				// TODO:
 			} else {
-				_, err := last.dst.Traverse(name)
-				if os.IsNotExist(err) {
-					_, err = last.dst.Traverse(ninep.Dirname(name))
-				}
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error traversing: %v (or %v)\n", name, ninep.Dirname(name))
-					exitCode = 3
-					runtime.Goexit()
-				}
+				// dst, err := last.dst.Traverse(name)
+				// if os.IsNotExist(err) {
+				// 	dst, err := last.dst.Traverse(ninep.Dirname(name))
+				// }
 			}
 
 			if err == io.EOF {
