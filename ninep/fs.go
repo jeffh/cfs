@@ -74,6 +74,13 @@ type Authorizee interface {
 
 ///////////////////////////////////////////////////////////////
 
+type StatIterator interface {
+	FileInfoIterator
+	// callers must copy stat if they want to retain it beyond the next call to
+	// NextStat() or Close()
+	NextStat() (Stat, error)
+}
+
 type FileInfoIterator interface {
 	// returns io.EOF with os.FileInfo = nil on end
 	NextFileInfo() (os.FileInfo, error)
@@ -135,6 +142,7 @@ func FileInfoSliceFromIterator(itr FileInfoIterator, max int) ([]os.FileInfo, er
 //
 // The following assumptions are part of the interface:
 // - paths can be empty strings (which indicates root directory)
+// - implementations may return paths with / in system
 type FileSystem interface {
 	// Creates a directory. Implementations can reject if parent directories are missing
 	MakeDir(path string, mode Mode) error

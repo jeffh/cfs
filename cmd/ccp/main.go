@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"runtime"
 
 	"github.com/jeffh/cfs/cli"
@@ -109,9 +110,64 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Unsupported: directory copy\n")
 		exitCode = 4
 		runtime.Goexit()
+
+		if dstIsParent {
+			dstNode, err = dstNode.CreateDir(ninep.Basename(dstPath), 0755)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error creating dir on destination fs: %s: %s\n", dstPath, err)
+				exitCode = 3
+				runtime.Goexit()
+			}
+		}
+
+		if !dstNode.IsDir() {
+			fmt.Fprintf(os.Stderr, "Error opening dir on destination fs: %s: %s\n", dstPath, err)
+			exitCode = 3
+			runtime.Goexit()
+		}
+
+		it, err := srcDir.ListDirStat()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error opening dir on source fs: %s: %s\n", srcPath, err)
+			exitCode = 2
+			runtime.Goexit()
+		}
+		defer it.Close()
+
+		type stackNode struct {
+			it  StatIterator
+			src *FileProxy
+			dst *FileProxy
+		}
+
+		stack := make([]stackNode)
+		stack = append(stack, stackNode{it, srcNode, dstNode})
+
+		for len(stack) > 0 {
+			last := stack[len(stack)-1]
+			fi, err := it.NextFileInfo()
+			name := fi.Name()
+			src, er := last.src.Traverse(name)
+			if er != nil {
+				fmt.Fprintf(os.Stderr, "Error read path on source fs: %s: %s\n", path.Join(srcPath, name), er)
+				continue
+			}
+
+			if src.IsDir() {
+			} else {
+				dst, err := last.dst.Traverse(name)
+				if os.IsNotExist(err) {
+					dst, err := last.dst.Traverse(ninep.Dirname(name))
+				}
+			}
+
+			if err == io.EOF {
+				stack = stack[:len(stack)-1]
+			}
+		}
+
 	} else {
 		if dstIsParent {
-			fmt.Printf("Creating file: %s\n", ninep.Basename(dstPath))
 			dstNode, err = dstNode.Create(ninep.Basename(dstPath), ninep.OWRITE|ninep.OTRUNC, 0644)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error creating file on destination fs: %s: %s\n", dstPath, err)

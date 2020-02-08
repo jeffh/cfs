@@ -946,6 +946,11 @@ func (f *FileProxy) WriteStat(st Stat) error {
 	return err
 }
 
+// Alias to Create() with M_DIR always set
+func (f *FileProxy) CreateDir(name string, mode Mode) (*FileProxy, error) {
+	return f.Create(name, ORDWR, mode|M_DIR)
+}
+
 func (f *FileProxy) Create(name string, flag OpenMode, mode Mode) (*FileProxy, error) {
 	fs := f.fs
 	fid := fs.allocFid()
@@ -966,7 +971,7 @@ func (f *FileProxy) Create(name string, flag OpenMode, mode Mode) (*FileProxy, e
 	return h, err
 }
 
-// Opens a file for reading/writing. Use only if you FileSystemProxy.Traverse()
+// Opens a file for reading/writing. Use only if you used FileSystemProxy.Traverse()
 func (f *FileProxy) Open(flag OpenMode) error {
 	qid, _, err := f.fs.c.Open(f.fid, flag)
 	if err == nil {
@@ -1012,9 +1017,40 @@ func (f *FileProxy) Delete() error {
 	return err
 }
 
+// Provides an iterator to list files in dir
+func (f *FileProxy) ListDirStat() (StatIterator, error) {
+	itr := &fileSystemProxyIterator{fp: f}
+
+	qid, _, err := f.fs.c.Open(f.fid, OREAD)
+	if err == nil {
+		if !qid.Type().IsDir() {
+			itr.Close()
+			return nil, ErrListingOnNonDir
+		} else {
+			return itr, nil
+		}
+	} else {
+		itr.Close()
+		return nil, err
+	}
+}
+
+func (f *FileProxy) ListDir() (FileInfoIterator, error) {
+	return f.ListDirStat()
+}
+
 ///////////////////////
 
 // The contract that FileSystemProxy expects from the underlying 9p client
+// Also provides a higher-level API to use a 9p Client
+//
+// FileSystemProxyClient assumes complete ownership of Client since it
+// allocates and tracks it own Fids.
+//
+// Using most of the high-level APIs here has a high-churn of Fids, (since each
+// call presumes a 9p Walk). If you want to have higher performance, use
+// Traverse() and reuse the FileProxy references for repeated operations on the
+// same file and minimize repeated Walk-ing to the same file.
 type FileSystemProxyClient interface {
 	Client
 
@@ -1149,6 +1185,7 @@ type fileSystemProxyIterator struct {
 }
 
 var _ FileInfoIterator = (*fileSystemProxyIterator)(nil)
+var _ StatIterator = (*fileSystemProxyIterator)(nil)
 
 func (it *fileSystemProxyIterator) Reset() error {
 	it.rst = nil
@@ -1157,7 +1194,8 @@ func (it *fileSystemProxyIterator) Reset() error {
 	return nil
 }
 
-func (it *fileSystemProxyIterator) NextFileInfo() (os.FileInfo, error) {
+// Note: Stat must be copied if you wish to keep it beyond the next NextStat() call
+func (it *fileSystemProxyIterator) NextStat() (Stat, error) {
 	if it.buf == nil {
 		if err := it.Reset(); err != nil {
 			return nil, err
@@ -1174,7 +1212,7 @@ func (it *fileSystemProxyIterator) NextFileInfo() (os.FileInfo, error) {
 		return st, b[2+size:], nil
 	}
 
-	var fi os.FileInfo
+	var outSt Stat
 	var err error
 
 	if len(it.rst) > 0 {
@@ -1183,10 +1221,10 @@ func (it *fileSystemProxyIterator) NextFileInfo() (os.FileInfo, error) {
 		if err != nil {
 			return nil, err
 		}
-		fi = StatFileInfo{st.Clone()}
+		outSt = st
 	}
 
-	if fi == nil {
+	if outSt == nil {
 		var n int
 		n, err = it.fp.ReadAt(it.buf, int64(it.offset))
 		if n > 0 {
@@ -1196,19 +1234,29 @@ func (it *fileSystemProxyIterator) NextFileInfo() (os.FileInfo, error) {
 			if err != nil {
 				return nil, err
 			}
-			fi = StatFileInfo{st.Clone()}
+			outSt = st
 			it.offset += n
 		}
 	}
 
-	it.fp.fs.c.Tracef("NextFileInfo() -> %#v, %v", fi, err)
+	return outSt, err
+}
 
-	return fi, err
+// Note: FileInfo is safe to use after calling NextFileInfo() again
+func (it *fileSystemProxyIterator) NextFileInfo() (os.FileInfo, error) {
+	st, err := it.NextStat()
+	if st != nil {
+		return st.Clone().FileInfo(), err
+	}
+	return nil, err
 }
 func (it *fileSystemProxyIterator) Close() error { return it.fp.Close() }
 
 func (fs *FileSystemProxy) ListDir(path string) (FileInfoIterator, error) {
+	return fs.ListDirStat(path)
+}
 
+func (fs *FileSystemProxy) ListDirStat(path string) (StatIterator, error) {
 	fid := fs.allocFid()
 	fs.c.Tracef("ListDir(%#v) %s", path, fid)
 	q, err := fs.walk(fid, path)
