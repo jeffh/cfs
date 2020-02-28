@@ -2,6 +2,9 @@
 
 CMDS := $(shell ls cmd)
 
+# Example goargs
+# GOARGS=-race for race condition checking
+
 all: $(CMDS)
 
 $(CMDS): $(find . -type '*.go')

@@ -126,7 +126,7 @@ func main() {
 			runtime.Goexit()
 		}
 
-		it, err := srcDir.ListDirStat()
+		it, err := srcNode.ListDirStat()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error opening dir on source fs: %s: %s\n", srcPath, err)
 			exitCode = 2
@@ -135,12 +135,12 @@ func main() {
 		defer it.Close()
 
 		type stackNode struct {
-			it  StatIterator
-			src *FileProxy
-			dst *FileProxy
+			it  ninep.StatIterator
+			src *ninep.FileProxy
+			dst *ninep.FileProxy
 		}
 
-		stack := make([]stackNode)
+		stack := make([]stackNode, 0)
 		stack = append(stack, stackNode{it, srcNode, dstNode})
 
 		for len(stack) > 0 {
@@ -154,10 +154,16 @@ func main() {
 			}
 
 			if src.IsDir() {
+				// TODO:
 			} else {
-				dst, err := last.dst.Traverse(name)
+				_, err := last.dst.Traverse(name)
 				if os.IsNotExist(err) {
-					dst, err := last.dst.Traverse(ninep.Dirname(name))
+					_, err = last.dst.Traverse(ninep.Dirname(name))
+				}
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error traversing: %v (or %v)\n", name, ninep.Dirname(name))
+					exitCode = 3
+					runtime.Goexit()
 				}
 			}
 
