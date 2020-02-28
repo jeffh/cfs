@@ -13,7 +13,6 @@ require (
 	github.com/docker/go-units v0.4.0 // indirect
 	github.com/go-ole/go-ole v1.2.4 // indirect
 	github.com/google/shlex v0.0.0-20181106134648-c34317bd91bf
-	github.com/jstemmer/gotags v1.4.1 // indirect
 	github.com/kardianos/service v1.0.0
 	github.com/kurin/blazer v0.5.3
 	github.com/opencontainers/go-digest v1.0.0-rc1 // indirect
