@@ -3,144 +3,68 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log"
 	"os"
-	"os/user"
-	"time"
+	"runtime"
 
-	"github.com/jeffh/cfs/fs"
+	"github.com/jeffh/cfs/cli"
+	"github.com/jeffh/cfs/fs/proxy"
+	"github.com/jeffh/cfs/fs/unionfs"
 	"github.com/jeffh/cfs/ninep"
+	"github.com/kardianos/service"
 )
 
 func main() {
-	var (
-		// client
-		srcAddr string
-
-		usr   string
-		mount string
-
-		recov bool
-
-		timeout int
-
-		// server
-		addr    string
-		trace   bool
-		errLog  bool
-		tracefs bool
-
-		certFile string
-		keyFile  string
-
-		err error
-	)
-
-	// client
-	flag.StringVar(&usr, "user", "", "Username to connect as, defaults to current system user")
-	flag.StringVar(&mount, "mount", "", "Default access path, defaults to empty string")
-	flag.IntVar(&timeout, "timeout", 5, "Timeout in seconds for client requests")
-	flag.BoolVar(&recov, "r", false, "Use recover client for talking over flaky networks")
-
-	// server
-	flag.StringVar(&addr, "addr", "localhost:564", "The address and port to listen the 9p server. Defaults to 'localhost:564'.")
-	flag.BoolVar(&trace, "trace", false, "Print trace of 9p server to stdout")
-	flag.BoolVar(&tracefs, "tracefs", false, "Print trace of 9p FileSystem interface to stdout")
-	flag.BoolVar(&errLog, "err", false, "Print errors of 9p server to stderr")
-	flag.StringVar(&certFile, "certfile", "", "Accept only TLS wrapped connections. Also needs to specify keyfile flag.")
-	flag.StringVar(&keyFile, "keyfile", "", "Accept only TLS wrapped connections. Also needs to specify certfile flag.")
+	cltCfg := cli.ClientConfig{
+		PrintPrefix: "[client] ",
+	}
+	flag.IntVar(&cltCfg.TimeoutInSeconds, "client-timeout", 5, "Timeout in seconds for client requests")
+	flag.BoolVar(&cltCfg.PrintTraceMessages, "client-trace", false, "Print trace of 9p client to stdout")
+	flag.BoolVar(&cltCfg.PrintErrorMessages, "client-err", false, "Print errors of 9p client to stdout")
+	flag.BoolVar(&cltCfg.UseRecoverClient, "r", false, "Use recover client for talking over flaky networks")
 
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [OPTIONS] FORWARD_ADDR\n", os.Args[0])
 		flag.PrintDefaults()
 	}
 
-	flag.Parse()
-
-	if flag.NArg() == 0 {
-		flag.Usage()
-		os.Exit(1)
-	}
-	srcAddr = flag.Arg(0)
-
-	var (
-		srvTraceLogger, srvErrLogger ninep.Logger
-		cltTraceLogger, cltErrLogger ninep.Logger
-	)
-
-	if trace {
-		srvTraceLogger = log.New(os.Stdout, "[server] ", log.LstdFlags)
-		cltTraceLogger = log.New(os.Stdout, "[client] ", log.LstdFlags)
-	}
-	if errLog {
-		srvErrLogger = log.New(os.Stderr, "[server] ", log.LstdFlags)
-		cltErrLogger = log.New(os.Stderr, "[client] ", log.LstdFlags)
+	cfg := &service.Config{
+		Name:        "proxyfs",
+		DisplayName: "Proxy File System Service",
+		Description: "Provides a 9p file system that proxies one 9p file system into another one. Useful to remap a private 9p server to a public ip.",
 	}
 
-	var fsys ninep.FileSystem
-	{
-		if usr == "" {
-			u, err := user.Current()
-			if err != nil {
-				usr = "9puser"
-			}
-			usr = u.Username
+	var exitCode int
+
+	defer func() { os.Exit(exitCode) }()
+	closers := make([]func(), 0)
+	defer func() {
+		for _, c := range closers {
+			c()
 		}
-		if recov {
-			clt := &ninep.RecoverClient{
-				BasicClient: ninep.BasicClient{
-					Timeout: time.Duration(timeout) * time.Second,
-					Loggable: ninep.Loggable{
-						ErrorLog: cltErrLogger,
-						TraceLog: cltTraceLogger,
-					},
-				},
-				User:  usr,
-				Mount: mount,
-			}
-			err = clt.Connect(srcAddr)
-			if err != nil {
-				fmt.Printf("Error: %s", err)
-				os.Exit(1)
-			}
-			fsys, err = clt.Fs()
-			if err != nil {
-				fmt.Printf("Error: %s", err)
-				os.Exit(1)
-			}
-		} else {
-			clt := &ninep.BasicClient{
-				Timeout: time.Duration(timeout) * time.Second,
-				Loggable: ninep.Loggable{
-					ErrorLog: cltErrLogger,
-					TraceLog: cltTraceLogger,
-				},
-			}
-			err = clt.Connect(srcAddr)
-			if err != nil {
-				fmt.Printf("Error: %s", err)
-				os.Exit(1)
-			}
-			fsys, err = clt.Fs(usr, mount)
-			if err != nil {
-				fmt.Printf("Error: %s", err)
-				os.Exit(1)
-			}
-		}
-	}
+	}()
 
-	if tracefs {
-		fsys = fs.TraceFileSystem{
-			Fs:       fsys,
-			Loggable: ninep.Loggable{log.New(os.Stdout, "[tracefs] ", log.LstdFlags), log.New(os.Stdout, "[tracefs] ", log.LstdFlags)},
-		}
-	}
+	cli.ServiceMain(cfg, func() ninep.FileSystem {
 
-	srv := ninep.NewServer(fsys, srvErrLogger, srvTraceLogger)
-	if certFile != "" && keyFile != "" {
-		err = srv.ListenAndServeTLS(addr, certFile, keyFile, nil)
-	} else {
-		err = srv.ListenAndServe(addr, nil)
-	}
-	fmt.Printf("Error: %s", err)
+		if flag.NArg() == 1 {
+		}
+
+		fsmc := proxy.ParseMounts(flag.Args())
+		fsm := make([]proxy.FileSystemMount, 0, len(fsmc)-1)
+
+		for _, mcfg := range fsmc {
+			clt, fs, err := cltCfg.CreateFs(mcfg.Addr)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error connecting: %v\n", err)
+				runtime.Goexit()
+			}
+			closers = append(closers, func() { clt.Close() })
+
+			fsm = append(fsm, proxy.FileSystemMount{
+				fs,
+				mcfg.Prefix,
+			})
+		}
+
+		return unionfs.New(fsm)
+	})
 }

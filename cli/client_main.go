@@ -32,8 +32,8 @@ func (c *ClientConfig) SetFlags(f Flags) {
 	f.StringVar(&c.User, "user", "", "Username to connect as, defaults to current system user")
 	f.StringVar(&c.Mount, "mount", "", "Default access path, defaults to empty string")
 	f.IntVar(&c.TimeoutInSeconds, "timeout", 5, "Timeout in seconds for client requests")
-	f.BoolVar(&c.PrintTraceMessages, "trace", false, "Print trace of 9p server to stdout")
-	f.BoolVar(&c.PrintErrorMessages, "err", false, "Print errors of 9p server to stderr")
+	f.BoolVar(&c.PrintTraceMessages, "trace", false, "Print trace of 9p client to stdout")
+	f.BoolVar(&c.PrintErrorMessages, "err", false, "Print errors of 9p client to stderr")
 	f.BoolVar(&c.UseRecoverClient, "recover", false, "Use recover client for talking over flaky/unreliable networks")
 }
 

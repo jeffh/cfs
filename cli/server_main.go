@@ -32,7 +32,7 @@ func BasicServerMain(createfs func() ninep.FileSystem) {
 	flag.BoolVar(&errLog, "err", false, "Print errors of 9p server to stderr")
 	flag.StringVar(&certFile, "certfile", "", "Accept only TLS wrapped connections. Also needs to specify keyfile flag.")
 	flag.StringVar(&keyFile, "keyfile", "", "Accept only TLS wrapped connections. Also needs to specify certfile flag.")
-	flag.IntVar(&readTimeout, "timeout", 0, "Timeout for reading from client connections in seconds. Defaults to 30 minutes")
+	flag.IntVar(&readTimeout, "read-timeout", 0, "Timeout for reading from client connections in seconds. Defaults to 30 minutes")
 
 	flag.Parse()
 
