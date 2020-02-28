@@ -28,7 +28,13 @@ var (
 var ErrServerClosed = errors.New("server closed")
 
 func isClosedErr(err error) bool {
-	return err != nil && strings.Index(err.Error(), "use of closed network connection") != -1
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	return strings.Index(errStr, "use of closed network connection") != -1 ||
+		errors.Is(err, syscall.ECONNRESET)
+
 }
 
 func isRetryable(err error) bool {
