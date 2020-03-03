@@ -24,6 +24,42 @@ type cltTransaction struct {
 	ch  chan cltChResponse
 }
 
+func createClientTransaction(t Tag, maxMsgSize uint32) cltTransaction {
+	req := createClientRequest(t, maxMsgSize)
+	res := createClientResponse(maxMsgSize)
+	return cltTransaction{
+		req: &req,
+		res: &res,
+	}
+}
+
+func (t *cltTransaction) reset() {
+	t.req.reset()
+	t.res.reset()
+}
+
+func (t *cltTransaction) clone() *cltTransaction {
+	tp := createClientTransaction(t.req.tag, uint32(cap(t.req.outMsg)))
+	n := copy(tp.req.outMsg, t.req.outMsg)
+	tp.req.outMsg = tp.req.outMsg[:n]
+	n = copy(tp.res.inMsg, t.res.inMsg)
+	tp.res.inMsg = tp.res.inMsg[:n]
+	return &tp
+}
+
+func (t *cltTransaction) sendAndReceive(rw net.Conn) (Message, error) {
+	rw.SetDeadline(time.Time{})
+	err := t.req.writeRequest(rw)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to write %s: %w", t.req.requestType(), err)
+	}
+	err = t.res.readReply(rw)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to read reply to %s: %w", t.req.requestType(), err)
+	}
+	return t.res.Reply(), nil
+}
+
 type cltChResponse struct {
 	res *cltResponse
 	err error
@@ -62,6 +98,7 @@ type BasicClient struct {
 	responsePool     chan *cltResponse
 	pendingResponses chan *cltResponse
 	readCancel       context.CancelFunc
+	strategy         clientSocketStrategy
 
 	mut       sync.Mutex
 	tagToTxns map[Tag]cltTransaction
@@ -75,9 +112,6 @@ type BasicClient struct {
 	MinMsgSize              uint32
 
 	Loggable
-
-	strategy clientSocketStrategy
-	writeReq func(t *cltRequest)
 }
 
 var _ FileSystemProxyClient = (*BasicClient)(nil)
@@ -168,13 +202,30 @@ func (c *BasicClient) Fs(user, mount string) (*FileSystemProxy, error) {
 	return &FileSystemProxy{c: c, rootF: f, rootQ: root}, nil
 }
 
-func (c *BasicClient) ConnectTLS(addr string, tlsCfg *tls.Config) error {
+func (c *BasicClient) connectTLS(addr string, tlsCfg *tls.Config, init bool) error {
 	var err error
 	c.rwc, err = tls.Dial("tcp", addr, tlsCfg)
 	if err != nil {
 		return err
 	}
-	if err = c.connect(); err != nil {
+	if err = c.connectWithInit(init); err != nil {
+		c.rwc.Close()
+		return err
+	}
+	return nil
+}
+
+func (c *BasicClient) ConnectTLS(addr string, tlsCfg *tls.Config) error {
+	return c.connectTLS(addr, tlsCfg, true)
+}
+
+func (c *BasicClient) connect(addr string, init bool) error {
+	var err error
+	c.rwc, err = c.dial("tcp", addr)
+	if err != nil {
+		return err
+	}
+	if err = c.connectWithInit(init); err != nil {
 		c.rwc.Close()
 		return err
 	}
@@ -182,16 +233,14 @@ func (c *BasicClient) ConnectTLS(addr string, tlsCfg *tls.Config) error {
 }
 
 func (c *BasicClient) Connect(addr string) error {
-	var err error
-	c.rwc, err = c.dial("tcp", addr)
-	if err != nil {
-		return err
-	}
-	if err = c.connect(); err != nil {
-		c.rwc.Close()
-		return err
-	}
-	return nil
+	return c.connect(addr, true)
+}
+
+func (c *BasicClient) closeWhilePreservingState() error {
+	c.m.Lock()
+	defer c.m.Unlock()
+	err := c.rwc.Close()
+	return err
 }
 
 func (c *BasicClient) Close() error {
@@ -217,8 +266,8 @@ func (c *BasicClient) Close() error {
 	return err
 }
 
-func (c *BasicClient) connect() error {
-	{
+func (c *BasicClient) connectWithInit(init bool) error {
+	if init {
 		// cleanup / initialization
 		if c.readCancel != nil {
 			c.readCancel()
@@ -230,7 +279,7 @@ func (c *BasicClient) connect() error {
 		c.mut.Unlock()
 	}
 
-	{ // set default values
+	if init { // set default values
 		if c.MaxMsgSize < MIN_MESSAGE_SIZE {
 			c.MaxMsgSize = DEFAULT_MAX_MESSAGE_SIZE
 		}
@@ -254,11 +303,11 @@ func (c *BasicClient) connect() error {
 			res: &res,
 		}
 		if err := c.acceptRversion(&verTxn, c.MaxMsgSize); err != nil {
-			return err
+			return fmt.Errorf("Failed to negotiate version: %w", err)
 		}
 	}
 
-	{ // initialization
+	if init { // initialization
 		go func() {
 			for i := uint(0); i < c.MaxSimultaneousRequests; i++ {
 				t := createClientRequest(Tag(i), c.MaxMsgSize)
@@ -272,7 +321,7 @@ func (c *BasicClient) connect() error {
 	}
 
 	// start bg reader
-	{
+	if init {
 		ctx, cancel := context.WithCancel(context.Background())
 		c.readCancel = cancel
 		strat := c.getStrategy()
@@ -289,6 +338,8 @@ func (c *BasicClient) writeRequest(t *cltRequest) error {
 }
 
 func (c *BasicClient) getStrategy() clientSocketStrategy {
+	c.m.Lock()
+	defer c.m.Unlock()
 	if c.strategy == nil {
 		c.strategy = &defaultClientSocketStrategy{}
 	}
@@ -432,42 +483,8 @@ func (s *defaultClientSocketStrategy) ReadLoop(ctx context.Context, c *BasicClie
 	}
 }
 
-var mappedErrors []error = []error{
-	os.ErrInvalid,
-	os.ErrPermission,
-	os.ErrExist,
-	os.ErrNotExist,
-	os.ErrClosed,
-	os.ErrNoDeadline,
-	io.EOF,
-	io.ErrClosedPipe,
-	io.ErrNoProgress,
-	io.ErrShortBuffer,
-	io.ErrShortWrite,
-	io.ErrUnexpectedEOF,
-
-	ErrBadFormat,
-	ErrWriteNotAllowed,
-	ErrReadNotAllowed,
-	ErrSeekNotAllowed,
-	ErrUnsupported,
-	ErrNotImplemented,
-	ErrInvalidAccess,
-	ErrChangeUidNotAllowed,
-	ErrMissingIterator,
-}
-
 func (c *BasicClient) asError(r Rerror) error {
-	msg := r.Ename()
-	// we want to preserve equality of errors to native os-styled errors
-	for _, e := range mappedErrors {
-		if msg == e.Error() {
-			return e
-		}
-	}
-	// else
-	err := errors.New(msg)
-	return err
+	return r.Error()
 }
 
 func (c *BasicClient) Auth(afid Fid, user, mnt string) (Qid, error) {

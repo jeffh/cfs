@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"io"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -21,13 +20,16 @@ const (
 )
 
 type fidState struct {
-	m         sync.Mutex
-	serverFid Fid
-	path      []string
-	qtype     QidType
-	flag      OpenMode
-	mode      Mode
-	opened    bool
+	m            sync.Mutex
+	serverFid    Fid
+	serverAfid   Fid
+	path         []string
+	qtype        QidType
+	flag         OpenMode
+	mode         Mode
+	opened       bool
+	uname, aname string
+	COMMENT      string
 	// TODO: someday: we should remember dir offsets for reconnects
 }
 
@@ -148,7 +150,7 @@ func (c *RecoverClient) retryConnection() error {
 
 	bc := &c.BasicClient
 	bc.rwc.SetDeadline(time.Time{})
-	if err := bc.Close(); err != nil {
+	if err := bc.closeWhilePreservingState(); err != nil {
 		c.Errorf("retryConnection.close: %s\n", err)
 	}
 	var err error
@@ -156,9 +158,9 @@ func (c *RecoverClient) retryConnection() error {
 		c.Tracef("retry connection (attempt=%d)", i)
 		// TODO: we need to timeout connect attempts as well
 		if c.connectTLS {
-			err = bc.ConnectTLS(c.addr, c.tlsCfg)
+			err = bc.connectTLS(c.addr, c.tlsCfg, false)
 		} else {
-			err = bc.Connect(c.addr)
+			err = bc.connect(c.addr, false)
 		}
 		if err == nil {
 			break
@@ -166,56 +168,94 @@ func (c *RecoverClient) retryConnection() error {
 	}
 	if err != nil {
 		return err
+	}
+	req := createClientRequest(99, c.MaxMsgSize)
+	res := createClientResponse(c.MaxMsgSize)
+	txn := cltTransaction{
+		req: &req,
+		res: &res,
 	}
 
 	afid := NO_FID
 	mtfid := Fid(1)
 	if c.usesAuth {
 		afid = 0
+
+		txn.reset()
+		txn.req.Tauth(afid, c.User, c.Mount)
 		// TODO: we should retry auth attempts
 		for i := 0; i < numRetries; i++ {
-			_, err = bc.Auth(afid, c.User, c.Mount)
+			m, err := txn.sendAndReceive(bc.rwc)
 			if IsTimeoutErr(err) || IsTemporaryErr(err) {
 				continue // retry
 			}
 			if err != nil {
 				return err
 			}
+
+			_, ok := m.(Rauth)
+			if !ok {
+				return fmt.Errorf("Expect to read Auth reply, got %s", txn.res.responseType())
+			}
+			break
 		}
 	}
-	if err != nil {
-		return err
-	}
+
+	txn.reset()
+	txn.req.Tattach(mtfid, afid, c.User, c.Mount)
 	for i := 0; i < numRetries; i++ {
-		_, err = bc.Attach(mtfid, afid, c.User, c.Mount)
+		m, err := txn.sendAndReceive(bc.rwc)
 		if err == nil {
+			_, ok := m.(Rattach)
+			if !ok {
+				err = fmt.Errorf("Expect to read Attach reply, got %s", txn.res.responseType())
+			}
 			break
 		}
 	}
 	if err != nil {
-		return err
+		return fmt.Errorf("Failed to auth: %w", err)
 	}
 
 	// since we're a new 9p session, "push" our internal state to the remote
 	// server again
-
 	for _, state := range c.fids {
+		txn.reset()
+
 		state.m.Lock()
 		if state.serverFid != recoverAfid && state.serverFid != recoverMntFid {
 			for i := 0; i < numRetries; i++ {
-				_, err = bc.Walk(recoverMntFid, state.serverFid, state.path)
+				txn.req.Twalk(recoverMntFid, state.serverFid, state.path)
+				m, err := txn.sendAndReceive(bc.rwc)
 				if err != nil {
-					bc.Clunk(state.serverFid) // just because it's easier right now
-					continue                  // retry
+					// clunk, b/c its easier right now
+					txn.reset()
+					txn.req.Tclunk(state.serverFid)
+					_, _ = txn.sendAndReceive(bc.rwc) // ignoring error
+					continue                          // retry
+				}
+				_, ok := m.(Rwalk)
+				if !ok {
+					return fmt.Errorf("Expected Rwalk from server, got %s", txn.res.responseType())
 				}
 				if state.opened {
-					_, _, err = bc.Open(state.serverFid, state.flag)
+					txn.reset()
+					txn.req.Topen(state.serverFid, state.flag)
+					m, err = txn.sendAndReceive(bc.rwc)
 					if err != nil {
-						e := bc.Clunk(state.serverFid) // just because it's easier right now
+						// clunk, b/c its easier right now
+						txn.reset()
+						txn.req.Tclunk(state.serverFid)
+						_, e := txn.sendAndReceive(bc.rwc) // ignoring error
 						if e != nil {
 							return err
 						}
 						continue // retry
+					}
+
+					_, ok := m.(Ropen)
+					if !ok {
+						return fmt.Errorf("Failed to re-open file: expected Ropen, got %s", txn.res.responseType())
 					}
 				}
 			}
@@ -228,6 +268,7 @@ func (c *RecoverClient) retryConnection() error {
 		}
 	}
 
+	fmt.Printf("RECONNECTED_COMPLETE: %v\n", err)
 	return err
 }
 
@@ -284,6 +325,7 @@ func (rc *RecoverClient) WriteRequest(c *BasicClient, t *cltRequest) error {
 
 func (rc *RecoverClient) ReadLoop(ctx context.Context, c *BasicClient) {
 	retry := make(chan bool, c.MaxSimultaneousRequests)
+	block := make(chan bool, 1) // if the reader needs to wait for reconnect
 	go func() {
 		for {
 			select {
@@ -293,19 +335,25 @@ func (rc *RecoverClient) ReadLoop(ctx context.Context, c *BasicClient) {
 				if !ok {
 					return
 				}
+			dancing:
 				for {
 					select {
 					case <-retry:
-						continue
+						continue dancing
 					default:
-						break
+						break dancing
 					}
 				}
+				fmt.Printf("RETRY_CONN\n")
 				retryErr := rc.retryConnection()
 				if retryErr != nil {
 					c.Errorf("Error read timeout: %s", retryErr)
 					rc.Close()
 					return
+				}
+				select {
+				case block <- true:
+				default:
 				}
 			}
 		}
@@ -328,16 +376,30 @@ readLoop:
 			}
 			res.reset()
 		readAttempt:
+			// TODO: we need writes to retry!
 			for {
 				c.rwc.SetReadDeadline(time.Now().Add(rc.readTimeout()))
 				err := res.readReply(c.rwc)
+				fmt.Printf("READ: %v\n", err)
 
-				if isClosedErr(err) || err == io.EOF {
-					c.abortTransactions(err)
-					return
+				rc.m.Lock()
+				closing := rc.closing
+				rc.m.Unlock()
+
+				if isClosedErr(err) {
+					if closing {
+						c.abortTransactions(err)
+						return
+					} else {
+						retry <- true
+						<-block
+						// continue readAttempt
+						continue readLoop
+					}
 				}
 				if IsTimeoutErr(err) {
 					retry <- true
+					<-block
 					continue readAttempt
 				}
 				if IsTemporaryErr(err) {
@@ -355,6 +417,7 @@ readLoop:
 			txn, ok := c.getTransaction(res.reqTag())
 			if !ok {
 				c.Errorf("Server returned unrecognized tag: %d", res.reqTag())
+				pendingResponses <- res
 				continue readLoop
 			}
 			c.Tracef("Server tag: %d", res.Reply().Tag())

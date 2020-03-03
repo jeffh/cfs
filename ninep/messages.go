@@ -2,7 +2,9 @@ package ninep
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"strings"
@@ -21,6 +23,36 @@ const (
 type Message interface {
 	Tag() Tag
 	Bytes() []byte
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+type Fidable interface {
+	Fid() Fid
+	SetFid(v Fid)
+}
+
+type NewFidable interface {
+	NewFid() Fid
+	SetNewFid(v Fid)
+}
+
+type Afidable interface {
+	Afid() Fid
+	SetAfid(v Fid)
+}
+
+func RemapFids(m Message, mapper func(a Fid) Fid) Message {
+	if msg, ok := m.(Fidable); ok {
+		msg.SetFid(mapper(msg.Fid()))
+	}
+	if msg, ok := m.(NewFidable); ok {
+		msg.SetNewFid(mapper(msg.NewFid()))
+	}
+	if msg, ok := m.(Afidable); ok {
+		msg.SetAfid(mapper(msg.Afid()))
+	}
+	return m
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -769,6 +801,7 @@ func (r Tauth) Bytes() []byte { return MsgBase(r).Bytes() }
 func (r Tauth) Size() uint32  { return MsgBase(r).Size() }
 func (r Tauth) Tag() Tag      { return MsgBase(r).Tag() }
 func (r Tauth) Afid() Fid     { return Fid(bo.Uint32(r[msgOffset : msgOffset+4])) }
+func (r Tauth) SetAfid(v Fid) { bo.PutUint32(r[msgOffset:msgOffset+4], uint32(v)) }
 
 func (r Tauth) uname() msgString   { return msgString(r[msgOffset+4:]) }
 func (r Tauth) UnameBytes() []byte { return r.uname().Bytes() }
@@ -808,6 +841,44 @@ func (r Rerror) ename() msgString   { return msgString(r[msgOffset:]) }
 func (r Rerror) EnameBytes() []byte { return r.ename().Bytes() }
 func (r Rerror) Ename() string      { return r.ename().String() }
 
+var mappedErrors []error = []error{
+	os.ErrInvalid,
+	os.ErrPermission,
+	os.ErrExist,
+	os.ErrNotExist,
+	os.ErrClosed,
+	os.ErrNoDeadline,
+	io.EOF,
+	io.ErrClosedPipe,
+	io.ErrNoProgress,
+	io.ErrShortBuffer,
+	io.ErrShortWrite,
+	io.ErrUnexpectedEOF,
+
+	ErrBadFormat,
+	ErrWriteNotAllowed,
+	ErrReadNotAllowed,
+	ErrSeekNotAllowed,
+	ErrUnsupported,
+	ErrNotImplemented,
+	ErrInvalidAccess,
+	ErrChangeUidNotAllowed,
+	ErrMissingIterator,
+}
+
+func (r Rerror) Error() error {
+	msg := r.Ename()
+	// we want to preserve equality of errors to native os-styled errors
+	for _, e := range mappedErrors {
+		if msg == e.Error() {
+			return e
+		}
+	}
+	// else
+	err := errors.New(msg)
+	return err
+}
+
 /////////////////////////////////////
 // size[4] Tclunk tag[2] fid[4]
 type Tclunk []byte
@@ -821,6 +892,7 @@ func (r Tclunk) Bytes() []byte { return MsgBase(r).Bytes() }
 func (r Tclunk) Size() uint32  { return MsgBase(r).Size() }
 func (r Tclunk) Tag() Tag      { return MsgBase(r).Tag() }
 func (r Tclunk) Fid() Fid      { return Fid(bo.Uint32(r[msgOffset : msgOffset+4])) }
+func (r Tclunk) SetFid(v Fid)  { bo.PutUint32(r[msgOffset:msgOffset+4], uint32(v)) }
 
 /////////////////////////////////////
 // size[4] Rclunk tag[2]
@@ -891,8 +963,10 @@ func (r Twalk) Bytes() []byte { return MsgBase(r).Bytes() }
 func (r Twalk) Size() uint32  { return MsgBase(r).Size() }
 func (r Twalk) Tag() Tag      { return MsgBase(r).Tag() }
 func (r Twalk) Fid() Fid      { return Fid(bo.Uint32(r[msgOffset : msgOffset+4])) }
+func (r Twalk) SetFid(v Fid)  { bo.PutUint32(r[msgOffset:msgOffset+4], uint32(v)) }
 
-func (r Twalk) NewFid() Fid { return Fid(bo.Uint32(r[msgOffset+4 : msgOffset+8])) }
+func (r Twalk) NewFid() Fid     { return Fid(bo.Uint32(r[msgOffset+4 : msgOffset+8])) }
+func (r Twalk) SetNewFid(v Fid) { bo.PutUint32(r[msgOffset+4:msgOffset+8], uint32(v)) }
 
 func (r Twalk) NumWname() uint16 { return bo.Uint16(r[msgOffset+8 : msgOffset+10]) }
 
@@ -960,7 +1034,9 @@ func (r Tattach) Bytes() []byte { return MsgBase(r).Bytes() }
 func (r Tattach) Size() uint32  { return MsgBase(r).Size() }
 func (r Tattach) Tag() Tag      { return MsgBase(r).Tag() }
 func (r Tattach) Fid() Fid      { return Fid(bo.Uint32(r[msgOffset : msgOffset+4])) }
+func (r Tattach) SetFid(v Fid)  { bo.PutUint32(r[msgOffset:msgOffset+4], uint32(v)) }
 func (r Tattach) Afid() Fid     { return Fid(bo.Uint32(r[msgOffset+4 : msgOffset+8])) }
+func (r Tattach) SetAfid(v Fid) { bo.PutUint32(r[msgOffset+4:msgOffset+8], uint32(v)) }
 
 func (r Tattach) uname() msgString   { return msgString(r[msgOffset+8:]) }
 func (r Tattach) UnameBytes() []byte { return r.uname().Bytes() }
@@ -1000,6 +1076,7 @@ func (r Topen) Bytes() []byte  { return MsgBase(r).Bytes() }
 func (r Topen) Size() uint32   { return MsgBase(r).Size() }
 func (r Topen) Tag() Tag       { return MsgBase(r).Tag() }
 func (r Topen) Fid() Fid       { return Fid(bo.Uint32(r[msgOffset : msgOffset+4])) }
+func (r Topen) SetFid(v Fid)   { bo.PutUint32(r[msgOffset:msgOffset+4], uint32(v)) }
 func (r Topen) Mode() OpenMode { return OpenMode(r[msgOffset+4]) }
 
 /////////////////////////////////////
@@ -1038,6 +1115,7 @@ func (r Tcreate) Bytes() []byte { return MsgBase(r).Bytes() }
 func (r Tcreate) Size() uint32  { return MsgBase(r).Size() }
 func (r Tcreate) Tag() Tag      { return MsgBase(r).Tag() }
 func (r Tcreate) Fid() Fid      { return Fid(bo.Uint32(r[msgOffset : msgOffset+4])) }
+func (r Tcreate) SetFid(v Fid)  { bo.PutUint32(r[msgOffset:msgOffset+4], uint32(v)) }
 
 func (r Tcreate) name() msgString   { return msgString(r[msgOffset+4:]) }
 func (r Tcreate) NameBytes() []byte { return r.name().Bytes() }
@@ -1126,6 +1204,7 @@ func (r Twrite) Bytes() []byte  { return MsgBase(r).Bytes() }
 func (r Twrite) Size() uint32   { return MsgBase(r).Size() }
 func (r Twrite) Tag() Tag       { return MsgBase(r).Tag() }
 func (r Twrite) Fid() Fid       { return Fid(bo.Uint32(r[msgOffset : msgOffset+4])) }
+func (r Twrite) SetFid(v Fid)   { bo.PutUint32(r[msgOffset:msgOffset+4], uint32(v)) }
 func (r Twrite) Offset() uint64 { return bo.Uint64(r[msgOffset+4 : msgOffset+12]) }
 func (r Twrite) Count() uint32  { return bo.Uint32(r[msgOffset+12 : msgOffset+16]) }
 func (r Twrite) Data() []byte   { return r[msgOffset+16 : msgOffset+16+int(r.Count())] }
@@ -1162,6 +1241,7 @@ func (r Tremove) Bytes() []byte { return MsgBase(r).Bytes() }
 func (r Tremove) Size() uint32  { return MsgBase(r).Size() }
 func (r Tremove) Tag() Tag      { return MsgBase(r).Tag() }
 func (r Tremove) Fid() Fid      { return Fid(bo.Uint32(r[msgOffset : msgOffset+4])) }
+func (r Tremove) SetFid(v Fid)  { bo.PutUint32(r[msgOffset:msgOffset+4], uint32(v)) }
 
 /////////////////////////////////////
 // size[4] Rremove tag[2]
@@ -1190,6 +1270,7 @@ func (r Tstat) Bytes() []byte { return MsgBase(r).Bytes() }
 func (r Tstat) Size() uint32  { return MsgBase(r).Size() }
 func (r Tstat) Tag() Tag      { return MsgBase(r).Tag() }
 func (r Tstat) Fid() Fid      { return Fid(bo.Uint32(r[msgOffset : msgOffset+4])) }
+func (r Tstat) SetFid(v Fid)  { bo.PutUint32(r[msgOffset:msgOffset+4], uint32(v)) }
 
 /////////////////////////////////////
 // size[4] Rstat tag[2] stat[n]
@@ -1236,6 +1317,7 @@ func (r Twstat) Bytes() []byte { return MsgBase(r).Bytes() }
 func (r Twstat) Size() uint32  { return MsgBase(r).Size() }
 func (r Twstat) Tag() Tag      { return MsgBase(r).Tag() }
 func (r Twstat) Fid() Fid      { return Fid(bo.Uint32(r[msgOffset : msgOffset+4])) }
+func (r Twstat) SetFid(v Fid)  { bo.PutUint32(r[msgOffset:msgOffset+4], uint32(v)) }
 func (r Twstat) N() uint16     { return bo.Uint16(r[msgOffset+4 : msgOffset+6]) }
 func (r Twstat) Stat() Stat    { return Stat(r[msgOffset+6:]) }
 

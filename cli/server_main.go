@@ -39,9 +39,9 @@ func (c *ServerConfig) SetFlags(f Flags) {
 		f = &StdFlags{}
 	}
 	f.IntVar(&c.ReadTimeoutInSeconds, "rtimeout", 5, "Timeout in seconds for client requests")
-	f.BoolVar(&c.PrintTraceMessages, "trace", false, "Print trace of 9p server to stdout")
-	f.BoolVar(&c.PrintTraceFSMessages, "tracefs", false, "Print trace of 9p server to stdout")
-	f.BoolVar(&c.PrintErrorMessages, "err", false, "Print errors of 9p server to stderr")
+	f.BoolVar(&c.PrintTraceMessages, "srv-trace", false, "Print trace of 9p server to stdout")
+	f.BoolVar(&c.PrintTraceFSMessages, "srv-tracefs", false, "Print trace of 9p server to stdout")
+	f.BoolVar(&c.PrintErrorMessages, "srv-err", false, "Print errors of 9p server to stderr")
 	f.StringVar(&c.CertFile, "certfile", "", "Accept only TLS wrapped connections. Also needs to specify keyfile flag.")
 	f.StringVar(&c.KeyFile, "keyfile", "", "Accept only TLS wrapped connections. Also needs to specify certfile flag.")
 	f.StringVar(&c.Addr, "addr", "localhost:6666", "The address and port for the 9p server to listen to")

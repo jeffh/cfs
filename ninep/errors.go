@@ -2,6 +2,7 @@ package ninep
 
 import (
 	"errors"
+	"io"
 	"strings"
 	"syscall"
 )
@@ -33,7 +34,8 @@ func isClosedErr(err error) bool {
 	}
 	errStr := err.Error()
 	return strings.Index(errStr, "use of closed network connection") != -1 ||
-		errors.Is(err, syscall.ECONNRESET)
+		errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, io.EOF)
 
 }
 

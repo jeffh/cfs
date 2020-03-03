@@ -267,6 +267,16 @@ func createClientResponse(maxMsgSize uint32) cltResponse {
 	}
 }
 
+func (t *cltRequest) clone() cltRequest {
+	buf := make([]byte, cap(t.outMsg))
+	n := copy(buf, t.outMsg)
+	buf = buf[:n]
+	return cltRequest{
+		outMsg: buf,
+		tag:    t.tag,
+	}
+}
+
 func (t *cltResponse) readReply(rdr io.Reader) error {
 	// read size
 	_, err := readUpTo(rdr, t.inMsg[:4])
@@ -347,6 +357,11 @@ func (t *cltRequest) Request() Message {
 	default:
 		return mb
 	}
+}
+
+func (t *cltResponse) responseType() MsgType {
+	mb := MsgBase(t.inMsg)
+	return mb.Type()
 }
 
 func (t *cltResponse) Reply() Message {

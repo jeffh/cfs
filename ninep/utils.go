@@ -1,6 +1,7 @@
 package ninep
 
 import (
+	"errors"
 	"io"
 	"net"
 	"strings"
@@ -25,7 +26,7 @@ func Basename(path string) string {
 }
 
 func IsClosedSocket(err error) bool {
-	return err != nil && strings.Index(err.Error(), "use of closed network connection") != -1
+	return err != nil && (strings.Index(err.Error(), "use of closed network connection") != -1 || errors.Is(err, io.EOF))
 }
 
 func IsTimeoutErr(err error) bool {
@@ -61,4 +62,44 @@ func readUpTo(r io.Reader, p []byte) (int, error) {
 		err = e
 	}
 	return n, err
+}
+
+func acceptRversion(c Loggable, rwc net.Conn, txn *cltTransaction, maxMsgSize, minMsgSize uint32) (uint32, error) {
+	c.Tracef("Tversion(%d, %s)", maxMsgSize, VERSION_9P2000)
+	txn.req.Tversion(maxMsgSize, VERSION_9P2000)
+	if err := txn.req.writeRequest(rwc); err != nil {
+		c.Errorf("failed to write version: %s", err)
+		return 0, err
+	}
+
+	if err := txn.res.readReply(rwc); err != nil {
+		c.Errorf("failed to read version: %s", err)
+		return 0, err
+	}
+
+	request, ok := txn.res.Reply().(Rversion)
+	if !ok {
+		c.Errorf("failed to negotiate version: unexpected message type: %d", txn.req.requestType())
+		return 0, ErrBadFormat
+	}
+
+	if !strings.HasPrefix(request.Version(), VERSION_9P) {
+		c.Tracef("unsupported server version: %s", request.Version())
+		return 0, ErrBadFormat
+	}
+
+	size := request.MsgSize()
+	if size > maxMsgSize {
+		c.Errorf("server returned size higher than client gave: (server: %d > client: %d)", size, maxMsgSize)
+		return 0, ErrBadFormat
+	}
+	maxMsgSize = request.MsgSize()
+	if minMsgSize > maxMsgSize {
+		c.Errorf("server returned size lower than client supports: (server: %d < client: [gave: %d; min: %d])", size, maxMsgSize, minMsgSize)
+		return 0, ErrBadFormat
+	}
+
+	c.Tracef("Accepted Rversion (msgSize=%d)", maxMsgSize)
+
+	return maxMsgSize, nil
 }

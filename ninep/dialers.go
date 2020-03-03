@@ -60,16 +60,16 @@ func (d *TCPDialer) Listen(network, addr string) (net.Listener, error) {
 
 type TLSDialer struct {
 	Dialer Dialer
-	Config tls.Config
+	Config *tls.Config
 }
 
 func (d *TLSDialer) Dial(network, addr string) (net.Conn, error) {
-	return tls.Dial(network, addr, &d.Config)
+	return tls.Dial(network, addr, d.Config)
 }
 func (d *TLSDialer) Listen(network, addr string) (net.Listener, error) {
 	ln, err := d.Dialer.Listen(network, addr)
 	if err != nil {
 		return nil, err
 	}
-	return tls.NewListener(ln, &d.Config), nil
+	return tls.NewListener(ln, d.Config), nil
 }
