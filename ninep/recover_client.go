@@ -22,6 +22,7 @@ const (
 type fidState struct {
 	m            sync.Mutex
 	serverFid    Fid
+	serverNewFid Fid
 	serverAfid   Fid
 	path         []string
 	qtype        QidType

@@ -22,6 +22,8 @@ type ClientTransport interface {
 	Request(txn *cltTransaction) (Message, error)
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////
+
 type SerialClientTransport struct {
 	m   sync.Mutex
 	rwc net.Conn
@@ -186,10 +188,17 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 		msg, err := txn.sendAndReceive(t.rwc)
 		fmt.Printf("sendAndRecv(%s) -> %s %v\n", txn.req.requestType(), txn.res.responseType(), err)
 
-		switch req.(type) {
+		switch r := req.(type) {
 		case Tclunk:
-			fid := orig.(Tclunk).Fid()
+			fid := r.Fid()
 			t.Tracef("Save: Tclunk(%d, ..., ...)", fid)
+			// always clunk
+			t.mut.Lock()
+			delete(t.fids, fid)
+			t.mut.Unlock()
+		case Tremove:
+			fid := r.Fid()
+			t.Tracef("Save: Tremove(%d, ..., ...)", fid)
 			// always clunk
 			t.mut.Lock()
 			delete(t.fids, fid)
@@ -204,7 +213,6 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 				t.mut.Lock()
 				t.fids[orig.(Tauth).Afid()] = fidState{
 					qtype:     m.Aqid().Type(),
-					path:      []string{""},
 					mode:      M_AUTH,
 					serverFid: r.Afid(),
 					uname:     r.Uname(),
@@ -217,7 +225,6 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 				t.mut.Lock()
 				t.fids[orig.(Tattach).Fid()] = fidState{
 					qtype:      m.Qid().Type(),
-					path:       []string{""},
 					mode:       M_MOUNT,
 					serverFid:  r.Fid(),
 					serverAfid: r.Afid(),
@@ -234,12 +241,36 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 				}
 				t.mut.Lock()
 				t.fids[orig.(Twalk).NewFid()] = fidState{
-					qtype:     qid.Type(),
-					path:      []string{""},
-					mode:      M_MOUNT,
-					serverFid: r.NewFid(),
+					qtype:        qid.Type(),
+					mode:         M_MOUNT,
+					serverFid:    r.Fid(),
+					serverNewFid: r.NewFid(),
 				}
 				t.Tracef("Save: Rwalk(%d, %d, ..., ...)", r.Fid(), r.NewFid())
+				t.mut.Unlock()
+			case Ropen:
+				r := req.(Topen)
+				t.mut.Lock()
+				t.fids[orig.(Topen).Fid()] = fidState{
+					qtype:     m.Qid().Type(),
+					flag:      r.Mode(),
+					serverFid: r.Fid(),
+					opened:    true,
+				}
+				t.Tracef("Save: Ropen(%d, %d, ..., ...)", r.Fid())
+				t.mut.Unlock()
+			case Rcreate:
+				r := req.(Tcreate)
+				t.mut.Lock()
+				t.fids[orig.(Tcreate).Fid()] = fidState{
+					qtype:        m.Qid().Type(),
+					path:         []string{r.Name()},
+					flag:         r.Mode(),
+					serverNewFid: r.Fid(),
+					serverFid:    r.Fid(),
+					opened:       true,
+				}
+				t.Tracef("Save: Rcreate(%d, ..., ...)", r.Fid())
 				t.mut.Unlock()
 			default:
 				// do nothing
@@ -248,7 +279,11 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 			return msg, nil
 		}
 
-		if IsClosedSocket(err) || IsTimeoutErr(err) || IsTemporaryErr(err) {
+		if IsTemporaryErr(err) {
+			continue
+		}
+
+		if IsClosedSocket(err) || IsTimeoutErr(err) {
 			txn = txn.clone()
 			err = t.rwc.Close()
 			if err != nil {
@@ -262,7 +297,15 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 			stateTxn := createClientTransaction(1, t.maxMsgSize)
 
 			// since we're a new 9p session, "push" our internal state to the remote
-			// server again
+			// server again, using the following operations:
+			//
+			// - Tauth/Tattach to remount
+			// - Twalk to recreate any fids
+			// - Topen to reopen any fids
+			// - Topen any created files (via Tcreate)
+			// - Forget any fids that got Tclunk or Tremove
+			t.mut.Lock()
+			defer t.mut.Unlock()
 			for _, state := range t.fids {
 				stateTxn.reset()
 				t.Tracef("Restore: %#v", state)
@@ -273,17 +316,17 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 					stateTxn.req.Tattach(state.serverFid, state.serverAfid, state.uname, state.aname)
 					m, err := stateTxn.sendAndReceive(t.rwc)
 					if err != nil {
-						return nil, fmt.Errorf("Failed to reattach mount: %w", err)
+						return nil, fmt.Errorf("Restore: Failed to reattach mount: %w", err)
 					}
 					_, ok := m.(Rattach)
 					if !ok {
 						state.m.Unlock()
-						return nil, fmt.Errorf("Expected Rattach from server, got %s", stateTxn.res.responseType())
+						return nil, fmt.Errorf("Restore: Expected Rattach from server, got %s", stateTxn.res.responseType())
 					}
 				} else {
 					for i := 0; i < numRetries; i++ {
 						t.Tracef("Restore: Twalk(%d, %d, ..., ...)", state.serverFid, state.serverAfid)
-						stateTxn.req.Twalk(recoverMntFid, state.serverFid, state.path)
+						stateTxn.req.Twalk(state.serverFid, state.serverNewFid, state.path)
 						m, err := stateTxn.sendAndReceive(t.rwc)
 						if err != nil {
 							// clunk, b/c its easier right now
@@ -295,9 +338,33 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 						_, ok := m.(Rwalk)
 						if !ok {
 							state.m.Unlock()
-							return nil, fmt.Errorf("Expected Rwalk from server, got %s", stateTxn.res.responseType())
+							return nil, fmt.Errorf("Restore: Expected Rwalk from server, got %s", stateTxn.res.responseType())
 						}
 						if state.opened {
+							// file was created in previous session
+							if len(state.path) > 0 {
+								stateTxn.reset()
+								t.Tracef("Restore: Tcreate(%d, %s, ..., ...) by walking", state.serverFid, state.flag)
+								stateTxn.req.Twalk(state.serverFid, state.serverNewFid, state.path)
+								m, err = stateTxn.sendAndReceive(t.rwc)
+								if err != nil {
+									// clunk, b/c its easier right now
+									stateTxn.reset()
+									stateTxn.req.Tclunk(state.serverFid)
+									_, e := stateTxn.sendAndReceive(t.rwc) // ignoring error
+									if e != nil {
+										state.m.Unlock()
+										return nil, err
+									}
+									continue // retry
+								}
+
+								_, ok := m.(Ropen)
+								if !ok {
+									state.m.Unlock()
+									return nil, fmt.Errorf("Restore: Failed to re-open file: expected Ropen, got %s", stateTxn.res.responseType())
+								}
+							}
 							stateTxn.reset()
 							t.Tracef("Restore: Topen(%d, %s, ..., ...)", state.serverFid, state.flag)
 							stateTxn.req.Topen(state.serverFid, state.flag)
@@ -329,7 +396,6 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 					return nil, err
 				}
 			}
-			continue
 		}
 		return msg, err
 	}
