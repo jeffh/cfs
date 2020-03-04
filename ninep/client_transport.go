@@ -1,10 +1,13 @@
 package ninep
 
 import (
+	"context"
 	"fmt"
 	"net"
+	"sort"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 type ClientTransport interface {
@@ -13,25 +16,31 @@ type ClientTransport interface {
 
 	MaxMessageSize() uint32
 
+	// TODO: RENAME: this is allocating a transaction for preparing a request (not response)
+	// Assumes .reset() was called by implementor if reused
 	AllocTransaction() (*cltTransaction, bool)
 	ReleaseTransaction(t Tag)
-	Request(txn *cltTransaction) (Message, error)
+	Request(txn *cltTransaction) (Message, error) // this fills in a txn's response
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////
 // Serial Client Transport
+// non-concurrent socket read & write, no retry on failures
 
 type SerialClientTransport struct {
-	m   sync.Mutex
-	rwc net.Conn
-	txn cltTransaction
-
+	m          sync.Mutex
+	rwc        net.Conn
+	txn        cltTransaction
 	maxMsgSize uint32
 }
 
 var _ ClientTransport = (*SerialClientTransport)(nil)
 
-func (t *SerialClientTransport) MaxMessageSize() uint32 { return t.maxMsgSize }
+func (t *SerialClientTransport) MaxMessageSize() uint32 {
+	t.m.Lock()
+	defer t.m.Unlock()
+	return t.maxMsgSize
+}
 
 func (t *SerialClientTransport) Connect(d Dialer, addr, usr, mnt string, A Authorizee, L Loggable) error {
 	t.m.Lock()
@@ -54,11 +63,7 @@ func (t *SerialClientTransport) Connect(d Dialer, addr, usr, mnt string, A Autho
 	return nil
 }
 
-func (t *SerialClientTransport) Disconnect() error {
-	return t.rwc.Close()
-}
-
-func (t *SerialClientTransport) NegotiateConn() net.Conn { return t.rwc }
+func (t *SerialClientTransport) Disconnect() error { return t.rwc.Close() }
 func (t *SerialClientTransport) AllocTransaction() (*cltTransaction, bool) {
 	t.m.Lock()
 	defer t.m.Unlock()
@@ -73,37 +78,210 @@ func (t *SerialClientTransport) Request(txn *cltTransaction) (Message, error) {
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////
+// Parallel Client Transport
+// concurrent socket read & write, no retry on failures
+
+type ParallelClientTransport struct {
+	mut       sync.Mutex
+	tagToTxns map[Tag]cltTransaction
+
+	m                       sync.Mutex
+	rwc                     net.Conn
+	requestPool             chan *cltRequest
+	responsePool            chan *cltResponse
+	pendingResponses        chan *cltResponse
+	readCancel              context.CancelFunc
+	maxMsgSize              uint32
+	MaxSimultaneousRequests uint
+	Loggable
+}
+
+var _ ClientTransport = (*ParallelClientTransport)(nil)
+
+func (t *ParallelClientTransport) MaxMessageSize() uint32 { return t.maxMsgSize }
+
+func (t *ParallelClientTransport) Connect(d Dialer, addr, usr, mnt string, A Authorizee, L Loggable) error {
+	t.m.Lock()
+	defer t.m.Unlock()
+
+	t.Loggable = L
+
+	var err error
+	t.rwc, err = d.Dial("tcp", addr)
+	if err != nil {
+		return err
+	}
+
+	txn := createClientTransaction(NO_TAG, DEFAULT_MAX_MESSAGE_SIZE)
+	msgSize, err := acceptRversion(L, t.rwc, &txn, DEFAULT_MAX_MESSAGE_SIZE, 0)
+	if err != nil {
+		t.rwc.Close()
+		return err
+	}
+
+	t.maxMsgSize = msgSize
+	if t.MaxSimultaneousRequests == 0 {
+		t.MaxSimultaneousRequests = 1
+	}
+
+	t.requestPool = make(chan *cltRequest, t.MaxSimultaneousRequests)
+	t.responsePool = make(chan *cltResponse, t.MaxSimultaneousRequests)
+	t.pendingResponses = make(chan *cltResponse, t.MaxSimultaneousRequests)
+
+	go func() {
+		for i := uint(0); i < t.MaxSimultaneousRequests; i++ {
+			r := createClientRequest(Tag(i), t.maxMsgSize)
+			t.requestPool <- &r
+		}
+		for i := uint(0); i < t.MaxSimultaneousRequests; i++ {
+			r := createClientResponse(t.maxMsgSize)
+			t.responsePool <- &r
+		}
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.readCancel = cancel
+	go t.readLoop(ctx)
+
+	return nil
+}
+
+func (t *ParallelClientTransport) abortTransactions(err error) {
+	t.mut.Lock()
+	for _, txn := range t.tagToTxns {
+		select {
+		case txn.ch <- cltChResponse{err: err}:
+		case <-time.After(1 * time.Second):
+		}
+		close(txn.ch)
+	}
+	t.tagToTxns = make(map[Tag]cltTransaction)
+	t.mut.Unlock()
+	return
+}
+
+func (c *ParallelClientTransport) getTransaction(t Tag) (cltTransaction, bool) {
+	c.mut.Lock()
+	txn, ok := c.tagToTxns[t]
+	c.mut.Unlock()
+	return txn, ok
+}
+
+func (c *ParallelClientTransport) putTransaction(t Tag, txn cltTransaction) {
+	c.mut.Lock()
+	c.tagToTxns[t] = txn
+	c.mut.Unlock()
+}
+
+func (t *ParallelClientTransport) readLoop(ctx context.Context) {
+	t.m.Lock()
+	pendingResponses := t.pendingResponses
+	t.m.Unlock()
+	for {
+		select {
+		case <-ctx.Done():
+			t.abortTransactions(ctx.Err())
+			return
+		case res, ok := <-pendingResponses:
+			if !ok {
+				t.m.Lock()
+				pendingResponses = t.pendingResponses
+				t.m.Unlock()
+				continue
+			}
+			res.reset()
+			err := res.readReply(t.rwc)
+			if err != nil {
+				t.Errorf("Error reading from server: %s", err)
+				t.abortTransactions(err)
+				return
+			}
+
+			txn, ok := t.getTransaction(res.reqTag())
+			if !ok {
+				t.Errorf("Server returned unrecognized tag: %d", res.reqTag())
+				continue
+			}
+			t.Tracef("Server tag: %d", res.Reply().Tag())
+			txn.res = res
+			t.putTransaction(res.reqTag(), txn)
+			txn.ch <- cltChResponse{res: res}
+			close(txn.ch)
+		}
+	}
+}
+
+func (t *ParallelClientTransport) Disconnect() error { return t.rwc.Close() }
+func (c *ParallelClientTransport) AllocTransaction() (*cltTransaction, bool) {
+	req, ok := <-c.requestPool
+	var txn cltTransaction
+	if ok {
+		req.reset()
+		txn = cltTransaction{
+			req: req,
+		}
+		c.mut.Lock()
+		c.tagToTxns[req.tag] = txn
+		c.mut.Unlock()
+	}
+	return &txn, ok
+}
+func (c *ParallelClientTransport) ReleaseTransaction(t Tag) {
+	c.mut.Lock()
+	txn, ok := c.tagToTxns[t]
+	delete(c.tagToTxns, t)
+	c.mut.Unlock()
+
+	if ok {
+		txn.req.reset()
+		c.requestPool <- txn.req
+		if txn.res != nil {
+			txn.res.reset()
+			c.responsePool <- txn.res
+		}
+	}
+}
+func (t *ParallelClientTransport) Request(txn *cltTransaction) (Message, error) {
+	t.m.Lock()
+	defer t.m.Unlock()
+	return txn.sendAndReceive(t.rwc)
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////
 // Serial *Retry* Client Transport
+// non-concurrent socket read & write, attempt retries & reconnect on IO/network failures
+// TODO: handle auth
 
 type SerialRetryClientTransport struct {
-	m   sync.Mutex
-	rwc net.Conn
-	txn cltTransaction
+	m          sync.Mutex
+	rwc        net.Conn
+	txn        cltTransaction
+	maxMsgSize uint32
 
-	nextClientFid uint32
 	nextServerFid uint32
 
 	mut  sync.Mutex
 	fids map[Fid]fidState // clientFid -> serverFid
 
-	d    Dialer
-	addr string
-	usr  string
-	mnt  string
-	A    Authorizee
+	d          Dialer
+	addr       string
+	usr        string
+	mnt        string
+	authorizee Authorizee
 	Loggable
-
-	maxMsgSize uint32
 }
 
 var _ ClientTransport = (*SerialRetryClientTransport)(nil)
 
-func (t *SerialRetryClientTransport) MaxMessageSize() uint32 { return t.maxMsgSize }
+func (t *SerialRetryClientTransport) MaxMessageSize() uint32 {
+	t.m.Lock()
+	defer t.m.Unlock()
+	return t.maxMsgSize
+}
 
 func (t *SerialRetryClientTransport) Connect(d Dialer, addr, usr, mnt string, A Authorizee, L Loggable) error {
 	t.mut.Lock()
 	t.fids = make(map[Fid]fidState)
-	t.nextClientFid = 0
 	t.nextServerFid = 0
 	t.mut.Unlock()
 
@@ -113,7 +291,7 @@ func (t *SerialRetryClientTransport) Connect(d Dialer, addr, usr, mnt string, A 
 	t.addr = addr
 	t.usr = usr
 	t.mnt = mnt
-	t.A = A
+	t.authorizee = A
 	t.Loggable = L
 
 	return t.unsafeConnect(d, addr, usr, mnt, A, L)
@@ -160,10 +338,10 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 	t.m.Lock()
 	defer t.m.Unlock()
 
-	newMappings := make(map[Fid]Fid)
 	req := txn.req.Request()
 	tmp := txn.req.clone()
 	orig := tmp.Request()
+	newMappings := make(map[Fid]Fid)
 	RemapFids(req, func(a Fid) Fid {
 		if a == NO_FID {
 			return a
@@ -186,6 +364,7 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 		msg, err := txn.sendAndReceive(t.rwc)
 		fmt.Printf("sendAndRecv(%s) -> %s %v\n", txn.req.requestType(), txn.res.responseType(), err)
 
+		// state to update even if there's an error
 		switch r := req.(type) {
 		case Tclunk:
 			fid := r.Fid()
@@ -205,6 +384,7 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 		}
 
 		if err == nil {
+			// state to update only on success
 			switch m := msg.(type) {
 			case Rauth:
 				r := req.(Tauth)
@@ -240,7 +420,6 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 				t.mut.Lock()
 				t.fids[orig.(Twalk).NewFid()] = fidState{
 					qtype:        qid.Type(),
-					mode:         M_MOUNT,
 					serverFid:    r.Fid(),
 					serverNewFid: r.NewFid(),
 				}
@@ -287,7 +466,7 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 			if err != nil {
 				return nil, err
 			}
-			err = t.unsafeConnect(t.d, t.addr, t.usr, t.mnt, t.A, t.Loggable)
+			err = t.unsafeConnect(t.d, t.addr, t.usr, t.mnt, t.authorizee, t.Loggable)
 			if err != nil {
 				return nil, err
 			}
@@ -304,12 +483,41 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 			// - Forget any fids that got Tclunk or Tremove
 			t.mut.Lock()
 			defer t.mut.Unlock()
-			for _, state := range t.fids {
+
+			// the more correct ordering would be based on usage, but this is good enough
+			sortedFids := make(FidSlice, len(t.fids))
+			for fid := range t.fids {
+				sortedFids = append(sortedFids, fid)
+			}
+			sort.Sort(sortedFids)
+
+			for _, fid := range sortedFids {
+				state := t.fids[fid]
+
 				stateTxn.reset()
 				t.Tracef("Restore: %#v", state)
 
 				state.m.Lock()
-				if state.mode&M_MOUNT != 0 {
+				if state.mode&M_AUTH != 0 {
+					t.Tracef("Restore: Tauth(%d, ..., ...)", state.serverAfid)
+					stateTxn.req.Tauth(state.serverAfid, state.uname, state.aname)
+					m, err := stateTxn.sendAndReceive(t.rwc)
+					if err != nil {
+						return nil, fmt.Errorf("Restore: Failed to reattach mount: %w", err)
+					}
+					_, ok := m.(Rauth)
+					if !ok {
+						state.m.Unlock()
+						return nil, fmt.Errorf("Restore: Expected Rauth from server, got %s", stateTxn.res.responseType())
+					}
+					if t.authorizee != nil {
+						err = t.authorizee.Prove(context.Background(), state.uname, state.aname)
+						if err != nil {
+							state.m.Unlock()
+							return nil, fmt.Errorf("Restore: Error from Authorizee: %w", err)
+						}
+					}
+				} else if state.mode&M_MOUNT != 0 {
 					t.Tracef("Restore: Tattach(%d, %d, ..., ...)", state.serverFid, state.serverAfid)
 					stateTxn.req.Tattach(state.serverFid, state.serverAfid, state.uname, state.aname)
 					m, err := stateTxn.sendAndReceive(t.rwc)

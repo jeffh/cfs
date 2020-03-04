@@ -412,6 +412,14 @@ func (f Fid) String() string {
 
 /////////////////////////////////////
 
+type FidSlice []Fid
+
+func (s FidSlice) Len() int           { return len(s) }
+func (s FidSlice) Less(i, j int) bool { return s[i] < s[j] }
+func (s FidSlice) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
+
+/////////////////////////////////////
+
 type QidType byte
 
 const (
