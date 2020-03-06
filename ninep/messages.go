@@ -44,7 +44,9 @@ type Afidable interface {
 
 func RemapFids(m Message, mapper func(a Fid) Fid) Message {
 	if msg, ok := m.(Fidable); ok {
-		msg.SetFid(mapper(msg.Fid()))
+		f := mapper(msg.Fid())
+		fmt.Printf("SET_FID %s -> %s\n", msg.Fid(), f)
+		msg.SetFid(f)
 	}
 	if msg, ok := m.(NewFidable); ok {
 		msg.SetNewFid(mapper(msg.NewFid()))

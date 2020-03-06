@@ -40,10 +40,10 @@ func (d *TCPDialer) Dial(network, addr string) (net.Conn, error) {
 	conn, err := net.Dial(network, addr)
 	if err == nil {
 		if tcp, ok := conn.(*net.TCPConn); ok && d.KeepAlivePeriod != 0 {
-			if err = tcp.SetKeepAlive(true); err != nil {
+			if err = tcp.SetKeepAlivePeriod(d.KeepAlivePeriod); err != nil {
 				return nil, err
 			}
-			if err = tcp.SetKeepAlivePeriod(d.KeepAlivePeriod); err != nil {
+			if err = tcp.SetKeepAlive(true); err != nil {
 				return nil, err
 			}
 		}

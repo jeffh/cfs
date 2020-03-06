@@ -348,7 +348,7 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 		}
 		value, found := t.fids[a]
 		if found {
-			return value.serverFid
+			return value.mappedFid
 		}
 
 		v, found := newMappings[a]
@@ -362,20 +362,25 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 	})
 	for {
 		msg, err := txn.sendAndReceive(t.rwc)
-		fmt.Printf("sendAndRecv(%s) -> %s %v\n", txn.req.requestType(), txn.res.responseType(), err)
+		fmt.Printf("STATE: %#v\n", t.fids)
+		fmt.Printf("sendAndRecv(%s) -> %s %s\n", txn.req.requestType(), txn.res.responseType(), err)
+
+		if IsTemporaryErr(err) {
+			continue
+		}
 
 		// state to update even if there's an error
 		switch r := req.(type) {
 		case Tclunk:
 			fid := r.Fid()
-			t.Tracef("Save: Tclunk(%d, ..., ...)", fid)
+			t.Tracef("Save: Tclunk(%s, ..., ...)", fid)
 			// always clunk
 			t.mut.Lock()
 			delete(t.fids, fid)
 			t.mut.Unlock()
 		case Tremove:
 			fid := r.Fid()
-			t.Tracef("Save: Tremove(%d, ..., ...)", fid)
+			t.Tracef("Save: Tremove(%s, ..., ...)", fid)
 			// always clunk
 			t.mut.Lock()
 			delete(t.fids, fid)
@@ -392,6 +397,7 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 				t.fids[orig.(Tauth).Afid()] = fidState{
 					qtype:     m.Aqid().Type(),
 					mode:      M_AUTH,
+					mappedFid: r.Afid(),
 					serverFid: r.Afid(),
 					uname:     r.Uname(),
 					aname:     r.Aname(),
@@ -404,6 +410,7 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 				t.fids[orig.(Tattach).Fid()] = fidState{
 					qtype:      m.Qid().Type(),
 					mode:       M_MOUNT,
+					mappedFid:  r.Fid(),
 					serverFid:  r.Fid(),
 					serverAfid: r.Afid(),
 					uname:      r.Uname(),
@@ -413,13 +420,14 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 				t.mut.Unlock()
 			case Rwalk:
 				r := req.(Twalk)
-				var qid Qid
+				var qt QidType
 				if m.NumWqid() == r.NumWname() {
-					qid = m.Wqid(int(m.NumWqid() - 1))
+					qt = m.Wqid(int(m.NumWqid() - 1)).Type()
 				}
 				t.mut.Lock()
 				t.fids[orig.(Twalk).NewFid()] = fidState{
-					qtype:        qid.Type(),
+					qtype:        qt,
+					mappedFid:    r.NewFid(),
 					serverFid:    r.Fid(),
 					serverNewFid: r.NewFid(),
 				}
@@ -431,6 +439,7 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 				t.fids[orig.(Topen).Fid()] = fidState{
 					qtype:     m.Qid().Type(),
 					flag:      r.Mode(),
+					mappedFid: r.Fid(),
 					serverFid: r.Fid(),
 					opened:    true,
 				}
@@ -443,6 +452,7 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 					qtype:        m.Qid().Type(),
 					path:         []string{r.Name()},
 					flag:         r.Mode(),
+					mappedFid:    r.Fid(),
 					serverNewFid: r.Fid(),
 					serverFid:    r.Fid(),
 					opened:       true,
@@ -454,10 +464,6 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 			}
 
 			return msg, nil
-		}
-
-		if IsTemporaryErr(err) {
-			continue
 		}
 
 		if IsClosedSocket(err) || IsTimeoutErr(err) {

@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/user"
 	"runtime"
-	"time"
 
 	"github.com/jeffh/cfs/ninep"
 )
@@ -16,7 +15,6 @@ type ClientConfig struct {
 	PrintTraceMessages bool
 	PrintErrorMessages bool
 	UseRecoverClient   bool
-	UseSerialClient    bool
 
 	PrintPrefix string
 
@@ -36,7 +34,6 @@ func (c *ClientConfig) SetFlags(f Flags) {
 	f.BoolVar(&c.PrintTraceMessages, "trace", false, "Print trace of 9p client to stdout")
 	f.BoolVar(&c.PrintErrorMessages, "err", false, "Print errors of 9p client to stderr")
 	f.BoolVar(&c.UseRecoverClient, "recover", false, "Use recover client for talking over flaky/unreliable networks")
-	f.BoolVar(&c.UseSerialClient, "serial", false, "Use serial client for testing")
 }
 
 func (c *ClientConfig) user() string {
@@ -67,50 +64,31 @@ func (c *ClientConfig) CreateClient(addr string) (ninep.Client, error) {
 		TraceLog: traceLogger,
 	}
 
-	if c.UseSerialClient {
-		if traceLogger != nil {
-			traceLogger.Printf("Using serial client\n")
-		}
-		clt := ninep.SerialClient{
-			Transport: &ninep.SerialRetryClientTransport{},
-			Loggable:  loggable,
-			User:      usr,
-			Mount:     c.Mount,
-		}
+	var transport ninep.ClientTransport
 
-		if err = clt.Connect(addr); err != nil {
-			return nil, fmt.Errorf("Failed to connect to 9p server: %s\n", err)
-		}
-		return &clt, nil
-	}
 	if c.UseRecoverClient {
 		if traceLogger != nil {
-			traceLogger.Printf("Using recover client\n")
+			traceLogger.Printf("Using retry client\n")
 		}
-		clt := ninep.RecoverClient{
-			BasicClient: ninep.BasicClient{
-				Timeout:  time.Duration(c.TimeoutInSeconds) * time.Second,
-				Loggable: loggable,
-			},
-			User:  usr,
-			Mount: c.Mount,
-		}
-
-		if err = clt.Connect(addr); err != nil {
-			return nil, fmt.Errorf("Failed to connect to 9p server: %s\n", err)
-		}
-		return &clt, nil
+		transport = &ninep.SerialRetryClientTransport{}
 	} else {
-		clt := ninep.BasicClient{
-			Timeout:  time.Duration(c.TimeoutInSeconds) * time.Second,
-			Loggable: loggable,
+		if traceLogger != nil {
+			traceLogger.Printf("Using basic client\n")
 		}
-
-		if err = clt.Connect(addr); err != nil {
-			return nil, fmt.Errorf("Failed to connect to 9p server: %s\n", err)
-		}
-		return &clt, nil
+		transport = &ninep.SerialClientTransport{}
 	}
+
+	clt := ninep.BasicClient{
+		Transport: transport,
+		Loggable:  loggable,
+		User:      usr,
+		Mount:     c.Mount,
+	}
+
+	if err = clt.Connect(addr); err != nil {
+		return nil, fmt.Errorf("Failed to connect to 9p server: %s\n", err)
+	}
+	return &clt, nil
 }
 
 func (c *ClientConfig) CreateFs(addr string) (ninep.Client, *ninep.FileSystemProxy, error) {
@@ -118,32 +96,12 @@ func (c *ClientConfig) CreateFs(addr string) (ninep.Client, *ninep.FileSystemPro
 	if err != nil {
 		return nil, nil, err
 	}
-	if c.UseSerialClient {
-		clt := client.(*ninep.SerialClient)
-		fs, err := clt.Fs()
-		if err != nil {
-			clt.Close()
-			return nil, nil, fmt.Errorf("Failed to attach to 9p server: %s\n", err)
-		}
-		return clt, fs, nil
+	fs, err := client.Fs()
+	if err != nil {
+		client.Close()
+		return nil, nil, fmt.Errorf("Failed to attach to 9p server: %s\n", err)
 	}
-	if c.UseRecoverClient {
-		clt := client.(*ninep.RecoverClient)
-		fs, err := clt.Fs()
-		if err != nil {
-			clt.Close()
-			return nil, nil, fmt.Errorf("Failed to attach to 9p server: %s\n", err)
-		}
-		return clt, fs, nil
-	} else {
-		clt := client.(*ninep.BasicClient)
-		fs, err := clt.Fs(c.user(), c.Mount)
-		if err != nil {
-			clt.Close()
-			return nil, nil, fmt.Errorf("Failed to attach to 9p server: %s\n", err)
-		}
-		return clt, fs, nil
-	}
+	return client, fs, nil
 }
 
 func MainClient(fn func(c ninep.Client, fs *ninep.FileSystemProxy) error) {

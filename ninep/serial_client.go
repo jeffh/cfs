@@ -12,7 +12,7 @@ import (
 
 // A 9P Client that uses a transport to manage parallel communications (if any)
 // Defaults to serial behavior
-type SerialClient struct {
+type BasicClient struct {
 	Transport ClientTransport
 
 	Authorizee  Authorizee
@@ -23,17 +23,17 @@ type SerialClient struct {
 	Loggable
 }
 
-var _ FileSystemProxyClient = (*SerialClient)(nil)
+var _ FileSystemProxyClient = (*BasicClient)(nil)
 
-func (c *SerialClient) MaxMessageSize() uint32 { return c.transport().MaxMessageSize() }
+func (c *BasicClient) MaxMessageSize() uint32 { return c.transport().MaxMessageSize() }
 
-func (c *SerialClient) dialer() Dialer {
+func (c *BasicClient) dialer() Dialer {
 	if c.d == nil {
 		c.d = &TCPDialer{}
 	}
 	return c.d
 }
-func (c *SerialClient) transport() ClientTransport {
+func (c *BasicClient) transport() ClientTransport {
 	if c.Transport == nil {
 		c.Transport = &SerialClientTransport{}
 	}
@@ -42,7 +42,7 @@ func (c *SerialClient) transport() ClientTransport {
 
 // Returns an interface that conforms to the file system interface
 // Can be used once Connect*() are called and successful
-func (c *SerialClient) Fs() (*FileSystemProxy, error) {
+func (c *BasicClient) Fs() (*FileSystemProxy, error) {
 	afid := NO_FID
 	f := Fid(1)
 	user, mount := c.User, c.Mount
@@ -67,7 +67,7 @@ func (c *SerialClient) Fs() (*FileSystemProxy, error) {
 	return &FileSystemProxy{c: c, rootF: f, rootQ: root}, nil
 }
 
-func (c *SerialClient) ConnectTLS(addr string, tlsCfg *tls.Config) error {
+func (c *BasicClient) ConnectTLS(addr string, tlsCfg *tls.Config) error {
 	c.d = &TLSDialer{
 		&TCPDialer{},
 		tlsCfg,
@@ -75,22 +75,22 @@ func (c *SerialClient) ConnectTLS(addr string, tlsCfg *tls.Config) error {
 	return c.connect(addr)
 }
 
-func (c *SerialClient) connect(addr string) error {
+func (c *BasicClient) connect(addr string) error {
 	return c.transport().Connect(c.dialer(), addr, c.User, c.Mount, c.Authorizee, c.Loggable)
 }
 
-func (c *SerialClient) Connect(addr string) error {
+func (c *BasicClient) Connect(addr string) error {
 	c.d = nil
 	return c.connect(addr)
 }
 
-func (c *SerialClient) Close() error {
+func (c *BasicClient) Close() error {
 	return c.transport().Disconnect()
 }
 
-func (c *SerialClient) asError(r Rerror) error { return r.Error() }
+func (c *BasicClient) asError(r Rerror) error { return r.Error() }
 
-func (c *SerialClient) Auth(afid Fid, user, mnt string) (Qid, error) {
+func (c *BasicClient) Auth(afid Fid, user, mnt string) (Qid, error) {
 	c.Tracef("Tauth(%d, %v, %v)", afid, user, mnt)
 	t := c.transport()
 	txn, ok := t.AllocTransaction()
@@ -120,7 +120,7 @@ func (c *SerialClient) Auth(afid Fid, user, mnt string) (Qid, error) {
 	}
 }
 
-func (c *SerialClient) Attach(fd, afid Fid, user, mnt string) (Qid, error) {
+func (c *BasicClient) Attach(fd, afid Fid, user, mnt string) (Qid, error) {
 	t := c.transport()
 	txn, ok := t.AllocTransaction()
 	if !ok {
@@ -150,7 +150,7 @@ func (c *SerialClient) Attach(fd, afid Fid, user, mnt string) (Qid, error) {
 	}
 }
 
-func (c *SerialClient) Walk(f, newF Fid, path []string) ([]Qid, error) {
+func (c *BasicClient) Walk(f, newF Fid, path []string) ([]Qid, error) {
 	t := c.transport()
 	txn, ok := t.AllocTransaction()
 	if !ok {
@@ -196,7 +196,7 @@ func (c *SerialClient) Walk(f, newF Fid, path []string) ([]Qid, error) {
 	}
 }
 
-func (c *SerialClient) Stat(f Fid) (Stat, error) {
+func (c *BasicClient) Stat(f Fid) (Stat, error) {
 	c.Tracef("Stat(%d)", f)
 	t := c.transport()
 	txn, ok := t.AllocTransaction()
@@ -227,7 +227,7 @@ func (c *SerialClient) Stat(f Fid) (Stat, error) {
 	}
 }
 
-func (c *SerialClient) WriteStat(f Fid, s Stat) error {
+func (c *BasicClient) WriteStat(f Fid, s Stat) error {
 	c.Tracef("WriteStat(%d, _)", f)
 	t := c.transport()
 	txn, ok := t.AllocTransaction()
@@ -256,7 +256,7 @@ func (c *SerialClient) WriteStat(f Fid, s Stat) error {
 	}
 }
 
-func (c *SerialClient) Read(f Fid, p []byte, offset uint64) (int, error) {
+func (c *BasicClient) Read(f Fid, p []byte, offset uint64) (int, error) {
 	c.Tracef("Read(%s, []byte(%d), %v)", f, len(p), offset)
 	t := c.transport()
 	txn, ok := t.AllocTransaction()
@@ -288,7 +288,7 @@ func (c *SerialClient) Read(f Fid, p []byte, offset uint64) (int, error) {
 	}
 }
 
-func (c *SerialClient) Clunk(f Fid) error {
+func (c *BasicClient) Clunk(f Fid) error {
 	t := c.transport()
 	txn, ok := t.AllocTransaction()
 	if !ok {
@@ -316,7 +316,7 @@ func (c *SerialClient) Clunk(f Fid) error {
 	}
 }
 
-func (c *SerialClient) Remove(f Fid) error {
+func (c *BasicClient) Remove(f Fid) error {
 	t := c.transport()
 	txn, ok := t.AllocTransaction()
 	if !ok {
@@ -345,7 +345,7 @@ func (c *SerialClient) Remove(f Fid) error {
 }
 
 // Like WriteMsg, but conforms to golang's io.Writer interface (max num bytes possible, else error)
-func (c *SerialClient) Write(f Fid, data []byte, offset uint64) (int, error) {
+func (c *BasicClient) Write(f Fid, data []byte, offset uint64) (int, error) {
 	size := len(data)
 	wrote := 0
 
@@ -386,7 +386,7 @@ func (c *SerialClient) Write(f Fid, data []byte, offset uint64) (int, error) {
 }
 
 // The 9p protocol-level write. Will only write as large as negotiated message buffers allow
-func (c *SerialClient) WriteMsg(f Fid, data []byte, offset uint64) (uint32, error) {
+func (c *BasicClient) WriteMsg(f Fid, data []byte, offset uint64) (uint32, error) {
 	t := c.transport()
 	txn, ok := t.AllocTransaction()
 	if !ok {
@@ -423,7 +423,7 @@ func (c *SerialClient) WriteMsg(f Fid, data []byte, offset uint64) (uint32, erro
 	}
 }
 
-func (c *SerialClient) Open(f Fid, m OpenMode) (q Qid, iounit uint32, err error) {
+func (c *BasicClient) Open(f Fid, m OpenMode) (q Qid, iounit uint32, err error) {
 	c.Tracef("Open(%d, %s)", f, m)
 	t := c.transport()
 	txn, ok := t.AllocTransaction()
@@ -455,7 +455,7 @@ func (c *SerialClient) Open(f Fid, m OpenMode) (q Qid, iounit uint32, err error)
 	}
 }
 
-func (c *SerialClient) Create(f Fid, name string, perm Mode, mode OpenMode) (q Qid, iounit uint32, err error) {
+func (c *BasicClient) Create(f Fid, name string, perm Mode, mode OpenMode) (q Qid, iounit uint32, err error) {
 	c.Tracef("Create(%d, %#v, %s, %d)", f, name, perm, mode)
 	t := c.transport()
 	txn, ok := t.AllocTransaction()
