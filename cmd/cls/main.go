@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -43,7 +44,7 @@ func main() {
 		}
 
 		path = flag.Arg(1)
-		infos, err := fs.ListDir(path)
+		infos, err := fs.ListDir(context.Background(), path)
 		if err != nil {
 			return err
 		}

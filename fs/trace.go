@@ -1,6 +1,7 @@
 package fs
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -77,8 +78,8 @@ type TraceFileSystem struct {
 	ninep.Loggable
 }
 
-func (f TraceFileSystem) MakeDir(path string, mode ninep.Mode) error {
-	err := f.Fs.MakeDir(path, mode)
+func (f TraceFileSystem) MakeDir(ctx context.Context, path string, mode ninep.Mode) error {
+	err := f.Fs.MakeDir(ctx, path, mode)
 	f.Tracef("FS.MakeDir(%v, %s) => %s", path, mode, err)
 	if err != nil {
 		f.Errorf("FS.MakeDir(%v, %s) => %s", path, mode, err)
@@ -86,8 +87,8 @@ func (f TraceFileSystem) MakeDir(path string, mode ninep.Mode) error {
 	return err
 }
 
-func (f TraceFileSystem) CreateFile(path string, flag ninep.OpenMode, mode ninep.Mode) (ninep.FileHandle, error) {
-	h, err := f.Fs.CreateFile(path, flag, mode)
+func (f TraceFileSystem) CreateFile(ctx context.Context, path string, flag ninep.OpenMode, mode ninep.Mode) (ninep.FileHandle, error) {
+	h, err := f.Fs.CreateFile(ctx, path, flag, mode)
 	f.Tracef("FS.CreateFile(%v, %s, %s) => (%v, %s)", path, flag, mode, h, err)
 	if err != nil || h == nil {
 		f.Errorf("FS.CreateFile(%v, %s, %s) => (%v, %s)", path, flag, mode, h, err)
@@ -100,8 +101,8 @@ func (f TraceFileSystem) CreateFile(path string, flag ninep.OpenMode, mode ninep
 	return h, err
 }
 
-func (f TraceFileSystem) OpenFile(path string, flag ninep.OpenMode) (ninep.FileHandle, error) {
-	h, err := f.Fs.OpenFile(path, flag)
+func (f TraceFileSystem) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (ninep.FileHandle, error) {
+	h, err := f.Fs.OpenFile(ctx, path, flag)
 	f.Tracef("FS.OpenFile(%v, %s) => (%v, %s)", path, flag, h, err)
 	if err != nil || h == nil {
 		f.Errorf("FS.OpenFile(%v, %s) => (%v, %s)", path, flag, h, err)
@@ -114,8 +115,8 @@ func (f TraceFileSystem) OpenFile(path string, flag ninep.OpenMode) (ninep.FileH
 	return h, err
 }
 
-func (f TraceFileSystem) ListDir(path string) (ninep.FileInfoIterator, error) {
-	itr, err := f.Fs.ListDir(path)
+func (f TraceFileSystem) ListDir(ctx context.Context, path string) (ninep.FileInfoIterator, error) {
+	itr, err := f.Fs.ListDir(ctx, path)
 	var v []os.FileInfo
 	if itr != nil {
 		v, _ = ninep.FileInfoSliceFromIterator(itr, 21)
@@ -140,8 +141,8 @@ func (f TraceFileSystem) ListDir(path string) (ninep.FileInfoIterator, error) {
 	return itr, err
 }
 
-func (f TraceFileSystem) Stat(path string) (os.FileInfo, error) {
-	info, err := f.Fs.Stat(path)
+func (f TraceFileSystem) Stat(ctx context.Context, path string) (os.FileInfo, error) {
+	info, err := f.Fs.Stat(ctx, path)
 	if info != nil {
 		f.Tracef("FS.Stat(%v) => (os.FileInfo{name: %#v, size: %d...}, %s)", path, info.Name(), info.Size(), err)
 	} else {
@@ -153,34 +154,34 @@ func (f TraceFileSystem) Stat(path string) (os.FileInfo, error) {
 	return info, err
 }
 
-func (f TraceFileSystem) WriteStat(path string, s ninep.Stat) error {
+func (f TraceFileSystem) WriteStat(ctx context.Context, path string, s ninep.Stat) error {
 	f.Tracef("FS.WriteStat(%v, %s)", path, s)
-	err := f.Fs.WriteStat(path, s)
+	err := f.Fs.WriteStat(ctx, path, s)
 	if err != nil {
 		f.Errorf("FS.WriteStat(%v, %s) => %s", path, s, err)
 	}
 	return err
 }
 
-func (f TraceFileSystem) Delete(path string) error {
+func (f TraceFileSystem) Delete(ctx context.Context, path string) error {
 	f.Tracef("FS.Delete(%v)", path)
-	err := f.Fs.Delete(path)
+	err := f.Fs.Delete(ctx, path)
 	if err != nil {
 		f.Errorf("FS.Delete(%v) => %s", path, err)
 	}
 	return err
 }
 
-func (f TraceFileSystem) DeleteWithMode(path string, mode ninep.Mode) error {
+func (f TraceFileSystem) DeleteWithMode(ctx context.Context, path string, mode ninep.Mode) error {
 	if fs, ok := f.Fs.(ninep.DeleteWithModeFileSystem); ok {
 		f.Tracef("FS.DeleteWithMode(%v, %s)", path, mode)
-		err := fs.DeleteWithMode(path, mode)
+		err := fs.DeleteWithMode(ctx, path, mode)
 		if err != nil {
 			f.Errorf("FS.DeleteWithMode(%v, %s) => %s", path, mode, err)
 		}
 		return err
 	} else {
-		return f.Delete(path)
+		return f.Delete(ctx, path)
 	}
 }
 
@@ -193,9 +194,9 @@ type WalkableTraceFileSystem struct {
 
 var _ ninep.WalkableFileSystem = (*WalkableTraceFileSystem)(nil)
 
-func (f *WalkableTraceFileSystem) Walk(parts []string) ([]os.FileInfo, error) {
+func (f *WalkableTraceFileSystem) Walk(ctx context.Context, parts []string) ([]os.FileInfo, error) {
 	f.TraceFileSystem.Tracef("FS.Walk(%v)", parts)
-	infos, err := f.Wfs.Walk(parts)
+	infos, err := f.Wfs.Walk(ctx, parts)
 	if err != nil {
 		f.TraceFileSystem.Errorf("FS.Walk(%v) => %s", parts, err)
 	}

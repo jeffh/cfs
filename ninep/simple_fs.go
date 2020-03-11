@@ -1,6 +1,7 @@
 package ninep
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -96,7 +97,7 @@ func (f *SimpleFileSystem) walk(path string, walkLast bool) (Node, string, error
 	return Walk(f.Root, path, walkLast)
 }
 
-func (f *SimpleFileSystem) MakeDir(path string, mode Mode) error {
+func (f *SimpleFileSystem) MakeDir(ctx context.Context, path string, mode Mode) error {
 	node, name, err := f.walk(path, false)
 	if err != nil {
 		return err
@@ -110,7 +111,7 @@ func (f *SimpleFileSystem) MakeDir(path string, mode Mode) error {
 	return dir.CreateDir(name, mode)
 }
 
-func (f *SimpleFileSystem) CreateFile(path string, flag OpenMode, mode Mode) (FileHandle, error) {
+func (f *SimpleFileSystem) CreateFile(ctx context.Context, path string, flag OpenMode, mode Mode) (FileHandle, error) {
 	node, name, err := f.walk(path, false)
 	if err != nil {
 		return nil, err
@@ -126,7 +127,7 @@ func (f *SimpleFileSystem) CreateFile(path string, flag OpenMode, mode Mode) (Fi
 
 	return dir.CreateFile(name, flag, mode)
 }
-func (f *SimpleFileSystem) OpenFile(path string, flag OpenMode) (FileHandle, error) {
+func (f *SimpleFileSystem) OpenFile(ctx context.Context, path string, flag OpenMode) (FileHandle, error) {
 	node, _, err := f.walk(path, true)
 	if err != nil {
 		return nil, err
@@ -139,7 +140,7 @@ func (f *SimpleFileSystem) OpenFile(path string, flag OpenMode) (FileHandle, err
 
 	return file.Open(flag)
 }
-func (f *SimpleFileSystem) ListDir(path string) (FileInfoIterator, error) {
+func (f *SimpleFileSystem) ListDir(ctx context.Context, path string) (FileInfoIterator, error) {
 	node, _, err := f.walk(path, true)
 	if err != nil {
 		return nil, err
@@ -152,7 +153,7 @@ func (f *SimpleFileSystem) ListDir(path string) (FileInfoIterator, error) {
 
 	return &fileInfoNodeIterator{it}, nil
 }
-func (f *SimpleFileSystem) Stat(path string) (os.FileInfo, error) {
+func (f *SimpleFileSystem) Stat(ctx context.Context, path string) (os.FileInfo, error) {
 	node, _, err := f.walk(path, true)
 	if err != nil {
 		return nil, err
@@ -160,7 +161,7 @@ func (f *SimpleFileSystem) Stat(path string) (os.FileInfo, error) {
 	return node.Info()
 }
 
-func (f *SimpleFileSystem) WriteStat(path string, s Stat) error {
+func (f *SimpleFileSystem) WriteStat(ctx context.Context, path string, s Stat) error {
 	node, name, err := f.walk(path, false)
 	if err != nil {
 		return err
@@ -171,7 +172,7 @@ func (f *SimpleFileSystem) WriteStat(path string, s Stat) error {
 	return node.WriteInfo(info)
 }
 
-func (f *SimpleFileSystem) Delete(path string) error {
+func (f *SimpleFileSystem) Delete(ctx context.Context, path string) error {
 	node, name, err := f.walk(path, false)
 	if err != nil {
 		return err
@@ -185,7 +186,7 @@ func (f *SimpleFileSystem) Delete(path string) error {
 
 var _ DeleteWithModeFileSystem = (*SimpleFileSystem)(nil)
 
-func (f *SimpleFileSystem) DeleteWithMode(path string, m Mode) error {
+func (f *SimpleFileSystem) DeleteWithMode(ctx context.Context, path string, m Mode) error {
 	node, name, err := f.walk(path, false)
 	if err != nil {
 		return err
@@ -209,7 +210,7 @@ type SimpleWalkableFileSystem struct {
 
 var _ WalkableFileSystem = (*SimpleWalkableFileSystem)(nil)
 
-func (f *SimpleWalkableFileSystem) Walk(parts []string) ([]os.FileInfo, error) {
+func (f *SimpleWalkableFileSystem) Walk(ctx context.Context, parts []string) ([]os.FileInfo, error) {
 	nodes, err := WalkTrail(f.SimpleFileSystem.Root, parts)
 	if err != nil {
 		return nil, err

@@ -1,6 +1,7 @@
 package fs
 
 import (
+	"context"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -19,26 +20,28 @@ import (
 // The type represents the root directory for this file system
 type Dir string
 
+var _ ninep.FileSystem = Dir("")
+
 // MakeDir creates a local directory as subdirectory of the root directory of Dir
-func (d Dir) MakeDir(path string, mode ninep.Mode) error {
+func (d Dir) MakeDir(ctx context.Context, path string, mode ninep.Mode) error {
 	fullPath := filepath.Join(string(d), path)
 	return os.Mkdir(fullPath, mode.ToOsMode()&os.ModePerm)
 }
 
 // CreateFile creates a new file as a descendent of the root directory of Dir
-func (d Dir) CreateFile(path string, flag ninep.OpenMode, mode ninep.Mode) (ninep.FileHandle, error) {
+func (d Dir) CreateFile(ctx context.Context, path string, flag ninep.OpenMode, mode ninep.Mode) (ninep.FileHandle, error) {
 	fullPath := filepath.Join(string(d), path)
 	return os.OpenFile(fullPath, flag.ToOsFlag()|os.O_CREATE, mode.ToOsMode())
 }
 
 // OpenFile opens an existing file that is a descendent of the root directory of Dir for reading/writing
-func (d Dir) OpenFile(path string, flag ninep.OpenMode) (ninep.FileHandle, error) {
+func (d Dir) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (ninep.FileHandle, error) {
 	fullPath := filepath.Join(string(d), path)
 	return os.OpenFile(fullPath, flag.ToOsFlag(), 0)
 }
 
 // ListDir lists all files and directories in a given subdirectory
-func (d Dir) ListDir(path string) (ninep.FileInfoIterator, error) {
+func (d Dir) ListDir(ctx context.Context, path string) (ninep.FileInfoIterator, error) {
 	fullPath := filepath.Join(string(d), path)
 	infos, err := ioutil.ReadDir(fullPath)
 	if err != nil {
@@ -62,7 +65,7 @@ func (d Dir) ListDir(path string) (ninep.FileInfoIterator, error) {
 }
 
 // Stat returns information about a given file or directory
-func (d Dir) Stat(path string) (os.FileInfo, error) {
+func (d Dir) Stat(ctx context.Context, path string) (os.FileInfo, error) {
 	fullPath := filepath.Join(string(d), path)
 	info, err := os.Stat(fullPath)
 	if err == nil {
@@ -81,7 +84,7 @@ func (d Dir) Stat(path string) (os.FileInfo, error) {
 }
 
 // WriteStat updates file or directory metadata.
-func (d Dir) WriteStat(path string, s ninep.Stat) error {
+func (d Dir) WriteStat(ctx context.Context, path string, s ninep.Stat) error {
 	fullPath := filepath.Join(string(d), path)
 	// for restoring:
 	// "Either all the changes in wstat request happen, or none of them does:
@@ -218,7 +221,7 @@ func (d Dir) WriteStat(path string, s ninep.Stat) error {
 }
 
 // Delete a file or directory. Deleting the root directory will be an error.
-func (d Dir) Delete(path string) error {
+func (d Dir) Delete(ctx context.Context, path string) error {
 	fullPath := filepath.Join(string(d), path)
 	if fullPath == string(d) {
 		return fmt.Errorf("Cannot delete root dir")

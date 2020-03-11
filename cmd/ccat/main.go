@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -40,7 +41,7 @@ func main() {
 		}
 
 		path = flag.Arg(1)
-		h, err := fs.OpenFile(path, mode)
+		h, err := fs.OpenFile(context.Background(), path, mode)
 		if err != nil {
 			return err
 		}

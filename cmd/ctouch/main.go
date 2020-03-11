@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -26,11 +27,13 @@ func main() {
 			path = flag.Arg(1)
 		}
 
+		ctx := context.Background()
+
 		path = flag.Arg(1)
-		_, err := fs.Stat(path)
+		_, err := fs.Stat(ctx, path)
 
 		if os.IsNotExist(err) {
-			h, err := fs.CreateFile(path, ninep.OREAD, 0666)
+			h, err := fs.CreateFile(ctx, path, ninep.OREAD, 0666)
 			if err != nil {
 				return err
 			}
@@ -44,7 +47,7 @@ func main() {
 		stat.SetMtime(now)
 		stat.SetAtime(now)
 
-		err = fs.WriteStat(path, stat)
+		err = fs.WriteStat(ctx, path, stat)
 		return err
 	})
 }

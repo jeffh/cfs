@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -38,8 +39,10 @@ func main() {
 			err error
 		)
 
+		ctx := context.Background()
+
 		path = flag.Arg(1)
-		_, err = fs.Stat(path)
+		_, err = fs.Stat(ctx, path)
 		var flags ninep.OpenMode
 		if read {
 			flags = ninep.ORDWR
@@ -49,9 +52,9 @@ func main() {
 		flags |= ninep.OTRUNC
 
 		if os.IsNotExist(err) {
-			h, err = fs.CreateFile(path, flags, 0664)
+			h, err = fs.CreateFile(ctx, path, flags, 0664)
 		} else {
-			h, err = fs.OpenFile(path, flags)
+			h, err = fs.OpenFile(ctx, path, flags)
 		}
 		if err != nil {
 			return err

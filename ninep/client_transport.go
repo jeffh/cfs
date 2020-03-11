@@ -362,24 +362,21 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 	})
 	for {
 		msg, err := txn.sendAndReceive(t.rwc)
-		fmt.Printf("STATE: %#v\n", t.fids)
-		fmt.Printf("sendAndRecv(%s) -> %s %s\n", txn.req.requestType(), txn.res.responseType(), err)
-
 		if IsTemporaryErr(err) {
 			continue
 		}
 
 		// state to update even if there's an error
-		switch r := req.(type) {
+		switch req.(type) {
 		case Tclunk:
-			fid := r.Fid()
+			fid := orig.(Tclunk).Fid()
 			t.Tracef("Save: Tclunk(%s, ..., ...)", fid)
 			// always clunk
 			t.mut.Lock()
 			delete(t.fids, fid)
 			t.mut.Unlock()
 		case Tremove:
-			fid := r.Fid()
+			fid := orig.(Tremove).Fid()
 			t.Tracef("Save: Tremove(%s, ..., ...)", fid)
 			// always clunk
 			t.mut.Lock()
@@ -401,6 +398,7 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 					serverFid: r.Afid(),
 					uname:     r.Uname(),
 					aname:     r.Aname(),
+					COMMENT:   "AUTH",
 				}
 				t.Tracef("Save: Rauth(%d, ..., ...)", r.Afid())
 				t.mut.Unlock()
@@ -415,6 +413,7 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 					serverAfid: r.Afid(),
 					uname:      r.Uname(),
 					aname:      r.Aname(),
+					COMMENT:    "ATTACH",
 				}
 				t.Tracef("Save: Rattach(%d, %d, ..., ...)", r.Fid(), r.Afid())
 				t.mut.Unlock()
@@ -488,17 +487,21 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 			// - Topen any created files (via Tcreate)
 			// - Forget any fids that got Tclunk or Tremove
 			t.mut.Lock()
-			defer t.mut.Unlock()
 
 			// the more correct ordering would be based on usage, but this is good enough
-			sortedFids := make(FidSlice, len(t.fids))
+			sortedFids := make(FidSlice, 0, len(t.fids))
 			for fid := range t.fids {
 				sortedFids = append(sortedFids, fid)
 			}
 			sort.Sort(sortedFids)
 
 			for _, fid := range sortedFids {
-				state := t.fids[fid]
+				state, ok := t.fids[fid]
+				if !ok {
+					t.Tracef("Restore not found fid state: %s %#v", fid, state)
+					t.mut.Unlock()
+					continue
+				}
 
 				stateTxn.reset()
 				t.Tracef("Restore: %#v", state)
@@ -509,17 +512,20 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 					stateTxn.req.Tauth(state.serverAfid, state.uname, state.aname)
 					m, err := stateTxn.sendAndReceive(t.rwc)
 					if err != nil {
+						t.mut.Unlock()
 						return nil, fmt.Errorf("Restore: Failed to reattach mount: %w", err)
 					}
 					_, ok := m.(Rauth)
 					if !ok {
 						state.m.Unlock()
+						t.mut.Unlock()
 						return nil, fmt.Errorf("Restore: Expected Rauth from server, got %s", stateTxn.res.responseType())
 					}
 					if t.authorizee != nil {
 						err = t.authorizee.Prove(context.Background(), state.uname, state.aname)
 						if err != nil {
 							state.m.Unlock()
+							t.mut.Unlock()
 							return nil, fmt.Errorf("Restore: Error from Authorizee: %w", err)
 						}
 					}
@@ -528,11 +534,14 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 					stateTxn.req.Tattach(state.serverFid, state.serverAfid, state.uname, state.aname)
 					m, err := stateTxn.sendAndReceive(t.rwc)
 					if err != nil {
+						state.m.Unlock()
+						t.mut.Unlock()
 						return nil, fmt.Errorf("Restore: Failed to reattach mount: %w", err)
 					}
 					_, ok := m.(Rattach)
 					if !ok {
 						state.m.Unlock()
+						t.mut.Unlock()
 						return nil, fmt.Errorf("Restore: Expected Rattach from server, got %s", stateTxn.res.responseType())
 					}
 				} else {
@@ -545,11 +554,14 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 							stateTxn.reset()
 							stateTxn.req.Tclunk(state.serverFid)
 							_, _ = stateTxn.sendAndReceive(t.rwc) // ignoring error
-							continue                              // retry
+							state.m.Unlock()
+							t.mut.Unlock()
+							continue // retry
 						}
 						_, ok := m.(Rwalk)
 						if !ok {
 							state.m.Unlock()
+							t.mut.Unlock()
 							return nil, fmt.Errorf("Restore: Expected Rwalk from server, got %s", stateTxn.res.responseType())
 						}
 						if state.opened {
@@ -566,14 +578,18 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 									_, e := stateTxn.sendAndReceive(t.rwc) // ignoring error
 									if e != nil {
 										state.m.Unlock()
+										t.mut.Unlock()
 										return nil, err
 									}
+									state.m.Unlock()
+									t.mut.Unlock()
 									continue // retry
 								}
 
 								_, ok := m.(Ropen)
 								if !ok {
 									state.m.Unlock()
+									t.mut.Unlock()
 									return nil, fmt.Errorf("Restore: Failed to re-open file: expected Ropen, got %s", stateTxn.res.responseType())
 								}
 							}
@@ -586,8 +602,9 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 								stateTxn.reset()
 								stateTxn.req.Tclunk(state.serverFid)
 								_, e := stateTxn.sendAndReceive(t.rwc) // ignoring error
+								state.m.Unlock()
+								t.mut.Unlock()
 								if e != nil {
-									state.m.Unlock()
 									return nil, err
 								}
 								continue // retry
@@ -596,6 +613,7 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 							_, ok := m.(Ropen)
 							if !ok {
 								state.m.Unlock()
+								t.mut.Unlock()
 								return nil, fmt.Errorf("Failed to re-open file: expected Ropen, got %s", stateTxn.res.responseType())
 							}
 						}
@@ -608,6 +626,9 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 					return nil, err
 				}
 			}
+
+			t.mut.Unlock()
+			continue // retry
 		}
 		return msg, err
 	}

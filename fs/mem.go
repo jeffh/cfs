@@ -1,6 +1,7 @@
 package fs
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -37,6 +38,8 @@ type MemNode interface {
 type Mem struct {
 	Root memNode
 }
+
+var _ ninep.FileSystem = (*Mem)(nil)
 
 type memFileHandle struct {
 	n *memNode
@@ -166,7 +169,7 @@ func (m *Mem) traverseFile(parts []string) (node *memNode, parent *memNode, err 
 	}
 }
 
-func (m *Mem) MakeDir(path string, mode ninep.Mode) error {
+func (m *Mem) MakeDir(ctx context.Context, path string, mode ninep.Mode) error {
 	parts := ninep.PathSplit(path)
 	last := len(parts) - 1
 	n, err := m.traverse(parts[:last-1])
@@ -182,7 +185,7 @@ func (m *Mem) MakeDir(path string, mode ninep.Mode) error {
 	return nil
 }
 
-func (m *Mem) CreateFile(path string, flag ninep.OpenMode, mode ninep.Mode) (ninep.FileHandle, error) {
+func (m *Mem) CreateFile(ctx context.Context, path string, flag ninep.OpenMode, mode ninep.Mode) (ninep.FileHandle, error) {
 	parts := ninep.PathSplit(path)
 	n, parent, err := m.traverseFile(parts)
 	if !os.IsNotExist(err) && err != nil {
@@ -212,7 +215,7 @@ func (m *Mem) CreateFile(path string, flag ninep.OpenMode, mode ninep.Mode) (nin
 	return m.openFile(n)
 }
 
-func (m *Mem) OpenFile(path string, flag ninep.OpenMode) (ninep.FileHandle, error) {
+func (m *Mem) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (ninep.FileHandle, error) {
 	parts := ninep.PathSplit(path)
 	last := len(parts) - 1
 	n, err := m.traverse(parts[:last-1])
@@ -249,7 +252,7 @@ func (m *Mem) stat(n *memNode) *MemFileInfo {
 	}
 }
 
-func (m *Mem) ListDir(path string) (ninep.FileInfoIterator, error) {
+func (m *Mem) ListDir(ctx context.Context, path string) (ninep.FileInfoIterator, error) {
 	parts := ninep.PathSplit(path)
 	n, err := m.traverse(parts)
 	if err != nil {
@@ -264,7 +267,7 @@ func (m *Mem) ListDir(path string) (ninep.FileInfoIterator, error) {
 	return ninep.FileInfoSliceIterator(infos), nil
 }
 
-func (m *Mem) Stat(path string) (os.FileInfo, error) {
+func (m *Mem) Stat(ctx context.Context, path string) (os.FileInfo, error) {
 	parts := ninep.PathSplit(path)
 	child, _, err := m.traverseFile(parts)
 	if err != nil {
@@ -276,7 +279,7 @@ func (m *Mem) Stat(path string) (os.FileInfo, error) {
 	}
 }
 
-func (m *Mem) WriteStat(path string, s ninep.Stat) error {
+func (m *Mem) WriteStat(ctx context.Context, path string, s ninep.Stat) error {
 	var (
 		n        *memNode
 		err      error
@@ -385,7 +388,7 @@ func (m *Mem) WriteStat(path string, s ninep.Stat) error {
 	}
 }
 
-func (m *Mem) Delete(path string) error {
+func (m *Mem) Delete(ctx context.Context, path string) error {
 	parts := ninep.PathSplit(path)
 	last := len(parts) - 1
 	n, err := m.traverse(parts[:last-1])

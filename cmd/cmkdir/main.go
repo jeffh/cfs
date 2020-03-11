@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -26,6 +27,6 @@ func main() {
 		}
 
 		path = flag.Arg(1)
-		return fs.MakeDir(path, 0700)
+		return fs.MakeDir(context.Background(), path, 0700)
 	})
 }

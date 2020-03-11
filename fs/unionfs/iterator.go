@@ -1,6 +1,7 @@
 package unionfs
 
 import (
+	"context"
 	"io"
 	"os"
 	"path/filepath"
@@ -18,10 +19,11 @@ type unionIterator struct {
 	seenPaths  map[string]bool
 
 	path string
+	ctx  context.Context
 }
 
-func makeUnionIterator(path string, fsms []proxy.FileSystemMount) *unionIterator {
-	return &unionIterator{path: path, fsms: fsms}
+func makeUnionIterator(ctx context.Context, path string, fsms []proxy.FileSystemMount) *unionIterator {
+	return &unionIterator{path: path, fsms: fsms, ctx: ctx}
 }
 
 var _ ninep.FileInfoIterator = (*unionIterator)(nil)
@@ -37,7 +39,7 @@ func (itr *unionIterator) seen(path string) bool {
 
 func (itr *unionIterator) hasDir() bool {
 	for _, fsms := range itr.fsms {
-		_, err := fsms.FS.Stat(filepath.Join(fsms.Prefix, itr.path))
+		_, err := fsms.FS.Stat(itr.ctx, filepath.Join(fsms.Prefix, itr.path))
 		if err == nil {
 			return true
 		}
@@ -59,7 +61,7 @@ func (itr *unionIterator) NextFileInfo() (fi os.FileInfo, err error) {
 		}
 		if itr.it == nil {
 			fsm := itr.fsms[itr.fsmsOffset]
-			itr.it, err = fsm.FS.ListDir(filepath.Join(fsm.Prefix, itr.path))
+			itr.it, err = fsm.FS.ListDir(itr.ctx, filepath.Join(fsm.Prefix, itr.path))
 			if err != nil {
 				return
 			}

@@ -145,7 +145,7 @@ func (c *BasicClient) Attach(fd, afid Fid, user, mnt string) (Qid, error) {
 		c.Errorf("Expected Rattach from server, got error: %s", err)
 		return nil, err
 	default:
-		c.Errorf("Expected Rattach from server: %#v")
+		c.Errorf("Expected Rattach from server, got: %#v", r)
 		return nil, ErrBadFormat
 	}
 }
@@ -188,10 +188,10 @@ func (c *BasicClient) Walk(f, newF Fid, path []string) ([]Qid, error) {
 		return qids, nil
 	case Rerror:
 		err := c.asError(r)
-		c.Errorf("Expected Rattach from server, got error: %s", err)
+		c.Errorf("Expected Rwalk from server, got error: %s", err)
 		return nil, err
 	default:
-		c.Errorf("Expected Rattach from server")
+		c.Errorf("Expected Rwalk from server, got %v", r)
 		return nil, ErrBadFormat
 	}
 }

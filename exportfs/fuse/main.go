@@ -98,7 +98,7 @@ func (n *Dir) errorf(format string, values ...interface{}) {
 
 func (n *Dir) Attr(ctx context.Context, a *fuse.Attr) error {
 	n.tracef("Dir.Attr(%v)\n", n.path)
-	st, err := n.fs.Stat(n.path)
+	st, err := n.fs.Stat(ctx, n.path)
 	if err != nil {
 		return mapErr(err)
 	}
@@ -151,7 +151,7 @@ func (n *Dir) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse.
 	if req.Valid.Mode() {
 		st.SetMode(ninep.ModeFromOS(req.Mode))
 	}
-	return mapErr(n.fs.WriteStat(n.path, st))
+	return mapErr(n.fs.WriteStat(ctx, n.path, st))
 }
 
 func (n *Dir) Setxattr(ctx context.Context, req *fuse.SetxattrRequest) error {
@@ -166,12 +166,12 @@ func (n *Dir) Rename(ctx context.Context, req *fuse.RenameRequest, newDir fs.Nod
 	newpath := filepath.Join(nd.path, req.NewName)
 	n.tracef("[%v]Dir.Rename(%#v, %#v)\n", n.path, oldpath, newpath)
 	st := ninep.SyncStatWithName(newpath)
-	return mapErr(n.fs.WriteStat(oldpath, st))
+	return mapErr(n.fs.WriteStat(ctx, oldpath, st))
 }
 
 func (n *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 	n.tracef("[%v]Dir.ReadDirAll()\n", n.path)
-	itr, err := n.fs.ListDir(n.path)
+	itr, err := n.fs.ListDir(ctx, n.path)
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -207,7 +207,7 @@ func (n *Dir) ReadDirAll(ctx context.Context) ([]fuse.Dirent, error) {
 func (n *Dir) Lookup(ctx context.Context, name string) (fs.Node, error) {
 	n.tracef("[%v]Dir.Lookup(%#v)\n", n.path, name)
 	path := filepath.Join(n.path, name)
-	info, err := n.fs.Stat(path)
+	info, err := n.fs.Stat(ctx, path)
 	n.tracef(" -> %#v %v\n", path, err)
 	if err != nil {
 		return nil, mapErr(err)
@@ -225,7 +225,7 @@ func (n *Dir) Mkdir(ctx context.Context, req *fuse.MkdirRequest) (fs.Node, error
 	path := filepath.Join(n.path, req.Name)
 	mode := flagModeToMode(0, req.Mode)
 
-	err := n.fs.MakeDir(path, mode)
+	err := n.fs.MakeDir(ctx, path, mode)
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -247,7 +247,7 @@ func (n *Dir) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.Cr
 	if req.Flags&fuse.OpenDirectory != 0 {
 		return nil, nil, syscall.EINVAL
 	} else {
-		h, err := n.fs.CreateFile(path, flg, mode)
+		h, err := n.fs.CreateFile(ctx, path, flg, mode)
 		fmt.Printf("CreateFile(%#v, %s, %s) => %s\n", path, flg, mode, err)
 		if err != nil {
 			return nil, nil, mapErr(err)
@@ -263,7 +263,7 @@ func (n *Dir) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.Cr
 func (n *Dir) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 	n.tracef("[%v]Dir.Remove(%#v)\n", n.path, req.Name)
 	path := filepath.Join(n.path, req.Name)
-	stat, err := n.fs.Stat(path)
+	stat, err := n.fs.Stat(ctx, path)
 	if err != nil {
 		return mapErr(err)
 	}
@@ -276,7 +276,7 @@ func (n *Dir) Remove(ctx context.Context, req *fuse.RemoveRequest) error {
 			return syscall.EISDIR
 		}
 	}
-	return mapErr(n.fs.Delete(path))
+	return mapErr(n.fs.Delete(ctx, path))
 }
 
 ///////////////////////////////////////////////////////////////
@@ -303,7 +303,7 @@ func (n *File) errorf(format string, values ...interface{}) {
 
 func (n *File) Attr(ctx context.Context, a *fuse.Attr) error {
 	n.tracef("File.Attr(%#v)\n", n.path)
-	st, err := n.fs.Stat(n.path)
+	st, err := n.fs.Stat(ctx, n.path)
 	if err != nil {
 		return mapErr(err)
 	}
@@ -356,7 +356,7 @@ func (n *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse
 		st.SetMode(ninep.ModeFromOS(req.Mode))
 	}
 	n.tracef("[%v]File.Setattr() %s -> %s\n", n.path, req.Valid, st)
-	return mapErr(n.fs.WriteStat(n.path, st))
+	return mapErr(n.fs.WriteStat(ctx, n.path, st))
 }
 
 func (n *File) Setxattr(ctx context.Context, req *fuse.SetxattrRequest) error {
@@ -373,13 +373,13 @@ func (n *File) Lookup(ctx context.Context, name string) (fs.Node, error) {
 
 func (n *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenResponse) (fs.Handle, error) {
 	n.tracef("[%v]File.Open()\n", n.path)
-	st, err := n.fs.Stat(n.path)
+	st, err := n.fs.Stat(ctx, n.path)
 	if err != nil {
 		return nil, mapErr(err)
 	}
 	stat := st.Sys().(ninep.Stat)
 	mode := ninep.OpenMode(req.Flags & fuse.OpenAccessModeMask) // TODO: convert openflags
-	h, err := n.fs.OpenFile(n.path, mode)
+	h, err := n.fs.OpenFile(ctx, n.path, mode)
 	n.tracef("FUSE: FILE OPEN: %#v %s %v\n", n.path, mode, err)
 	if err != nil {
 		return nil, mapErr(err)
@@ -392,7 +392,7 @@ func (n *File) Open(ctx context.Context, req *fuse.OpenRequest, resp *fuse.OpenR
 }
 
 func (n *File) Fsync(ctx context.Context, req *fuse.FsyncRequest) error {
-	return mapErr(n.fs.WriteStat(n.path, ninep.SyncStat()))
+	return mapErr(n.fs.WriteStat(ctx, n.path, ninep.SyncStat()))
 }
 
 // func (n Node) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.CreateResponse) (fs.Node, fs.Handle, error) {

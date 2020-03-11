@@ -1,6 +1,7 @@
 package ninep
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -294,6 +295,8 @@ type FileSystemProxy struct {
 	usedFids map[Fid]bool
 }
 
+var _ FileSystem = (*FileSystemProxy)(nil)
+
 func (fs *FileSystemProxy) allocFid() Fid {
 	f := Fid(0)
 	fs.mut.Lock()
@@ -333,7 +336,7 @@ func (fs *FileSystemProxy) walk(fid Fid, path string) (Qid, error) {
 
 //////////
 
-func (fs *FileSystemProxy) MakeDir(path string, mode Mode) error {
+func (fs *FileSystemProxy) MakeDir(ctx context.Context, path string, mode Mode) error {
 	fid := fs.allocFid()
 
 	prefix := ""
@@ -353,7 +356,7 @@ func (fs *FileSystemProxy) MakeDir(path string, mode Mode) error {
 	fs.releaseFid(fid)
 	return err
 }
-func (fs *FileSystemProxy) CreateFile(path string, flag OpenMode, mode Mode) (FileHandle, error) {
+func (fs *FileSystemProxy) CreateFile(ctx context.Context, path string, flag OpenMode, mode Mode) (FileHandle, error) {
 	fid := fs.allocFid()
 
 	prefix := ""
@@ -377,7 +380,7 @@ func (fs *FileSystemProxy) CreateFile(path string, flag OpenMode, mode Mode) (Fi
 	}
 	return h, err
 }
-func (fs *FileSystemProxy) OpenFile(path string, flag OpenMode) (FileHandle, error) {
+func (fs *FileSystemProxy) OpenFile(ctx context.Context, path string, flag OpenMode) (FileHandle, error) {
 	fid := fs.allocFid()
 	_, err := fs.walk(fid, path)
 	if err != nil {
@@ -475,7 +478,7 @@ func (it *fileSystemProxyIterator) NextFileInfo() (os.FileInfo, error) {
 }
 func (it *fileSystemProxyIterator) Close() error { return it.fp.Close() }
 
-func (fs *FileSystemProxy) ListDir(path string) (FileInfoIterator, error) {
+func (fs *FileSystemProxy) ListDir(ctx context.Context, path string) (FileInfoIterator, error) {
 	return fs.ListDirStat(path)
 }
 
@@ -503,7 +506,7 @@ func (fs *FileSystemProxy) ListDirStat(path string) (StatIterator, error) {
 		return nil, err
 	}
 }
-func (fs *FileSystemProxy) Stat(path string) (os.FileInfo, error) {
+func (fs *FileSystemProxy) Stat(ctx context.Context, path string) (os.FileInfo, error) {
 	fid := fs.allocFid()
 	defer fs.releaseFid(fid)
 	if _, err := fs.walk(fid, path); err != nil {
@@ -513,7 +516,7 @@ func (fs *FileSystemProxy) Stat(path string) (os.FileInfo, error) {
 	fs.c.Clunk(fid)
 	return st.FileInfo(), err
 }
-func (fs *FileSystemProxy) WriteStat(path string, s Stat) error {
+func (fs *FileSystemProxy) WriteStat(ctx context.Context, path string, s Stat) error {
 	fid := fs.allocFid()
 	defer fs.releaseFid(fid)
 	if _, err := fs.walk(fid, path); err != nil {
@@ -523,7 +526,7 @@ func (fs *FileSystemProxy) WriteStat(path string, s Stat) error {
 	fs.c.Clunk(fid)
 	return err
 }
-func (fs *FileSystemProxy) Delete(path string) error {
+func (fs *FileSystemProxy) Delete(ctx context.Context, path string) error {
 	fid := fs.allocFid()
 	defer fs.releaseFid(fid)
 	if _, err := fs.walk(fid, path); err != nil {

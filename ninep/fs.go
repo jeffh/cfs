@@ -143,17 +143,23 @@ func FileInfoSliceFromIterator(itr FileInfoIterator, max int) ([]os.FileInfo, er
 // The following assumptions are part of the interface:
 // - paths can be empty strings (which indicates root directory)
 // - implementations may return paths with / in system
+//
+// Context may optionally contain the following keys:
+//
+//  - "session"    *Session - The server's session, if available
+//  - "rawMessage" Message  - The message the server received, if available
+//
 type FileSystem interface {
 	// Creates a directory. Implementations can reject if parent directories are missing
-	MakeDir(path string, mode Mode) error
+	MakeDir(ctx context.Context, path string, mode Mode) error
 	// Creates a file and opens it for readng/writing
-	CreateFile(path string, flag OpenMode, mode Mode) (FileHandle, error)
+	CreateFile(ctx context.Context, path string, flag OpenMode, mode Mode) (FileHandle, error)
 	// Opens an existing file for reading/writing
-	OpenFile(path string, flag OpenMode) (FileHandle, error)
+	OpenFile(ctx context.Context, path string, flag OpenMode) (FileHandle, error)
 	// Lists directories and files in a given path. Does not include '.' or '..'
-	ListDir(path string) (FileInfoIterator, error)
+	ListDir(ctx context.Context, path string) (FileInfoIterator, error)
 	// Lists stats about a given file or directory.
-	Stat(path string) (os.FileInfo, error)
+	Stat(ctx context.Context, path string) (os.FileInfo, error)
 	// Writes stats about a given file or directory. Implementations perform an all-or-nothing write.
 	// Callers must use NoTouch values to indicate the underlying
 	// implementation should not overwrite values.
@@ -167,9 +173,9 @@ type FileSystem interface {
 	// - Type
 	// - Qid
 	// - Modifying Mode to change M_DIR
-	WriteStat(path string, s Stat) error
+	WriteStat(ctx context.Context, path string, s Stat) error
 	// Deletes a file or directory. Implementations may reject directories that aren't empty
-	Delete(path string) error
+	Delete(ctx context.Context, path string) error
 }
 
 // A file system that wants more information when deleting a file. This can be
@@ -177,7 +183,7 @@ type FileSystem interface {
 // but wish to avoid reading from the underlying storage because it may be
 // expensive.
 type DeleteWithModeFileSystem interface {
-	DeleteWithMode(path string, m Mode) error
+	DeleteWithMode(ctx context.Context, path string, m Mode) error
 }
 
 // A file system that wants to optimize Twalk operations
@@ -189,7 +195,7 @@ type WalkableFileSystem interface {
 	//
 	// Note: simply returning less FileInfos than parts indicates that the cd
 	// failed to traversed to a certain depth.
-	Walk(parts []string) ([]os.FileInfo, error)
+	Walk(ctx context.Context, parts []string) ([]os.FileInfo, error)
 }
 
 ////////////////////////////////////////////////

@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"strings"
+	"syscall"
 )
 
 // Returns the parent path of the given path, or leave unchanged if cannot go up any more directories
@@ -26,7 +27,10 @@ func Basename(path string) string {
 }
 
 func IsClosedSocket(err error) bool {
-	return err != nil && (strings.Index(err.Error(), "use of closed network connection") != -1 || errors.Is(err, io.EOF))
+	return err != nil &&
+		(strings.Index(err.Error(), "use of closed network connection") != -1 ||
+			errors.Is(err, io.EOF) ||
+			errors.Is(err, syscall.EPIPE))
 }
 
 func IsTimeoutErr(err error) bool {

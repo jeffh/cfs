@@ -22,6 +22,7 @@ type directoryHandle struct {
 	fs      FileSystem
 	session *Session
 	path    string
+	ctx     context.Context
 }
 
 func (h *directoryHandle) ReadAt(p []byte, offset int64) (int, error) {
@@ -43,7 +44,7 @@ func (h *directoryHandle) ReadAt(p []byte, offset int64) (int, error) {
 		return 0, ErrSeekNotAllowed
 	}
 	if h.it == nil {
-		it, err := h.fs.ListDir(h.path)
+		it, err := h.fs.ListDir(h.ctx, h.path)
 		if err != nil {
 			return 0, err
 		}
@@ -207,6 +208,8 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 		h.Errorf("No previous session for %s", w.RemoteAddr())
 		return
 	}
+	ctx = context.WithValue(ctx, "session", session)
+	ctx = context.WithValue(ctx, "rawMessage", m)
 	switch m := m.(type) {
 	case Tauth:
 		if h.Auth == nil {
@@ -294,7 +297,7 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 			return
 		}
 		fullPath := cleanPath(fil.Name)
-		info, err := h.Fs.Stat(fullPath)
+		info, err := h.Fs.Stat(ctx, fullPath)
 		if err != nil {
 			h.Errorf("srv: Topen: failed to call stat on %v: %s", fullPath, err)
 			w.Rerror(err)
@@ -318,10 +321,11 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 				fs:      h.Fs,
 				session: session,
 				path:    fullPath,
+				ctx:     ctx,
 			}
 			// fil.IncRef()
 		} else {
-			f, err := h.Fs.OpenFile(fullPath, m.Mode())
+			f, err := h.Fs.OpenFile(ctx, fullPath, m.Mode())
 			if err != nil || f == nil {
 				h.Tracef("srv: Topen: error opening file %v: %s %s", fullPath, err, m.Fid)
 				w.Rerrorf("cannot open: %s", err)
@@ -375,7 +379,7 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 				}
 				parts = append(parts, name)
 			}
-			infos, err := wfs.Walk(parts)
+			infos, err := wfs.Walk(ctx, parts)
 			if err != nil {
 				h.Errorf("srv: Twalk: invalid file system walk for %s (%#v): %s", m.Fid(), filepath.Join(parts...), err)
 				w.Rerror(err)
@@ -429,7 +433,7 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 					path = filepath.Join(path, name)
 				}
 				var err error
-				info, err = h.Fs.Stat(path)
+				info, err = h.Fs.Stat(ctx, path)
 				if err != nil {
 					h.Errorf("srv: Twalk: failed to call stat on %v for %s", path, m.Fid())
 					break
@@ -482,7 +486,7 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 			return
 		}
 		fullPath := cleanPath(fil.Name)
-		info, err := h.Fs.Stat(fullPath)
+		info, err := h.Fs.Stat(ctx, fullPath)
 		if err != nil {
 			h.Errorf("srv: Tstat: failed to call stat on %v: %s", fullPath, err)
 			w.Rerror(err)
@@ -563,10 +567,10 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 			if fil.Flag&ORCLOSE != 0 {
 				h.Tracef("srv: deleting %s %#v", m.Fid(), fil.Name)
 				if fsd, ok := h.Fs.(DeleteWithModeFileSystem); ok {
-					fsd.DeleteWithMode(fil.Name, fil.Mode)
+					fsd.DeleteWithMode(ctx, fil.Name, fil.Mode)
 				} else {
 					// delete the file
-					h.Fs.Delete(fil.Name)
+					h.Fs.Delete(ctx, fil.Name)
 				}
 				session.DeleteQid(fil.Name)
 			}
@@ -583,10 +587,10 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 			var err error
 			if fsd, ok := h.Fs.(DeleteWithModeFileSystem); ok {
 				h.Tracef("srv: Tremove: %v %v // with mode %s", m.Fid(), fil.Name, fil.Mode)
-				err = fsd.DeleteWithMode(fil.Name, fil.Mode)
+				err = fsd.DeleteWithMode(ctx, fil.Name, fil.Mode)
 			} else {
 				h.Tracef("srv: Tremove: %v %v // without mode", m.Fid(), fil.Name)
-				err = h.Fs.Delete(fil.Name)
+				err = h.Fs.Delete(ctx, fil.Name)
 			}
 			session.DeleteFid(m.Fid())
 			session.DeleteQid(fil.Name)
@@ -614,7 +618,7 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 			return
 		}
 		fullPath := filepath.Join(fil.Name, cleanPath(m.Name()))
-		info, err := h.Fs.Stat(fullPath)
+		info, err := h.Fs.Stat(ctx, fullPath)
 		if os.IsExist(err) {
 			h.Errorf("srv: Tcreate: file exists %v: %s", fullPath, err)
 			w.Rerror(err)
@@ -641,7 +645,7 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 				return
 			}
 
-			if err := h.Fs.MakeDir(fullPath, m.Perm()); err != nil {
+			if err := h.Fs.MakeDir(ctx, fullPath, m.Perm()); err != nil {
 				h.Errorf("srv: Tcreate: failed to create dir: %s", err)
 				w.Rerror(err)
 				return
@@ -656,7 +660,7 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 			// fil.IncRef()
 			session.PutFileHandle(q, fil.H)
 		} else {
-			f, err := h.Fs.CreateFile(fullPath, m.Mode(), m.Perm())
+			f, err := h.Fs.CreateFile(ctx, fullPath, m.Mode(), m.Perm())
 			if err != nil || f == nil {
 				h.Tracef("srv: Tcreate: error creating file %v %v: %s", fullPath, m.Perm().ToOsMode(), err)
 				w.Rerror(err)
@@ -781,7 +785,7 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 				return
 			}
 
-			err := h.Fs.WriteStat(fullPath, stat)
+			err := h.Fs.WriteStat(ctx, fullPath, stat)
 			if err != nil {
 				h.Errorf("srv: Twstat: failed for %v: %s", fullPath, err)
 				w.Rerror(err)

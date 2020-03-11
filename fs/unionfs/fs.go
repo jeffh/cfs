@@ -1,6 +1,7 @@
 package unionfs
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 
@@ -25,33 +26,33 @@ type unionFS struct {
 
 var _ ninep.FileSystem = (*unionFS)(nil)
 
-func (ufs *unionFS) MakeDir(path string, mode ninep.Mode) error {
+func (ufs *unionFS) MakeDir(ctx context.Context, path string, mode ninep.Mode) error {
 	for i, fsm := range ufs.wfsms {
-		err := fsm.FS.MakeDir(filepath.Join(fsm.Prefix, path), mode)
+		err := fsm.FS.MakeDir(ctx, filepath.Join(fsm.Prefix, path), mode)
 		if err != nil {
 			for j, f := range ufs.wfsms {
 				if j >= i {
 					break
 				}
 				// best attempts
-				f.FS.Delete(filepath.Join(f.Prefix, path))
+				f.FS.Delete(ctx, filepath.Join(f.Prefix, path))
 			}
 			return err
 		}
 	}
 	return nil
 }
-func (ufs *unionFS) CreateFile(path string, flag ninep.OpenMode, mode ninep.Mode) (ninep.FileHandle, error) {
+func (ufs *unionFS) CreateFile(ctx context.Context, path string, flag ninep.OpenMode, mode ninep.Mode) (ninep.FileHandle, error) {
 	hs := make([]ninep.FileHandle, 0, len(ufs.wfsms))
 	for i, fsm := range ufs.wfsms {
-		h, err := fsm.FS.CreateFile(filepath.Join(fsm.Prefix, path), flag, mode)
+		h, err := fsm.FS.CreateFile(ctx, filepath.Join(fsm.Prefix, path), flag, mode)
 		if err != nil {
 			for j, f := range ufs.wfsms {
 				if j >= i {
 					break
 				}
 				// best attempts
-				f.FS.Delete(filepath.Join(f.Prefix, path))
+				f.FS.Delete(ctx, filepath.Join(f.Prefix, path))
 			}
 			return nil, err
 		}
@@ -59,7 +60,7 @@ func (ufs *unionFS) CreateFile(path string, flag ninep.OpenMode, mode ninep.Mode
 	}
 	return &fanoutHandle{ufs.wfsms, hs, path}, nil
 }
-func (ufs *unionFS) OpenFile(path string, flag ninep.OpenMode) (ninep.FileHandle, error) {
+func (ufs *unionFS) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (ninep.FileHandle, error) {
 	targetFSMs := ufs.wfsms
 	if flag.IsReadOnly() {
 		targetFSMs = ufs.fsms
@@ -69,7 +70,7 @@ func (ufs *unionFS) OpenFile(path string, flag ninep.OpenMode) (ninep.FileHandle
 	fsms := make([]proxy.FileSystemMount, 0, len(targetFSMs))
 
 	for i, fsm := range targetFSMs {
-		h, err := fsm.FS.OpenFile(filepath.Join(fsm.Prefix, path), flag)
+		h, err := fsm.FS.OpenFile(ctx, filepath.Join(fsm.Prefix, path), flag)
 		if err != nil {
 			continue
 		}
@@ -81,16 +82,16 @@ func (ufs *unionFS) OpenFile(path string, flag ninep.OpenMode) (ninep.FileHandle
 	}
 	return &fanoutHandle{fsms, hs, path}, nil
 }
-func (ufs *unionFS) ListDir(path string) (ninep.FileInfoIterator, error) {
-	uitr := makeUnionIterator(path, ufs.fsms)
+func (ufs *unionFS) ListDir(ctx context.Context, path string) (ninep.FileInfoIterator, error) {
+	uitr := makeUnionIterator(ctx, path, ufs.fsms)
 	if !uitr.hasDir() {
 		return nil, os.ErrNotExist
 	}
 	return uitr, nil
 }
-func (ufs *unionFS) Stat(path string) (os.FileInfo, error) {
+func (ufs *unionFS) Stat(ctx context.Context, path string) (os.FileInfo, error) {
 	for _, fsm := range ufs.fsms {
-		fi, err := fsm.FS.Stat(filepath.Join(fsm.Prefix, path))
+		fi, err := fsm.FS.Stat(ctx, filepath.Join(fsm.Prefix, path))
 		if err == os.ErrNotExist {
 			continue
 		} else if err != nil {
@@ -101,9 +102,9 @@ func (ufs *unionFS) Stat(path string) (os.FileInfo, error) {
 	}
 	return nil, os.ErrNotExist
 }
-func (ufs *unionFS) WriteStat(path string, s ninep.Stat) error {
+func (ufs *unionFS) WriteStat(ctx context.Context, path string, s ninep.Stat) error {
 	for _, fsm := range ufs.fsms {
-		err := fsm.FS.WriteStat(filepath.Join(fsm.Prefix, path), s)
+		err := fsm.FS.WriteStat(ctx, filepath.Join(fsm.Prefix, path), s)
 		if err == os.ErrNotExist {
 			continue
 		} else if err != nil {
@@ -114,9 +115,9 @@ func (ufs *unionFS) WriteStat(path string, s ninep.Stat) error {
 	}
 	return os.ErrNotExist
 }
-func (ufs *unionFS) Delete(path string) error {
+func (ufs *unionFS) Delete(ctx context.Context, path string) error {
 	for _, fsm := range ufs.fsms {
-		err := fsm.FS.Delete(filepath.Join(fsm.Prefix, path))
+		err := fsm.FS.Delete(ctx, filepath.Join(fsm.Prefix, path))
 		if err == os.ErrNotExist {
 			continue
 		} else if err != nil {
