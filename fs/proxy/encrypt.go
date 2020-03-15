@@ -62,11 +62,11 @@ func (fs *EncryptedFileSystem) MakeDir(ctx context.Context, path string, mode ni
 }
 
 func (fs *EncryptedFileSystem) CreateFile(ctx context.Context, path string, flag ninep.OpenMode, mode ninep.Mode) (ninep.FileHandle, error) {
-	_, err := fs.KeysMount.FS.CreateFile(ctx, filepath.Join(fs.KeysMount.Prefix, path), 755)
+	_, err := fs.KeysMount.FS.CreateFile(ctx, filepath.Join(fs.KeysMount.Prefix, path), flag, mode)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return fs.DataMount.FS.MakeDir(ctx, filepath.Join(fs.DataMount.Prefix, path), mode)
+	return nil, fs.DataMount.FS.MakeDir(ctx, filepath.Join(fs.DataMount.Prefix, path), mode)
 }
 
 func (fs *EncryptedFileSystem) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (ninep.FileHandle, error) {
