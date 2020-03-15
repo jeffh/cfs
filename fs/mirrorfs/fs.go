@@ -1,6 +1,7 @@
 package mirrorfs
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 
@@ -63,7 +64,7 @@ type mirrorFS struct {
 
 var _ ninep.FileSystem = (*mirrorFS)(nil)
 
-func (mfs *mirrorFS) MakeDir(path string, mode ninep.Mode) error {
+func (mfs *mirrorFS) MakeDir(ctx context.Context, path string, mode ninep.Mode) error {
 	return ninep.ErrNotImplemented
 	// for i, fsm := range mfs.fsms {
 	// 	err := fsm.FS.MakeDir(filepath.Join(fsm.Prefix, path), mode)
@@ -80,7 +81,7 @@ func (mfs *mirrorFS) MakeDir(path string, mode ninep.Mode) error {
 	// }
 	// return nil
 }
-func (mfs *mirrorFS) CreateFile(path string, flag ninep.OpenMode, mode ninep.Mode) (ninep.FileHandle, error) {
+func (mfs *mirrorFS) CreateFile(ctx context.Context, path string, flag ninep.OpenMode, mode ninep.Mode) (ninep.FileHandle, error) {
 	return nil, ninep.ErrNotImplemented
 	// hs := make([]ninep.FileHandle, 0, len(mfs.fsms))
 	// for i, fsm := range mfs.fsms {
@@ -99,10 +100,10 @@ func (mfs *mirrorFS) CreateFile(path string, flag ninep.OpenMode, mode ninep.Mod
 	// }
 	// return &fanoutHandle{mfs.fsms, hs, path}, nil
 }
-func (mfs *mirrorFS) OpenFile(path string, flag ninep.OpenMode) (ninep.FileHandle, error) {
+func (mfs *mirrorFS) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (ninep.FileHandle, error) {
 	return nil, ninep.ErrNotImplemented
 }
-func (mfs *mirrorFS) ListDir(path string) (ninep.FileInfoIterator, error) {
+func (mfs *mirrorFS) ListDir(ctx context.Context, path string) (ninep.FileInfoIterator, error) {
 	return nil, ninep.ErrNotImplemented
 	// uitr := makeUnionIterator(path, mfs.fsms)
 	// if !uitr.hasDir() {
@@ -110,9 +111,9 @@ func (mfs *mirrorFS) ListDir(path string) (ninep.FileInfoIterator, error) {
 	// }
 	// return uitr, nil
 }
-func (mfs *mirrorFS) Stat(path string) (os.FileInfo, error) {
+func (mfs *mirrorFS) Stat(ctx context.Context, path string) (os.FileInfo, error) {
 	for _, fsm := range mfs.fsms {
-		fi, err := fsm.FS.Stat(filepath.Join(fsm.Prefix, path))
+		fi, err := fsm.FS.Stat(ctx, filepath.Join(fsm.Prefix, path))
 		if err == os.ErrNotExist {
 			continue
 		} else if err != nil {
@@ -123,12 +124,12 @@ func (mfs *mirrorFS) Stat(path string) (os.FileInfo, error) {
 	}
 	return nil, os.ErrNotExist
 }
-func (mfs *mirrorFS) WriteStat(path string, s ninep.Stat) error {
+func (mfs *mirrorFS) WriteStat(ctx context.Context, path string, s ninep.Stat) error {
 	return os.ErrNotExist
 }
-func (mfs *mirrorFS) Delete(path string) error {
+func (mfs *mirrorFS) Delete(ctx context.Context, path string) error {
 	for _, fsm := range mfs.fsms {
-		err := fsm.FS.Delete(filepath.Join(fsm.Prefix, path))
+		err := fsm.FS.Delete(ctx, filepath.Join(fsm.Prefix, path))
 		if err == os.ErrNotExist {
 			continue
 		} else if err != nil {
