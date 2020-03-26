@@ -108,6 +108,20 @@ func BasicServerMain(createfs func() ninep.FileSystem) {
 }
 
 func ServiceMain(cfg *service.Config, createfs func() ninep.FileSystem) {
+	createcfg := func(stdout, stderr io.Writer) ServerConfig {
+		cfg := ServerConfig{
+			Stdout: stdout,
+			Stderr: stderr,
+		}
+
+		cfg.SetFlags(nil)
+		return cfg
+	}
+
+	ServiceMainWithFactory(cfg, createcfg, createfs)
+}
+
+func ServiceMainWithFactory(cfg *service.Config, createcfg func(stdout, stderr io.Writer) ServerConfig, createfs func() ninep.FileSystem) {
 	prg := &srv{}
 	s, err := service.New(prg, cfg)
 	if err != nil {
@@ -118,9 +132,10 @@ func ServiceMain(cfg *service.Config, createfs func() ninep.FileSystem) {
 		log.Fatal(err)
 	}
 
-	prg.Main = srvMain(
+	prg.Main = srvMainWithCfg(
 		&proxyInfoLogger{prg.logger},
 		&proxyErrorLogger{prg.logger},
+		createcfg,
 		createfs,
 	)
 
@@ -170,15 +185,8 @@ func (p *srv) run() error {
 	return nil
 }
 
-func srvMain(stdout, stderr io.Writer, createfs func() ninep.FileSystem) (start func(exit chan struct{})) {
-	cfg := ServerConfig{
-		Stdout: stdout,
-		Stderr: stderr,
-	}
-
-	cfg.SetFlags(nil)
-
-	flag.Parse()
+func srvMainWithCfg(stdout, stderr io.Writer, mkCfg func(stdout, stderr io.Writer) ServerConfig, createfs func() ninep.FileSystem) (start func(exit chan struct{})) {
+	cfg := mkCfg(stdout, stderr)
 
 	srv := cfg.CreateServer(createfs)
 	return func(exit chan struct{}) {
@@ -196,4 +204,17 @@ func srvMain(stdout, stderr io.Writer, createfs func() ninep.FileSystem) (start 
 		}()
 		<-ctx.Done()
 	}
+}
+
+func srvMain(stdout, stderr io.Writer, createfs func() ninep.FileSystem) (start func(exit chan struct{})) {
+	return srvMainWithCfg(stdout, stderr, func(stdout, stderr io.Writer) ServerConfig {
+		cfg := ServerConfig{
+			Stdout: stdout,
+			Stderr: stderr,
+		}
+
+		cfg.SetFlags(nil)
+		flag.Parse()
+		return cfg
+	}, createfs)
 }

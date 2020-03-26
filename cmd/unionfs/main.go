@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"runtime"
 
 	"github.com/jeffh/cfs/cli"
 	"github.com/jeffh/cfs/fs/proxy"
@@ -13,6 +14,13 @@ import (
 )
 
 func main() {
+
+	var exitCode = 0
+
+	exitcodePtr := &exitcode
+	defer func() {
+		os.Exit(*exitcodePtr)
+	}()
 
 	var cliCfg cli.ClientConfig
 
@@ -41,7 +49,8 @@ func main() {
 
 			if err != nil {
 				fmt.Printf("Failed to connect to 9p server: %s\n", err)
-				os.Exit(1)
+				exitcode = 1
+				runtime.Goexit()
 			}
 			closers = append(closers, func() { clt.Close() })
 

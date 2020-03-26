@@ -1,15 +1,6 @@
 package main
 
-import (
-	"flag"
-	"fmt"
-	"io"
-	"os"
-
-	"github.com/jeffh/cfs/cli"
-	"github.com/jeffh/cfs/ninep"
-	"github.com/kardianos/service"
-)
+import "fmt"
 
 func main() {
 	cltCfg := cli.ClientConfig{PrintPrefix: "[client] "}
