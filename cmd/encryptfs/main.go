@@ -9,6 +9,7 @@ import (
 
 	"github.com/jeffh/cfs/cli"
 	"github.com/jeffh/cfs/fs/proxy"
+	"github.com/jeffh/cfs/fs/unionfs"
 	"github.com/jeffh/cfs/ninep"
 	"github.com/kardianos/service"
 )
@@ -68,6 +69,17 @@ func main() {
 		srvCfg.Stderr = stderr
 		return srvCfg
 	}
-	createfs := func() ninep.FileSystem { return fs }
+	createfs := func() ninep.FileSystem {
+		return unionfs.New([]proxy.FileSystemMount{
+			proxy.FileSystemMount{
+				FS:     datafs,
+				Prefix: "/data",
+			},
+			proxy.FileSystemMount{
+				FS:     keysfs,
+				Prefix: "/keys",
+			},
+		})
+	}
 	cli.ServiceMainWithFactory(serviceCfg, createsrvcfg, createfs)
 }
