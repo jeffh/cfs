@@ -47,9 +47,9 @@ type Handler interface {
 /////////////////////////////////////////////////////////////
 
 const (
-	DefaultInitialTimeout = 1 * time.Second
-	DefaultReadTimeout    = 30 * time.Minute
-	DefaultWriteTimeout   = 15 * time.Second
+	DefaultInitialTimeout = 5 * time.Second
+	DefaultReadTimeout    = 12 * time.Hour
+	DefaultWriteTimeout   = 30 * time.Second
 
 	// max number of requests a session can make
 	// needs to be balanced with max number of active connections
