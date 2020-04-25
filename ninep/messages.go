@@ -639,6 +639,17 @@ func NewStat(name, uid, gid, muid string) Stat {
 	return s
 }
 
+func (s Stat) CopyFixedFieldsFrom(o Stat) {
+	s.SetSize(o.Size())
+	s.SetType(o.Type())
+	s.SetDev(o.Dev())
+	s.SetQid(o.Qid())
+	s.SetMode(o.Mode())
+	s.SetAtime(o.Atime())
+	s.SetMtime(o.Mtime())
+	s.SetLength(o.Length())
+}
+
 func (s Stat) Nbytes() int   { return int(s.Size() + 2) }
 func (s Stat) Bytes() []byte { return s[:s.Size()+2] }
 

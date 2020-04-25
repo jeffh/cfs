@@ -240,7 +240,9 @@ func (f *EncryptedFileSystem) Stat(ctx context.Context, path string) (os.FileInf
 }
 
 func (f *EncryptedFileSystem) WriteStat(ctx context.Context, path string, s ninep.Stat) error {
-	statErr := f.DataMount.FS.WriteStat(ctx, filepath.Join(f.DataMount.Prefix, path), s)
+	sp := ninep.NewStat(filepath.Join(f.DataMount.Prefix, s.Name()), s.Uid(), s.Gid(), s.Muid())
+	sp.CopyFixedFieldsFrom(s)
+	statErr := f.DataMount.FS.WriteStat(ctx, filepath.Join(f.DataMount.Prefix, path), sp)
 	if statErr == nil {
 		if !s.NameNoTouch() && path != s.Name() {
 			keyStat := ninep.SyncStatWithName(filepath.Join(f.KeysMount.Prefix, s.Name()))

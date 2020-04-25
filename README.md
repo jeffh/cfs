@@ -25,6 +25,7 @@ servers.
  - **ccp** a client that copies a file (akin to *cp*)
  - **cls** a client that lists files and directories a given location (akin to *ls*)
  - **cmkdir** a client that creates to a directory (akin to *mkdir*)
+ - **cmv** a client that moves a file or directory (akin to *mv*)
  - **crm** a client that removes a file or directory (akin to *rm*)
  - **ctee** a client that writes to a file (akin to *tee*)
  - **ctouch** a client that creates to a file (akin to *touch*)
