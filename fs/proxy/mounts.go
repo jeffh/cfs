@@ -10,10 +10,10 @@ import (
 
 // TODO: it would be nice to make FileSystemMount conform to FileSystem
 type FileSystemMount struct {
-	FS     ninep.FileSystem // required
-	Prefix string           // required
-	Client ninep.Client     // optional
-	Clean  func() error     // optional
+	FS     ninep.TraversableFileSystem // required
+	Prefix string                      // required
+	Client ninep.Client                // optional
+	Clean  func() error                // optional
 }
 
 func (fsm *FileSystemMount) Close() error {
@@ -35,18 +35,26 @@ type FileSystemMountConfig struct {
 	Prefix string
 }
 
+func ParseMount(arg string) (FileSystemMountConfig, bool) {
+	parts := strings.SplitN(arg, "/", 2)
+	count := len(parts)
+	if count == 1 {
+		return FileSystemMountConfig{Addr: parts[0]}, true
+	} else if count >= 2 {
+		return FileSystemMountConfig{
+			Addr:   parts[0],
+			Prefix: parts[1],
+		}, true
+	}
+	return FileSystemMountConfig{}, false
+}
+
 func ParseMounts(args []string) []FileSystemMountConfig {
 	fsmc := make([]FileSystemMountConfig, 0, len(args))
 	for _, arg := range args {
-		parts := strings.SplitN(arg, "/", 2)
-		count := len(parts)
-		if count == 1 {
-			fsmc = append(fsmc, FileSystemMountConfig{Addr: parts[0]})
-		} else if count >= 2 {
-			fsmc = append(fsmc, FileSystemMountConfig{
-				Addr:   parts[0],
-				Prefix: parts[1],
-			})
+		m, ok := ParseMount(arg)
+		if ok {
+			fsmc = append(fsmc, m)
 		}
 	}
 	return fsmc

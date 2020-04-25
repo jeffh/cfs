@@ -58,22 +58,43 @@ func (f *EncryptedFileSystem) loadSharedSecret(k []byte) (cipher.AEAD, error) {
 }
 
 func (f *EncryptedFileSystem) ensureRoots(ctx context.Context) error {
-	if err := f.DecryptMount.FS.MakeDir(ctx, f.DecryptMount.Prefix, 0700); err != nil {
-		if !errors.Is(err, os.ErrExist) {
-			return fmt.Errorf("Failed to initialize mem root: %w", err)
+	ensureDir := func(ctx context.Context, fsm *proxy.FileSystemMount, mode ninep.Mode) error {
+		_, err := fsm.FS.Stat(ctx, fsm.Prefix)
+		if errors.Is(err, os.ErrNotExist) {
+			parts := ninep.PathSplit(fsm.Prefix)
+			for i := range parts {
+				path := filepath.Join(parts[:i+1]...)
+				info, err := fsm.FS.Stat(ctx, path)
+				if err != nil {
+					if errors.Is(err, os.ErrNotExist) {
+						err = fsm.FS.MakeDir(ctx, path, mode)
+						if err != nil {
+							return err
+						}
+					} else {
+						return err
+					}
+				} else if !info.IsDir() {
+					return fmt.Errorf("Expected %v to be a directory, but was not", path)
+				}
+			}
+			if err := fsm.FS.MakeDir(ctx, fsm.Prefix, mode); err != nil {
+				if !errors.Is(err, os.ErrExist) {
+					return err
+				}
+			}
+			return nil
 		}
+		return err
 	}
-
-	if err := f.KeysMount.FS.MakeDir(ctx, f.KeysMount.Prefix, 0700); err != nil {
-		if !errors.Is(err, os.ErrExist) {
-			return fmt.Errorf("Failed to initialize keys root: %w", err)
-		}
+	if err := ensureDir(ctx, &f.DecryptMount, 0700); err != nil {
+		return fmt.Errorf("Failed to initialize decrypt root: %v %w", f.DecryptMount.Prefix, err)
 	}
-
-	if err := f.KeysMount.FS.MakeDir(ctx, f.DataMount.Prefix, 0755); err != nil {
-		if !errors.Is(err, os.ErrExist) {
-			return fmt.Errorf("Failed to initialize data root: %w", err)
-		}
+	if err := ensureDir(ctx, &f.KeysMount, 0700); err != nil {
+		return fmt.Errorf("Failed to initialize keys root: %v %w", f.KeysMount.Prefix, err)
+	}
+	if err := ensureDir(ctx, &f.DataMount, 0700); err != nil {
+		return fmt.Errorf("Failed to initialize data root: %v %w", f.DataMount.Prefix, err)
 	}
 	return nil
 }

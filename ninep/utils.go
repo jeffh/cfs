@@ -8,11 +8,11 @@ import (
 	"syscall"
 )
 
-// Returns the parent path of the given path, or leave unchanged if cannot go up any more directories
+// Returns the parent path of the given path, or . if can't go up another directory
 func Dirname(path string) string {
 	i := strings.LastIndex(path, "/")
 	if i == -1 {
-		return path
+		return "."
 	}
 	return path[:i+1]
 }

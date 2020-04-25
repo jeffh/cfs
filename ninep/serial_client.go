@@ -158,7 +158,7 @@ func (c *BasicClient) Walk(f, newF Fid, path []string) ([]Qid, error) {
 	}
 	defer t.ReleaseTransaction(txn.req.tag)
 	txn.req.Twalk(f, newF, path)
-	c.Tracef("Twalk %s -> %s %#v %d", f, newF, path, txn.req.Request().(interface{ Size() uint32 }).Size())
+	c.Tracef("Twalk %s -> %s %v %#v %d", f, newF, len(path), path, txn.req.Request().(interface{ Size() uint32 }).Size())
 	msg, err := t.Request(txn)
 	if err != nil {
 		c.Errorf("Twalk: Failed to write request: %s", err)

@@ -40,6 +40,7 @@ type Mem struct {
 }
 
 var _ ninep.FileSystem = (*Mem)(nil)
+var _ ninep.Traversable = (*Mem)(nil)
 
 type memFileHandle struct {
 	n *memNode
@@ -405,4 +406,8 @@ func (m *Mem) Delete(ctx context.Context, path string) error {
 	} else {
 		return os.ErrNotExist
 	}
+}
+
+func (m *Mem) Traverse(path string) (ninep.TraversableFile, error) {
+	return ninep.BasicTraverse(m, path)
 }

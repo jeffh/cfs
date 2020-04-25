@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -100,6 +101,7 @@ type FileProxy struct {
 }
 
 var _ FileHandle = (*FileProxy)(nil)
+var _ TraversableFile = (*FileProxy)(nil)
 
 func (f *FileProxy) Type() QidType     { return f.qid.Type() }
 func (f *FileProxy) IsDir() bool       { return f.qid.Type().IsDir() }
@@ -111,13 +113,17 @@ func (f *FileProxy) IsTemporary() bool { return f.qid.Type()&QT_TMP != 0 }
 
 // Returns a new FileProxy of the new path relative to this file. It is the
 // caller responsibility to Close() the returned file proxy.
-func (f *FileProxy) Traverse(path string) (*FileProxy, error) {
+func (f *FileProxy) TraverseFile(path string) (*FileProxy, error) {
 	fid := f.fs.allocFid()
 	qid, err := f.fs.walk(f.fid, path)
 	if err != nil {
 		return nil, err
 	}
 	return &FileProxy{f.fs, fid, qid, nil}, nil
+}
+
+func (f *FileProxy) Traverse(path string) (TraversableFile, error) {
+	return f.TraverseFile(path)
 }
 
 // Returns file info of the fid. Caches the value locally and uses that when available
@@ -172,10 +178,14 @@ func (f *FileProxy) WriteStat(st Stat) error {
 
 // Alias to Create() with M_DIR always set
 func (f *FileProxy) CreateDir(name string, mode Mode) (*FileProxy, error) {
-	return f.Create(name, ORDWR, mode|M_DIR)
+	return f.CreateFile(name, ORDWR, mode|M_DIR)
 }
 
-func (f *FileProxy) Create(name string, flag OpenMode, mode Mode) (*FileProxy, error) {
+func (f *FileProxy) MakeDir(name string, mode Mode) (TraversableFile, error) {
+	return f.CreateDir(name, mode)
+}
+
+func (f *FileProxy) CreateFile(name string, flag OpenMode, mode Mode) (*FileProxy, error) {
 	fs := f.fs
 	fid := fs.allocFid()
 
@@ -193,6 +203,10 @@ func (f *FileProxy) Create(name string, flag OpenMode, mode Mode) (*FileProxy, e
 		fs.releaseFid(fid)
 	}
 	return h, err
+}
+
+func (f *FileProxy) Create(name string, flag OpenMode, mode Mode) (TraversableFile, error) {
+	return f.CreateFile(name, flag, mode)
 }
 
 // Opens a file for reading/writing. Use only if you used FileSystemProxy.Traverse()
@@ -328,8 +342,9 @@ func (fs *FileSystemProxy) walk(fid Fid, path string) (Qid, error) {
 		fs.c.Clunk(fid)
 		return nil, err
 	}
-	if len(qids) != len(parts) {
-		return nil, io.ErrUnexpectedEOF
+	if len(qids) < len(parts) {
+		// TODO: it would be nice to know how many dirs we traversed
+		return nil, os.ErrNotExist
 	}
 	return qids[len(qids)-1], nil
 }
@@ -538,11 +553,209 @@ func (fs *FileSystemProxy) Delete(ctx context.Context, path string) error {
 
 // Walks to a given path an returns a FileProxy to that path. It is expected
 // for the caller to call Close on the returned file proxy.
-func (fs *FileSystemProxy) Traverse(path string) (*FileProxy, error) {
+func (fs *FileSystemProxy) TraverseFile(path string) (*FileProxy, error) {
 	fid := fs.allocFid()
 	qid, err := fs.walk(fid, path)
 	if err != nil {
 		return nil, err
 	}
 	return &FileProxy{fs, fid, qid, nil}, nil
+}
+
+func (fs *FileSystemProxy) Traverse(path string) (TraversableFile, error) {
+	f, err := fs.TraverseFile(path)
+	return f, err
+}
+
+/////////////////////////////////////////////////////
+
+var _ Traversable = (*FileSystemProxy)(nil)
+var _ TraversableFile = (*FileProxy)(nil)
+
+type TraversableFileSystem interface {
+	FileSystem
+	Traversable
+}
+
+type Traversable interface {
+	Traverse(path string) (TraversableFile, error)
+}
+
+// TODO: think about this interface more
+type TraversableFile interface {
+	Traversable
+	FileHandle
+
+	Type() QidType
+	FileInfo() (os.FileInfo, error)
+	Stat() (Stat, error)
+	WriteStat(st Stat) error
+	MakeDir(name string, mode Mode) (TraversableFile, error)
+	Create(name string, flag OpenMode, mode Mode) (TraversableFile, error)
+	Open(flag OpenMode) error
+	Reader(start int64) io.Reader
+	Writer(start int64) io.Writer
+	Delete() error
+
+	ListDir() (FileInfoIterator, error)
+}
+
+// An inefficient, but flexible implementation of BasicTraversableFile
+type BasicTraversableFile struct {
+	FS   FileSystem
+	Path string
+	Info os.FileInfo
+	St   Stat
+
+	FileHandle
+}
+
+func BasicTraverse(fs FileSystem, path string) (TraversableFile, error) {
+	ctx := context.Background()
+	info, err := fs.Stat(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	st := StatFromFileInfo(info)
+	f := &BasicTraversableFile{
+		FS:   fs,
+		Path: path,
+		Info: info,
+		St:   st,
+	}
+	return f, nil
+}
+
+func (t *BasicTraversableFile) Traverse(path string) (TraversableFile, error) {
+	ctx := context.Background()
+	fpath := filepath.Join(t.Path, path)
+	info, err := t.FS.Stat(ctx, fpath)
+	if err != nil {
+		return nil, err
+	}
+
+	st := StatFromFileInfo(info)
+
+	f := &BasicTraversableFile{
+		FS:   t.FS,
+		Path: fpath,
+		St:   st,
+		Info: info,
+	}
+	return f, nil
+}
+
+func (t *BasicTraversableFile) Type() QidType {
+	if t.St == nil {
+		return 0
+	}
+	return t.St.Qid().Type()
+}
+func (t *BasicTraversableFile) FileInfo() (os.FileInfo, error) {
+	if t.Info == nil {
+		return nil, os.ErrNotExist
+	}
+	return t.Info, nil
+}
+func (t *BasicTraversableFile) Stat() (Stat, error) {
+	if t.St == nil {
+		return nil, os.ErrNotExist
+	}
+	return t.St, nil
+}
+func (t *BasicTraversableFile) WriteStat(s Stat) error {
+	ctx := context.Background()
+	err := t.FS.WriteStat(ctx, t.Path, s)
+	if err != nil {
+		return err
+	}
+	info, err := t.FS.Stat(ctx, t.Path)
+	if err != nil {
+		return err
+	}
+	t.Info = info
+	t.St = StatFromFileInfo(info)
+	return nil
+}
+func (t *BasicTraversableFile) MakeDir(name string, mode Mode) (TraversableFile, error) {
+	ctx := context.Background()
+	fpath := filepath.Join(t.Path, name)
+	err := t.FS.MakeDir(ctx, fpath, mode)
+	if err != nil {
+		return nil, err
+	}
+
+	info, err := t.FS.Stat(ctx, fpath)
+	if err != nil {
+		return nil, err
+	}
+
+	f := &BasicTraversableFile{
+		FS:   t.FS,
+		Path: fpath,
+		St:   info.Sys().(Stat),
+		Info: info,
+	}
+	return f, nil
+}
+func (t *BasicTraversableFile) Create(name string, flag OpenMode, mode Mode) (TraversableFile, error) {
+	ctx := context.Background()
+	fpath := filepath.Join(t.Path, name)
+	h, err := t.FS.CreateFile(ctx, fpath, flag, mode)
+	if err != nil {
+		return nil, err
+	}
+
+	info, err := t.FS.Stat(ctx, fpath)
+	if err != nil {
+		h.Close()
+		return nil, err
+	}
+
+	f := &BasicTraversableFile{
+		FS:         t.FS,
+		Path:       fpath,
+		St:         info.Sys().(Stat),
+		Info:       info,
+		FileHandle: h,
+	}
+	return f, nil
+}
+func (t *BasicTraversableFile) Open(flag OpenMode) error {
+	ctx := context.Background()
+	h, err := t.FS.OpenFile(ctx, t.Path, flag)
+	if err != nil {
+		return err
+	}
+
+	var info os.FileInfo
+	if t.Info == nil {
+		info, err = t.FS.Stat(ctx, t.Path)
+		if err != nil {
+			h.Close()
+			return err
+		}
+		t.Info = info
+		t.St = info.Sys().(Stat)
+	}
+
+	t.FileHandle = h
+	return nil
+}
+func (t *BasicTraversableFile) Reader(start int64) io.Reader { return Reader(t.FileHandle) }
+func (t *BasicTraversableFile) Writer(start int64) io.Writer { return Writer(t.FileHandle) }
+func (t *BasicTraversableFile) Delete() error {
+	ctx := context.Background()
+	err := t.FS.Delete(ctx, t.Path)
+	if err == nil {
+		t.FileHandle = nil
+		t.St = nil
+		t.Info = nil
+	}
+	return nil
+}
+
+func (t *BasicTraversableFile) ListDir() (FileInfoIterator, error) {
+	ctx := context.Background()
+	return t.FS.ListDir(ctx, t.Path)
 }

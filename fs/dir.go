@@ -228,3 +228,7 @@ func (d Dir) Delete(ctx context.Context, path string) error {
 	}
 	return os.RemoveAll(fullPath)
 }
+
+func (d Dir) Traverse(path string) (ninep.TraversableFile, error) {
+	return ninep.BasicTraverse(d, path)
+}

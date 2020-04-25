@@ -69,7 +69,20 @@ func (c *ClientConfig) FSMount(mnt *proxy.FileSystemMountConfig) (proxy.FileSyst
 		}
 		return proxy.FileSystemMount{fs.Dir(dir), mnt.Prefix, nil, clean}, nil
 	case "", ".":
-		return proxy.FileSystemMount{fs.Dir(filepath.Join(mnt.Addr, mnt.Prefix)), "", nil, nil}, nil
+		fpath := filepath.Join(mnt.Addr, mnt.Prefix)
+		if mnt.Addr == "" {
+			fpath = "/" + fpath
+		}
+		prefix := ""
+		info, err := os.Stat(fpath)
+		if err == nil {
+			if !info.IsDir() {
+				prefix = filepath.Base(fpath)
+				fpath = filepath.Dir(fpath)
+			}
+		}
+
+		return proxy.FileSystemMount{fs.Dir(fpath), prefix, nil, nil}, nil
 	default:
 		client, fs, err := c.CreateFs(mnt.Addr)
 		if err != nil {

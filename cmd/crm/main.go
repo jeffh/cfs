@@ -41,7 +41,7 @@ func main() {
 				return err
 			}
 
-			if node.IsDir() && !recursive {
+			if node.Type().IsDir() && !recursive {
 				node.Close()
 				return errors.New("Use -r to delete directories")
 			}

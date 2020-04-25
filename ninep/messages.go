@@ -433,7 +433,12 @@ const (
 	QT_DIR             = 0x80
 )
 
-func (qt QidType) IsDir() bool { return qt&QT_DIR != 0 }
+func (qt QidType) IsDir() bool       { return qt&QT_DIR != 0 }
+func (qt QidType) IsSymLink() bool   { return qt&QT_SYMLINK != 0 }
+func (qt QidType) IsAuth() bool      { return qt&QT_AUTH != 0 }
+func (qt QidType) IsMount() bool     { return qt&QT_MOUNT != 0 }
+func (qt QidType) IsExclusive() bool { return qt&QT_EXCL != 0 }
+func (qt QidType) IsTemporary() bool { return qt&QT_TMP != 0 }
 
 func (qt QidType) Mode() Mode {
 	var m Mode
@@ -600,6 +605,33 @@ func (s Stat) fill(name, uid, gid, muid string) {
 	// s.uid().SetStringAndLen(uid)
 	// s.gid().SetStringAndLen(gid)
 	// s.muid().SetStringAndLen(muid)
+}
+
+// An way to product a stat from a file info.
+//
+// Note that Stat is a richer type that os.FileInfo, so the returned Stat may
+// be potentially inaccurate.
+func StatFromFileInfo(info os.FileInfo) Stat {
+	if st, ok := info.Sys().(Stat); ok {
+		return st
+	}
+	qt := QidType(0)
+	m := info.Mode()
+	if m&os.ModeDir != 0 {
+		qt |= QT_DIR
+	}
+	if m&os.ModeExclusive != 0 {
+		qt |= QT_EXCL
+	}
+	if m&os.ModeSymlink != 0 {
+		qt |= QT_SYMLINK
+	}
+	if m&os.ModeTemporary != 0 {
+		qt |= QT_TMP
+	}
+	qid := NewQid()
+	qid.Fill(qt, 0, 0)
+	return fileInfoToStat(qid, info)
 }
 
 // Useful for creating a WriteStat stat that only wants fsync.
