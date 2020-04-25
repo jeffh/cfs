@@ -45,7 +45,7 @@ func main() {
 		DisplayName: "Proxy File System Service",
 		Description: "Provides a 9p file system that proxies to other 9p file systems",
 	}
-	createcfg := func(stdout, stderr io.Writer) ServerConfig {
+	createcfg := func(stdout, stderr io.Writer) cli.ServerConfig {
 		srvCfg.Stdout = stdout
 		srvCfg.Stderr = stderr
 		return srvCfg

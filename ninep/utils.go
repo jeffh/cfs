@@ -107,3 +107,12 @@ func acceptRversion(c Loggable, rwc net.Conn, txn *cltTransaction, maxMsgSize, m
 
 	return maxMsgSize, nil
 }
+
+func underlyingError(err error) string {
+	for _, e := range mappedErrors {
+		if errors.Is(err, e) {
+			return e.Error()
+		}
+	}
+	return err.Error()
+}

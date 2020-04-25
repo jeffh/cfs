@@ -2,6 +2,7 @@ package ninep
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -619,7 +620,7 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 		}
 		fullPath := filepath.Join(fil.Name, cleanPath(m.Name()))
 		info, err := h.Fs.Stat(ctx, fullPath)
-		if os.IsExist(err) {
+		if errors.Is(err, os.ErrExist) {
 			h.Errorf("srv: Tcreate: file exists %v: %s", fullPath, err)
 			w.Rerror(err)
 			return

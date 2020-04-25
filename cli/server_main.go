@@ -32,16 +32,19 @@ type ServerConfig struct {
 
 	Stdout io.Writer
 	Stderr io.Writer
+
+	PrintHelp bool
 }
 
 func (c *ServerConfig) SetFlags(f Flags) {
 	if f == nil {
 		f = &StdFlags{}
 	}
-	f.IntVar(&c.ReadTimeoutInSeconds, "rtimeout", 5, "Timeout in seconds for client requests")
+	f.IntVar(&c.ReadTimeoutInSeconds, "rtimeout", 0, "Timeout in seconds for client requests")
 	f.BoolVar(&c.PrintTraceMessages, "srv-trace", false, "Print trace of 9p server to stdout")
 	f.BoolVar(&c.PrintTraceFSMessages, "srv-tracefs", false, "Print trace of 9p server to stdout")
 	f.BoolVar(&c.PrintErrorMessages, "srv-err", false, "Print errors of 9p server to stderr")
+	f.BoolVar(&c.PrintHelp, "help", false, "Prints this help")
 	f.StringVar(&c.CertFile, "certfile", "", "Accept only TLS wrapped connections. Also needs to specify keyfile flag.")
 	f.StringVar(&c.KeyFile, "keyfile", "", "Accept only TLS wrapped connections. Also needs to specify certfile flag.")
 	f.StringVar(&c.Addr, "addr", "localhost:6666", "The address and port for the 9p server to listen to")
@@ -101,6 +104,11 @@ func BasicServerMain(createfs func() ninep.FileSystem) {
 
 	flag.Parse()
 
+	if cfg.PrintHelp {
+		flag.Usage()
+		os.Exit(1)
+	}
+
 	err := cfg.CreateServerAndListen(createfs)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
@@ -115,6 +123,13 @@ func ServiceMain(cfg *service.Config, createfs func() ninep.FileSystem) {
 		}
 
 		cfg.SetFlags(nil)
+		flag.Parse()
+
+		if cfg.PrintHelp {
+			flag.Usage()
+			os.Exit(1)
+		}
+
 		return cfg
 	}
 
@@ -197,6 +212,7 @@ func srvMainWithCfg(stdout, stderr io.Writer, mkCfg func(stdout, stderr io.Write
 		}()
 		go func() {
 			defer cancel()
+			fmt.Fprintf(cfg.Stdout, "Listening on %s", cfg.Addr)
 			err := cfg.ListenAndServe(srv)
 			if err != nil {
 				fmt.Fprintf(cfg.Stdout, "Error: %s\n", err)
@@ -215,6 +231,11 @@ func srvMain(stdout, stderr io.Writer, createfs func() ninep.FileSystem) (start 
 
 		cfg.SetFlags(nil)
 		flag.Parse()
+
+		if cfg.PrintHelp {
+			flag.Usage()
+			os.Exit(1)
+		}
 		return cfg
 	}, createfs)
 }

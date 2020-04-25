@@ -2,7 +2,6 @@ package ninep
 
 import (
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -876,17 +875,26 @@ var mappedErrors []error = []error{
 }
 
 func (r Rerror) Error() error {
+	var underlyingErr error
 	msg := r.Ename()
 	// we want to preserve equality of errors to native os-styled errors
 	for _, e := range mappedErrors {
 		if msg == e.Error() {
-			return e
+			underlyingErr = e
+			break
 		}
 	}
 	// else
-	err := errors.New(msg)
-	return err
+	return &RerrorType{msg, underlyingErr}
 }
+
+type RerrorType struct {
+	msg string
+	e   error
+}
+
+func (e RerrorType) Error() string { return e.msg }
+func (e RerrorType) Unwrap() error { return e.e }
 
 /////////////////////////////////////
 // size[4] Tclunk tag[2] fid[4]

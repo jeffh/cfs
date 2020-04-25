@@ -2,6 +2,7 @@ package fuse
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -492,7 +493,7 @@ func mapErr(err error) error {
 	if os.IsNotExist(err) {
 		return fuse.ENOENT
 	}
-	if os.IsExist(err) {
+	if errors.Is(err, os.ErrExist) {
 		return fuse.EEXIST
 	}
 	if err == io.ErrNoProgress {

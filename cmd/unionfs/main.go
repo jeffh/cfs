@@ -17,7 +17,7 @@ func main() {
 
 	var exitCode = 0
 
-	exitcodePtr := &exitcode
+	exitcodePtr := &exitCode
 	defer func() {
 		os.Exit(*exitcodePtr)
 	}()
@@ -26,6 +26,16 @@ func main() {
 
 	flag.BoolVar(&cliCfg.UseRecoverClient, "recover", false, "Use recover client for talking over flaky/unreliable networks")
 	flag.IntVar(&cliCfg.TimeoutInSeconds, "client_timeout", 5, "Timeout in seconds for client requests")
+
+	flag.Usage = func() {
+		o := flag.CommandLine.Output()
+		fmt.Fprintf(o, "Usage: %s [OPTIONS] WRITE_MOUNT READ_MOUNT...\n", os.Args[0])
+		fmt.Fprintf(o, "Combines two or more separate 9p file systems into one 9p file system overlay.\n")
+		fmt.Fprintf(o, "\nAll writes will go to WRITE_MOUNT.\n")
+		proxy.PrintMountsHelp(o)
+		fmt.Fprintf(o, "\nOPTIONS:\n")
+		flag.PrintDefaults()
+	}
 
 	closers := make([]func(), 0)
 
@@ -49,7 +59,7 @@ func main() {
 
 			if err != nil {
 				fmt.Printf("Failed to connect to 9p server: %s\n", err)
-				exitcode = 1
+				exitCode = 1
 				runtime.Goexit()
 			}
 			closers = append(closers, func() { clt.Close() })

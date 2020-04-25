@@ -134,8 +134,9 @@ func (m *Mem) traverse(parts []string) (*memNode, error) {
 walk:
 	for _, seg := range parts {
 		n.m.RLock()
+		child := n.FindChild(seg)
 		n.m.RUnlock()
-		if child := n.FindChild(seg); child != nil {
+		if child != nil {
 			if child.isFile {
 				return nil, fmt.Errorf("Cannot traverse file: %s", seg)
 			}
@@ -171,6 +172,9 @@ func (m *Mem) traverseFile(parts []string) (node *memNode, parent *memNode, err 
 
 func (m *Mem) MakeDir(ctx context.Context, path string, mode ninep.Mode) error {
 	parts := ninep.PathSplit(path)
+	if len(parts) == 1 && parts[0] == "" {
+		return nil
+	}
 	last := len(parts) - 1
 	n, err := m.traverse(parts[:last-1])
 	if err != nil {

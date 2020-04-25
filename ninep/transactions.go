@@ -235,7 +235,7 @@ func (t *srvTransaction) Rflush() {
 
 func (t *srvTransaction) Rerror(err error) {
 	t.handled = true
-	Rerror(t.outMsg).fill(t.reqTag(), err.Error())
+	Rerror(t.outMsg).fill(t.reqTag(), underlyingError(err))
 }
 
 func (t *srvTransaction) Rerrorf(format string, values ...interface{}) {

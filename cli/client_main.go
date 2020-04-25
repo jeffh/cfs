@@ -3,11 +3,15 @@ package cli
 import (
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
 	"os/user"
+	"path/filepath"
 	"runtime"
 
+	"github.com/jeffh/cfs/fs"
+	"github.com/jeffh/cfs/fs/proxy"
 	"github.com/jeffh/cfs/ninep"
 )
 
@@ -45,6 +49,49 @@ func (c *ClientConfig) user() string {
 		c.User = u.Username
 	}
 	return c.User
+}
+
+func (c *ClientConfig) FSMount(mnt *proxy.FileSystemMountConfig) (proxy.FileSystemMount, error) {
+	switch mnt.Addr {
+	case ":memory":
+		return proxy.FileSystemMount{&fs.Mem{}, mnt.Prefix, nil, nil}, nil
+	case ":tmp":
+		dir, err := ioutil.TempDir("", "*")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to create temp directory: %s", err)
+		}
+		clean := func() error {
+			if err := os.RemoveAll(dir); err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to clean temp directory: %s: %s", dir, err)
+				return err
+			}
+			return nil
+		}
+		return proxy.FileSystemMount{fs.Dir(dir), mnt.Prefix, nil, clean}, nil
+	case "", ".":
+		return proxy.FileSystemMount{fs.Dir(filepath.Join(mnt.Addr, mnt.Prefix)), "", nil, nil}, nil
+	default:
+		client, fs, err := c.CreateFs(mnt.Addr)
+		if err != nil {
+			return proxy.FileSystemMount{}, fmt.Errorf("Failed connecting to %s/%s: %w", mnt.Addr, mnt.Prefix, err)
+		}
+		return proxy.FileSystemMount{fs, mnt.Prefix, client, nil}, nil
+	}
+}
+
+func (c *ClientConfig) FSMountMany(cfgs []proxy.FileSystemMountConfig) ([]proxy.FileSystemMount, error) {
+	mnts := make([]proxy.FileSystemMount, 0, len(cfgs))
+	for _, cfg := range cfgs {
+		m, err := c.FSMount(&cfg)
+		if err != nil {
+			for _, m := range mnts {
+				m.Close()
+			}
+			return nil, err
+		}
+		mnts = append(mnts, m)
+	}
+	return mnts, nil
 }
 
 func (c *ClientConfig) CreateClient(addr string) (ninep.Client, error) {

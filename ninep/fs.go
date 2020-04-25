@@ -441,3 +441,26 @@ func (h *RWFileHandle) Close() error {
 	}
 	return nil
 }
+
+////////////////////////////////////////////////
+
+type ProtectedFileHandle struct {
+	H    FileHandle
+	Flag OpenMode
+}
+
+func (h *ProtectedFileHandle) ReadAt(p []byte, off int64) (n int, err error) {
+	if !h.Flag.IsReadable() {
+		return 0, ErrReadNotAllowed
+	}
+	return h.H.ReadAt(p, off)
+}
+func (h *ProtectedFileHandle) WriteAt(p []byte, off int64) (n int, err error) {
+	if !h.Flag.IsWriteable() {
+		return 0, ErrWriteNotAllowed
+	}
+	return h.H.WriteAt(p, off)
+}
+
+func (h *ProtectedFileHandle) Sync() error  { return h.H.Sync() }
+func (h *ProtectedFileHandle) Close() error { return h.H.Close() }
