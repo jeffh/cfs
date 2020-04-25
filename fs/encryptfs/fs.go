@@ -240,8 +240,18 @@ func (f *EncryptedFileSystem) Stat(ctx context.Context, path string) (os.FileInf
 }
 
 func (f *EncryptedFileSystem) WriteStat(ctx context.Context, path string, s ninep.Stat) error {
-	// TODO
-	return f.DataMount.FS.WriteStat(ctx, filepath.Join(f.DataMount.Prefix, path), s)
+	statErr := f.DataMount.FS.WriteStat(ctx, filepath.Join(f.DataMount.Prefix, path), s)
+	if statErr == nil {
+		if !s.NameNoTouch() && path != s.Name() {
+			keyStat := ninep.SyncStatWithName(filepath.Join(f.KeysMount.Prefix, s.Name()))
+			err := f.KeysMount.FS.WriteStat(ctx, filepath.Join(f.KeysMount.Prefix, path), keyStat)
+			// TODO: if there's a key already there... overwrite it
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return statErr
 }
 
 func (f *EncryptedFileSystem) Delete(ctx context.Context, path string) error {
