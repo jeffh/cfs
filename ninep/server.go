@@ -48,7 +48,7 @@ type Handler interface {
 
 const (
 	DefaultInitialTimeout = 5 * time.Second
-	DefaultReadTimeout    = 12 * time.Hour
+	DefaultReadTimeout    = 0
 	DefaultWriteTimeout   = 30 * time.Second
 
 	// max number of requests a session can make
@@ -453,7 +453,7 @@ func (s *serverConn) dispatch(ctx context.Context, txn *srvTransaction) {
 	if ok {
 		switch m := req.(type) {
 		case MsgBase:
-			s.errorf("Unknown message of type: %d", MsgBase(req.Bytes()).Type())
+			s.errorf("Unknown message of type: %d", MsgBase(req.Bytes()).msgType())
 			txn.Rerrorf("unknown msg")
 
 		case Tflush:

@@ -211,7 +211,14 @@ func (t *ParallelClientTransport) readLoop(ctx context.Context) {
 	}
 }
 
-func (t *ParallelClientTransport) Disconnect() error { return t.rwc.Close() }
+func (t *ParallelClientTransport) Disconnect() error {
+	t.m.Lock()
+	defer t.m.Unlock()
+	if t.readCancel != nil {
+		t.readCancel()
+	}
+	return t.rwc.Close()
+}
 func (c *ParallelClientTransport) AllocTransaction() (*cltTransaction, bool) {
 	req, ok := <-c.requestPool
 	var txn cltTransaction
@@ -442,7 +449,7 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 					serverFid: r.Fid(),
 					opened:    true,
 				}
-				t.Tracef("Save: Ropen(%d, %d, ..., ...)", r.Fid())
+				t.Tracef("Save: Ropen(%d, %s, ..., ...)", r.Fid(), r.Mode())
 				t.mut.Unlock()
 			case Rcreate:
 				r := req.(Tcreate)
@@ -489,7 +496,7 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 			t.mut.Lock()
 
 			// the more correct ordering would be based on usage, but this is good enough
-			sortedFids := make(FidSlice, 0, len(t.fids))
+			sortedFids := make(fidSlice, 0, len(t.fids))
 			for fid := range t.fids {
 				sortedFids = append(sortedFids, fid)
 			}

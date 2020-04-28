@@ -11,14 +11,15 @@ import (
 )
 
 const (
-	NoTouchU64  = ^uint64(0)
-	NoTouchU32  = ^uint32(0)
-	NoTouchU16  = ^uint16(0)
-	NoTouchMode = ^Mode(0)
+	NoTouchU64  = ^uint64(0) // Represents a Uint64 value that is unmodified in 9p stat
+	NoTouchU32  = ^uint32(0) // Represents a Uint32 value that is unmodified in 9p stat
+	NoTouchU16  = ^uint16(0) // Represents a Uint16 value that is unmodified in 9p stat
+	NoTouchMode = ^Mode(0)   // Represents a Mode value that is unmodified in 9p stat
 
-	NoQidVersion = NoTouchU32
+	NoQidVersion = NoTouchU32 // Represents a QidVersion that is unmodified
 )
 
+// Represents all 9P network protocol messages
 type Message interface {
 	Tag() Tag
 	Bytes() []byte
@@ -26,30 +27,25 @@ type Message interface {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-type Fidable interface {
-	Fid() Fid
-	SetFid(v Fid)
-}
-
-type NewFidable interface {
-	NewFid() Fid
-	SetNewFid(v Fid)
-}
-
-type Afidable interface {
-	Afid() Fid
-	SetAfid(v Fid)
-}
-
+// Changes all Fids of a given message using a mapper function
 func RemapFids(m Message, mapper func(a Fid) Fid) Message {
+	// Represents messages that talks about a file descriptor
+	type Fidable interface {
+		Fid() Fid
+		SetFid(v Fid)
+	}
+
 	if msg, ok := m.(Fidable); ok {
 		f := mapper(msg.Fid())
 		msg.SetFid(f)
 	}
-	if msg, ok := m.(NewFidable); ok {
+
+	switch msg := m.(type) {
+	case Twalk:
 		msg.SetNewFid(mapper(msg.NewFid()))
-	}
-	if msg, ok := m.(Afidable); ok {
+	case Tauth:
+		msg.SetAfid(mapper(msg.Afid()))
+	case Tattach:
 		msg.SetAfid(mapper(msg.Afid()))
 	}
 	return m
@@ -58,15 +54,15 @@ func RemapFids(m Message, mapper func(a Fid) Fid) Message {
 ////////////////////////////////////////////////////////////////////////////////
 
 const (
-	NO_TAG         Tag    = ^Tag(0)
-	NO_FID         Fid    = ^Fid(0)
-	VERSION_9P2000 string = "9P2000"
-	VERSION_9P     string = "9P"
+	NO_TAG         Tag    = ^Tag(0)  // Represents an empty tag in the 9p protocol
+	NO_FID         Fid    = ^Fid(0)  // Represents an empty fid in the 9p protocol
+	VERSION_9P2000 string = "9P2000" // Supported version
+	VERSION_9P     string = "9P"     // Base protocol version
 
-	MIN_MESSAGE_SIZE = uint32(128)
+	MIN_MESSAGE_SIZE = uint32(128) // The minimum 9p message size in bytes based on 9p protocol
 )
 
-// The default maximum size of 9p message blocks. Should never be below MIN_MESSAGE_SIZE
+// The default maximum size of 9p message blocks
 var DEFAULT_MAX_MESSAGE_SIZE uint32
 
 func init() {
@@ -80,12 +76,13 @@ func init() {
 	DEFAULT_MAX_MESSAGE_SIZE = s
 }
 
-type MsgType byte
+// An opcode that represents each type of 9p message
+type msgType byte
 
 // Based on
 // http://plan9.bell-labs.com/sources/plan9/sys/include/fcall.h
 const (
-	msgTversion MsgType = iota + 100 // size[4] Tversion tag[2] msize[4] version[s]
+	msgTversion msgType = iota + 100 // size[4] Tversion tag[2] msize[4] version[s]
 	msgRversion                      // size[4] Rversion tag[2] msize[4] version[s]
 	msgTauth                         // size[4] Tauth tag[2] afid[4] uname[s] aname[s]
 	msgRauth                         // size[4] Rauth tag[2] aqid[13]
@@ -115,7 +112,7 @@ const (
 	msgRwstat                        // size[4] Rwstat tag[2]
 )
 
-func (t MsgType) String() string {
+func (t msgType) String() string {
 	switch t {
 	case msgTversion:
 		return "msgTversion"
@@ -358,22 +355,24 @@ var bo = binary.LittleEndian
 
 /////////////////////////////////////
 
+// Represents a message id. Tags must be unique per active requests, per client.
 type Tag uint16
 
 /////////////////////////////////////
 
+// Represents the share data for all 9p messages
 type MsgBase []byte
 
-func (r MsgBase) fill(mt MsgType, t Tag, size uint32) {
+func (r MsgBase) fill(mt msgType, t Tag, size uint32) {
 	bo.PutUint32(r[:4], size)       // Size
-	r[4] = byte(mt)                 // MsgType
+	r[4] = byte(mt)                 // msgType
 	bo.PutUint16(r[5:7], uint16(t)) // Tag
 }
 
-func (r MsgBase) Bytes() []byte { return r[:int(r.Size())] }
-func (r MsgBase) Size() uint32  { return bo.Uint32(r[:4]) }
-func (r MsgBase) Type() MsgType { return MsgType(r[4]) }
-func (r MsgBase) Tag() Tag      { return Tag(bo.Uint16(r[5:7])) }
+func (r MsgBase) Bytes() []byte    { return r[:int(r.Size())] }
+func (r MsgBase) Size() uint32     { return bo.Uint32(r[:4]) }
+func (r MsgBase) msgType() msgType { return msgType(r[4]) }
+func (r MsgBase) Tag() Tag         { return Tag(bo.Uint16(r[5:7])) }
 
 const msgOffset = 7
 
@@ -402,9 +401,9 @@ func (s msgString) Nbytes() int { return int(s.Len()) + 2 }
 
 /////////////////////////////////////
 
-type Fid uint32 // always size 4
+type Fid uint32 // represents a 9p file descriptor
 
-const MAX_FID = math.MaxUint32 - 2
+const MAX_FID = math.MaxUint32 - 2 // The maximum value a FID can be
 
 func (f Fid) String() string {
 	return fmt.Sprintf("Fid(%d)", f)
@@ -412,40 +411,35 @@ func (f Fid) String() string {
 
 /////////////////////////////////////
 
-type FidSlice []Fid
+// A slice of fids, for sorting
+type fidSlice []Fid
 
-func (s FidSlice) Len() int           { return len(s) }
-func (s FidSlice) Less(i, j int) bool { return s[i] < s[j] }
-func (s FidSlice) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
+func (s fidSlice) Len() int           { return len(s) }
+func (s fidSlice) Less(i, j int) bool { return s[i] < s[j] }
+func (s fidSlice) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 
 /////////////////////////////////////
 
+// Stores metadata of the current file descriptor
 type QidType byte
 
 const (
-	QT_FILE    QidType = 0x00
-	QT_LINK            = 0x01
-	QT_SYMLINK         = 0x02
-	QT_TMP             = 0x04
-	QT_AUTH            = 0x08
-	QT_MOUNT           = 0x10
-	QT_EXCL            = 0x20
-	QT_DIR             = 0x80
+	QT_FILE    QidType = 0x00 // FD refers to a file
+	QT_LINK            = 0x01 // FD refers to a link
+	QT_SYMLINK         = 0x02 // FD refers to a symlink
+	QT_TMP             = 0x04 // FD refers to a temporary file that may go away
+	QT_AUTH            = 0x08 // FD refers to the special 9p auth file
+	QT_MOUNT           = 0x10 // FD refers to a mount point
+	QT_EXCL            = 0x20 // FD is exclusively held (locked)
+	QT_DIR             = 0x80 // FD refers to a directory
 )
 
-func (qt QidType) IsDir() bool       { return qt&QT_DIR != 0 }
-func (qt QidType) IsSymLink() bool   { return qt&QT_SYMLINK != 0 }
-func (qt QidType) IsAuth() bool      { return qt&QT_AUTH != 0 }
-func (qt QidType) IsMount() bool     { return qt&QT_MOUNT != 0 }
-func (qt QidType) IsExclusive() bool { return qt&QT_EXCL != 0 }
-func (qt QidType) IsTemporary() bool { return qt&QT_TMP != 0 }
-
-func (qt QidType) Mode() Mode {
-	var m Mode
-	if qt == QT_FILE {
-	}
-	return m
-}
+func (qt QidType) IsDir() bool       { return qt&QT_DIR != 0 }     // Returns true if FD is a directory
+func (qt QidType) IsSymLink() bool   { return qt&QT_SYMLINK != 0 } // Returns true if FD is a SymLink
+func (qt QidType) IsAuth() bool      { return qt&QT_AUTH != 0 }    // Returns true if FD is a 9p auth file
+func (qt QidType) IsMount() bool     { return qt&QT_MOUNT != 0 }   // Returns true if FD is a mountpoint
+func (qt QidType) IsExclusive() bool { return qt&QT_EXCL != 0 }    // Returns true if FD is has an exclusive lock held
+func (qt QidType) IsTemporary() bool { return qt&QT_TMP != 0 }     // Returns true if FD is a temporary file or dir
 
 func (qt QidType) String() string {
 	parts := []string{}
@@ -551,6 +545,8 @@ The stat transaction inquires about the file identified by fid. The reply will c
 	gid[s] group name
 	muid[s] name of the user who last modified the file
 */
+
+// The return value indication information about a file descriptor. Part of the 9p protocol.
 type Stat []byte
 
 const (
@@ -663,6 +659,8 @@ func SyncStatWithName(name string) Stat {
 	return st
 }
 
+// Creates a new stat with the given name, uid, gid, and muid.
+// Other fields can be set using setter methods
 func NewStat(name, uid, gid, muid string) Stat {
 	// TODO: error if strings are too large
 	size := statSize(name, uid, gid, muid)
@@ -776,11 +774,12 @@ func (s Stat) fileUsers() (uid, gid, muid string, err error) {
 	return s.Uid(), s.Gid(), s.Muid(), nil
 }
 
-// os.FileInfo interface
-
+// Adapter to map os.FileInfo for Stat type.
 type StatFileInfo struct {
 	Stat
 }
+
+var _ os.FileInfo = (*StatFileInfo)(nil)
 
 func (s StatFileInfo) Size() int64        { return int64(s.Stat.Length()) }
 func (s StatFileInfo) Name() string       { return s.Stat.Name() }
@@ -799,6 +798,7 @@ func FileInfosFromStats(infos []Stat) []os.FileInfo {
 
 /////////////////////////////////////
 // size[4] Tversion tag[2] msize[4] version[s]
+
 type Tversion []byte
 
 func (r Tversion) fill(t Tag, maxMessageSize uint32, version string) {
@@ -820,6 +820,7 @@ func (r Tversion) Version() string      { return r.version().String() }
 
 /////////////////////////////////////
 // size[4] Rversion tag[2] msize[4] version[s]
+
 type Rversion []byte
 
 func (r Rversion) fill(t Tag, maxMessageSize uint32, version string) {
@@ -839,6 +840,7 @@ func (r Rversion) Version() string      { return r.version().String() }
 
 /////////////////////////////////////
 //size[4] Tauth tag[2] afid[4] name[s] aname[s]
+
 type Tauth []byte
 
 func (r Tauth) fill(t Tag, afid Fid, name, aname string) {
@@ -864,6 +866,7 @@ func (r Tauth) Aname() string      { return r.aname().String() }
 
 /////////////////////////////////////
 // size[4] Rauth tag[2] aqid[13]
+
 type Rauth []byte
 
 func (r Rauth) fill(t Tag, aqid Qid) {
@@ -878,6 +881,7 @@ func (r Rauth) Aqid() Qid     { return Qid(r[msgOffset : msgOffset+QidSize]) }
 
 /////////////////////////////////////
 // size[4] Rerror tag[2] ename[s]
+
 type Rerror []byte
 
 func (r Rerror) fill(t Tag, msg string) {
@@ -941,6 +945,7 @@ func (e RerrorType) Unwrap() error { return e.e }
 
 /////////////////////////////////////
 // size[4] Tclunk tag[2] fid[4]
+
 type Tclunk []byte
 
 func (r Tclunk) fill(t Tag, fid Fid) {
@@ -956,6 +961,7 @@ func (r Tclunk) SetFid(v Fid)  { bo.PutUint32(r[msgOffset:msgOffset+4], uint32(v
 
 /////////////////////////////////////
 // size[4] Rclunk tag[2]
+
 type Rclunk []byte
 
 func (r Rclunk) fill(t Tag) {
@@ -968,6 +974,7 @@ func (r Rclunk) Tag() Tag      { return MsgBase(r).Tag() }
 
 /////////////////////////////////////
 // size[4] Tflush tag[2] oldtag[2]
+
 type Tflush []byte
 
 func (r Tflush) fill(t Tag, oldTag Tag) {
@@ -982,6 +989,7 @@ func (r Tflush) OldTag() Tag   { return Tag(bo.Uint16(r[msgOffset : msgOffset+2]
 
 /////////////////////////////////////
 // size[4] Rflush tag[2]
+
 type Rflush []byte
 
 func (r Rflush) fill(t Tag) {
@@ -994,6 +1002,7 @@ func (r Rflush) Tag() Tag      { return MsgBase(r).Tag() }
 
 /////////////////////////////////////
 // size[4] Twalk tag[2] fid[4] newfid[4] nwname[2] nwname*(wname[s])
+
 type Twalk []byte
 
 // From docs:
@@ -1055,6 +1064,7 @@ func (r Twalk) Wnames() []string {
 
 /////////////////////////////////////
 // size[4] Rwalk tag[2] nwqid[2] nwqid*(wqid[13])
+
 type Rwalk []byte
 
 func (r Rwalk) fill(t Tag, wqids []Qid) {
@@ -1079,6 +1089,7 @@ func (r Rwalk) Wqid(i int) Qid {
 
 /////////////////////////////////////
 // size[4] Tattach tag[2] fid[4] afid[4] uname[s] aname[s]
+
 type Tattach []byte
 
 func (r Tattach) fill(t Tag, fid, afid Fid, uname, aname string) {
@@ -1108,6 +1119,7 @@ func (r Tattach) Aname() string      { return r.aname().String() }
 
 /////////////////////////////////////
 // size[4] Rattach tag[2] qid[13]
+
 type Rattach []byte
 
 func (r Rattach) fill(t Tag, qid Qid) {
@@ -1123,6 +1135,7 @@ func (r Rattach) Qid() Qid      { return Qid(r[msgOffset : msgOffset+QidSize]) }
 
 /////////////////////////////////////
 // size[4] Topen tag[2] fid[4] mode[1]
+
 type Topen []byte
 
 func (r Topen) fill(t Tag, fid Fid, mode OpenMode) {
@@ -1141,6 +1154,7 @@ func (r Topen) Mode() OpenMode { return OpenMode(r[msgOffset+4]) }
 
 /////////////////////////////////////
 // size[4] Ropen tag[2] qid[13] iounit[4]
+
 type Ropen []byte
 
 func (r Ropen) fill(t Tag, qid Qid, iounit uint32) {
@@ -1160,6 +1174,7 @@ func (r Ropen) Iounit() uint32 {
 
 /////////////////////////////////////
 // size[4] Tcreate tag[2] fid[4] name[s] perm[4] mode[1]
+
 type Tcreate []byte
 
 func (r Tcreate) fill(t Tag, fid Fid, name string, perm uint32, mode OpenMode) {
@@ -1189,6 +1204,7 @@ func (r Tcreate) Mode() OpenMode { return OpenMode(r[msgOffset+4+r.name().Nbytes
 
 /////////////////////////////////////
 // size[4] Rcreate tag[2] qid[13] iounit[4]
+
 type Rcreate []byte
 
 func (r Rcreate) fill(t Tag, q Qid, iounit uint32) {
@@ -1208,6 +1224,7 @@ func (r Rcreate) Iounit() uint32 {
 
 /////////////////////////////////////
 // size[4] Tread tag[2] fid[4] offset[8] count[4]
+
 type Tread []byte
 
 func (r Tread) fill(t Tag, fid Fid, offset uint64, count uint32) {
@@ -1232,6 +1249,7 @@ func (r Tread) SetCount(v uint32) { bo.PutUint32(r[msgOffset+12:msgOffset+16], v
 
 /////////////////////////////////////
 // size[4] Rread tag[2] count[4] data[count]
+
 type Rread []byte
 
 func (r Rread) fill(t Tag, count uint32) {
@@ -1250,6 +1268,7 @@ func (r Rread) DataNoLimit() []byte { return r[msgOffset+4:] }
 
 /////////////////////////////////////
 // size[4] Twrite tag[2] fid[4] offset[8] count[4] data[count]
+
 type Twrite []byte
 
 func (r Twrite) fill(t Tag, fid Fid, offset uint64, count uint32) {
@@ -1274,6 +1293,7 @@ func (r Twrite) DataNoLimit() []byte { return r[msgOffset+16:] }
 
 /////////////////////////////////////
 // size[4] Rwrite tag[2] count[4]
+
 type Rwrite []byte
 
 func (r Rwrite) fill(t Tag, count uint32) {
@@ -1289,6 +1309,7 @@ func (r Rwrite) Count() uint32 { return bo.Uint32(r[msgOffset : msgOffset+4]) }
 
 /////////////////////////////////////
 // size[4] Tremove tag[2] fid[4]
+
 type Tremove []byte
 
 func (r Tremove) fill(t Tag, fid Fid) {
@@ -1305,6 +1326,7 @@ func (r Tremove) SetFid(v Fid)  { bo.PutUint32(r[msgOffset:msgOffset+4], uint32(
 
 /////////////////////////////////////
 // size[4] Rremove tag[2]
+
 type Rremove []byte
 
 func (r Rremove) fill(t Tag) {
@@ -1318,6 +1340,7 @@ func (r Rremove) Tag() Tag      { return MsgBase(r).Tag() }
 
 /////////////////////////////////////
 // size[4] Tstat tag[2] fid[4]
+
 type Tstat []byte
 
 func (r Tstat) fill(t Tag, fid Fid) {
@@ -1334,6 +1357,7 @@ func (r Tstat) SetFid(v Fid)  { bo.PutUint32(r[msgOffset:msgOffset+4], uint32(v)
 
 /////////////////////////////////////
 // size[4] Rstat tag[2] stat[n]
+
 type Rstat []byte
 
 func (r Rstat) fill(t Tag, s Stat) {
@@ -1357,6 +1381,7 @@ func (r Rstat) Stat() Stat    { return Stat(r[msgOffset+2:]) }
 
 /////////////////////////////////////
 // size[4] Twstat tag[2] fid[4] stat[n]
+
 type Twstat []byte
 
 func (r Twstat) fill(t Tag, fid Fid, s Stat) {
@@ -1383,6 +1408,7 @@ func (r Twstat) Stat() Stat    { return Stat(r[msgOffset+6:]) }
 
 /////////////////////////////////////
 // size[4] Rwstat tag[2]
+
 type Rwstat []byte
 
 func (r Rwstat) fill(t Tag) {

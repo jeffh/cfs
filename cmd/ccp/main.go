@@ -216,7 +216,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error while copying: %s", err)
 			if dstIsParent {
 				err = dstNode.Delete()
-				fmt.Fprintf(os.Stderr, "Failed to delete file since copying failed: %s%s\n", dstMntCfg.Addr, dstMnt.Prefix)
+				fmt.Fprintf(os.Stderr, "Failed to delete file since copying failed: %s/%s\n", dstMntCfg.Addr, dstMnt.Prefix)
 			}
 
 			exitCode = 4
@@ -234,7 +234,7 @@ func main() {
 			}
 			err = dstNode.WriteStat(st)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to copy file attributes: %s%s\n", dstMntCfg.Addr, dstMnt.Prefix)
+				fmt.Fprintf(os.Stderr, "Failed to copy file attributes: %s/%s\n", dstMntCfg.Addr, dstMnt.Prefix)
 				exitCode = 3
 				runtime.Goexit()
 			}

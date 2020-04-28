@@ -119,19 +119,12 @@ func (f *EncryptedFileSystem) CreateFile(ctx context.Context, path string, flag 
 
 	keyPath := filepath.Join(f.KeysMount.Prefix, path)
 
-	// TODO: handle multiple creates of this file
 	tmpPath := filepath.Join(f.DecryptMount.Prefix, path)
-	tmpFile, err := f.DecryptMount.FS.CreateFile(ctx, tmpPath, ninep.ORDWR|ninep.OTRUNC, 0600)
-	if err != nil {
-		return nil, err
-	}
 	dataPath := filepath.Join(f.DataMount.Prefix, path)
 
 	// just to set the mode
 	dataFile, err := f.DataMount.FS.CreateFile(ctx, dataPath, flag, mode)
 	if err != nil {
-		tmpFile.Close()
-		f.DecryptMount.FS.Delete(ctx, tmpPath)
 		return nil, err
 	}
 	dataFile.Close()
@@ -139,7 +132,6 @@ func (f *EncryptedFileSystem) CreateFile(ctx context.Context, path string, flag 
 	commitHandle, err := OpenEncryptedFile(
 		ctx,
 		f.DecryptMount.FS,
-		tmpFile,
 		tmpPath,
 		f.DataMount.FS,
 		dataPath,
@@ -149,10 +141,9 @@ func (f *EncryptedFileSystem) CreateFile(ctx context.Context, path string, flag 
 		f.KeysMount.FS,
 		keyPath,
 		&f.PrivKey.PublicKey,
+		flag,
 	)
 	if err != nil {
-		tmpFile.Close()
-		f.DecryptMount.FS.Delete(ctx, tmpPath)
 		return nil, err
 	}
 	return &ninep.ProtectedFileHandle{commitHandle, flag}, nil
@@ -160,15 +151,15 @@ func (f *EncryptedFileSystem) CreateFile(ctx context.Context, path string, flag 
 
 func (f *EncryptedFileSystem) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (ninep.FileHandle, error) {
 	keyPath := filepath.Join(f.KeysMount.Prefix, path)
-	keyFile, err := f.KeysMount.FS.OpenFile(ctx, keyPath, ninep.ORDWR)
+	keyFile, err := f.KeysMount.FS.OpenFile(ctx, keyPath, ninep.OREAD)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			keyFile, err = f.KeysMount.FS.CreateFile(ctx, keyPath, ninep.ORDWR|ninep.OTRUNC, 0600)
 		} else {
-			return nil, err
+			return nil, fmt.Errorf("Failed to open key: %w", err)
 		}
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("Failed to open/create key: %w", err)
 		}
 	}
 	defer keyFile.Close()
@@ -191,17 +182,17 @@ func (f *EncryptedFileSystem) OpenFile(ctx context.Context, path string, flag ni
 		}
 		stream, err = sio.XChaCha20Poly1305.Stream(key)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("Failed to open encrypted stream: %w", err)
 		}
 	} else {
 		cipher, err := ioutil.ReadAll(ninep.Reader(keyFile))
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("Failed to read encrypted cipher: %w", err)
 		}
 
 		plaintext, err := PrivateKeyDecrypt(f.PrivKey, cipher)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("Failed to write encrypted key: %w", err)
 		}
 
 		// sio reserved 4 bits of the nonce for its use
@@ -218,22 +209,16 @@ func (f *EncryptedFileSystem) OpenFile(ctx context.Context, path string, flag ni
 		nonce = plaintext[1+chacha20poly1305.KeySize:]
 		stream, err = sio.XChaCha20Poly1305.Stream(key)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("Failed to open decryption stream: %w", err)
 		}
 	}
 
-	// TODO: handle multiple creates of this file
 	tmpPath := filepath.Join(f.DecryptMount.Prefix, path)
-	tmpFile, err := f.DecryptMount.FS.CreateFile(ctx, tmpPath, ninep.ORDWR|ninep.OTRUNC, 0600)
-	if err != nil {
-		return nil, err
-	}
 	dataPath := filepath.Join(f.DataMount.Prefix, path)
 
 	commitHandle, err := OpenEncryptedFile(
 		ctx,
 		f.DecryptMount.FS,
-		tmpFile,
 		tmpPath,
 		f.DataMount.FS,
 		dataPath,
@@ -243,10 +228,9 @@ func (f *EncryptedFileSystem) OpenFile(ctx context.Context, path string, flag ni
 		f.KeysMount.FS,
 		keyPath,
 		&f.PrivKey.PublicKey,
+		flag,
 	)
 	if err != nil {
-		tmpFile.Close()
-		f.DecryptMount.FS.Delete(ctx, tmpPath)
 		return nil, err
 	}
 	return &ninep.ProtectedFileHandle{commitHandle, flag}, nil
@@ -280,7 +264,9 @@ func (f *EncryptedFileSystem) WriteStat(ctx context.Context, path string, s nine
 func (f *EncryptedFileSystem) Delete(ctx context.Context, path string) error {
 	err := f.DataMount.FS.Delete(ctx, filepath.Join(f.DataMount.Prefix, path))
 	if err != nil {
-		return err
+		if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
 	}
 	return f.KeysMount.FS.Delete(ctx, filepath.Join(f.KeysMount.Prefix, path))
 }

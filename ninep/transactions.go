@@ -83,15 +83,15 @@ func (t *srvTransaction) reset() {
 	t.disconnect = false
 }
 
-func (t *srvTransaction) requestType() MsgType {
+func (t *srvTransaction) requestType() msgType {
 	mb := MsgBase(t.inMsg)
-	return mb.Type()
+	return mb.msgType()
 }
 
 func (t *srvTransaction) Request() Message {
 	mb := MsgBase(t.inMsg)
-	// fmt.Printf("recv: %s\n", mb.Type())
-	switch mb.Type() {
+	// fmt.Printf("recv: %s\n", mb.msgType())
+	switch mb.msgType() {
 	case msgTversion:
 		return Tversion(mb)
 	case msgTauth:
@@ -125,7 +125,7 @@ func (t *srvTransaction) Request() Message {
 
 func (t *srvTransaction) Reply() Message {
 	mb := MsgBase(t.outMsg)
-	switch mb.Type() {
+	switch mb.msgType() {
 	case msgRversion:
 		return Rversion(mb)
 	case msgRauth:
@@ -319,15 +319,15 @@ func (t *cltRequest) writeRequest(wr io.Writer) error {
 func (t *cltRequest) reset()  { zero(t.outMsg) }
 func (t *cltResponse) reset() { zero(t.inMsg) }
 
-func (t *cltRequest) requestType() MsgType {
+func (t *cltRequest) requestType() msgType {
 	mb := MsgBase(t.outMsg)
-	return mb.Type()
+	return mb.msgType()
 }
 
 func (t *cltRequest) Request() Message {
 	mb := MsgBase(t.outMsg)
-	// fmt.Printf("recv: %s\n", mb.Type())
-	switch mb.Type() {
+	// fmt.Printf("recv: %s\n", mb.msgType())
+	switch mb.msgType() {
 	case msgTversion:
 		return Tversion(mb)
 	case msgTauth:
@@ -359,14 +359,14 @@ func (t *cltRequest) Request() Message {
 	}
 }
 
-func (t *cltResponse) responseType() MsgType {
+func (t *cltResponse) responseType() msgType {
 	mb := MsgBase(t.inMsg)
-	return mb.Type()
+	return mb.msgType()
 }
 
 func (t *cltResponse) Reply() Message {
 	mb := MsgBase(t.inMsg)
-	switch mb.Type() {
+	switch mb.msgType() {
 	case msgRversion:
 		return Rversion(mb)
 	case msgRauth:

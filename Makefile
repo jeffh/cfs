@@ -1,5 +1,6 @@
 .PHONY: clean exportfs
 
+GO := $(shell which go)
 CMDS := $(shell ls cmd)
 
 # Example goargs
@@ -8,14 +9,14 @@ CMDS := $(shell ls cmd)
 all: $(CMDS)
 
 $(CMDS): $(find . -type '*.go')
-	go build --ldflags="-s -w" $(GOARGS) -o ./bin/$@ ./cmd/$@
+	$(GO) build --ldflags="-s -w" $(GOARGS) -o ./bin/$@ ./cmd/$@
 
 compress: $(CMDS)
 	echo $(CMDS) | xargs -n 1 -I'{}' upx './bin/{}'
 	ls -lh bin
 
 test:
-	go test $(GOARGS) ./...
+	$(GO) test $(GOARGS) ./...
 
 clean:
 	rm -rf bin; true

@@ -60,6 +60,8 @@ type commitHandle struct {
 
 	tmpFs   ninep.FileSystem
 	tmpPath string
+
+	flag ninep.OpenMode
 }
 
 var _ ninep.FileHandle = (*commitHandle)(nil)
@@ -67,7 +69,6 @@ var _ ninep.FileHandle = (*commitHandle)(nil)
 func OpenEncryptedFile(
 	ctx context.Context,
 	tmpFs ninep.FileSystem,
-	tmpFile ninep.FileHandle,
 	tmpPath string,
 	writeFs ninep.FileSystem,
 	dataPath string,
@@ -76,7 +77,14 @@ func OpenEncryptedFile(
 	keyFs ninep.FileSystem,
 	keyPath string,
 	pubKey *rsa.PublicKey,
+	flag ninep.OpenMode,
 ) (*commitHandle, error) {
+	// TODO: handle multiple creates of this file
+	tmpFile, err := tmpFs.CreateFile(ctx, tmpPath, ninep.ORDWR|ninep.OTRUNC, 0600)
+	if err != nil {
+		return nil, err
+	}
+
 	var isNewFile bool
 	{
 		info, err := writeFs.Stat(ctx, dataPath)
@@ -85,6 +93,8 @@ func OpenEncryptedFile(
 
 	eh, err := writeFs.OpenFile(ctx, dataPath, ninep.OREAD)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		tmpFile.Close()
+		tmpFs.Delete(ctx, tmpPath)
 		return nil, err
 	}
 	err = nil
@@ -93,9 +103,11 @@ func OpenEncryptedFile(
 		h := stream.DecryptReader(ninep.Reader(eh), nonce, nil)
 		if !isNewFile {
 			var buf [4096]byte
-			_, err = io.CopyBuffer(ninep.Writer(tmpFile), h, buf[:])
+			_, err := io.CopyBuffer(ninep.Writer(tmpFile), h, buf[:])
 			if err != nil {
 				eh.Close()
+				tmpFile.Close()
+				tmpFs.Delete(ctx, tmpPath)
 				return nil, err
 			}
 		}
@@ -115,11 +127,16 @@ func OpenEncryptedFile(
 
 		tmpFs:   tmpFs,
 		tmpPath: tmpPath,
+
+		flag: flag,
 	}
 	return commitHandle, nil
 }
 
 func (h *commitHandle) commit(ctx context.Context) error {
+	if !h.flag.IsWriteable() {
+		return nil
+	}
 	nonce, err := generateChachaNonce(h.stream.NonceSize())
 	if err != nil {
 		return fmt.Errorf("Failed to generate nonce: %w", err)
@@ -167,10 +184,13 @@ func (h *commitHandle) commit(ctx context.Context) error {
 
 func (h *commitHandle) deleteTemp() error {
 	h.tmp.Close()
+	h.tmp = nil
 	return h.tmpFs.Delete(context.Background(), h.tmpPath)
 }
 
-func (h *commitHandle) ReadAt(p []byte, off int64) (n int, err error) { return h.tmp.ReadAt(p, off) }
+func (h *commitHandle) ReadAt(p []byte, off int64) (n int, err error) {
+	return h.tmp.ReadAt(p, off)
+}
 func (h *commitHandle) WriteAt(p []byte, off int64) (n int, err error) {
 	h.dirty = true
 	return h.tmp.WriteAt(p, off)
