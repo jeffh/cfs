@@ -47,7 +47,7 @@ func main() {
 			// move in the same server
 			err := srcMnt.FS.WriteStat(ctx, srcMnt.Prefix, ninep.SyncStatWithName(dstMntCfg.Prefix))
 			if errors.Is(err, os.ErrNotExist) {
-				return fmt.Errorf("Path does not exist: %s", srcMnt)
+				return fmt.Errorf("Path does not exist: %s", srcMnt.String())
 			}
 			return err
 		} else {
@@ -61,7 +61,7 @@ func main() {
 
 			in, err := srcMnt.FS.OpenFile(ctx, srcMnt.Prefix, ninep.OREAD)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error opening file for reading: %s\n", srcMnt)
+				fmt.Fprintf(os.Stderr, "Error opening file for reading: %s\n", srcMnt.String())
 				exitCode = 1
 				runtime.Goexit()
 			}
@@ -69,7 +69,7 @@ func main() {
 
 			out, err := dstMnt.FS.OpenFile(ctx, dstMnt.Prefix, ninep.OWRITE|ninep.OTRUNC)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error opening file for writing: %s\n", dstMnt)
+				fmt.Fprintf(os.Stderr, "Error opening file for writing: %s\n", dstMnt.String())
 				exitCode = 2
 				runtime.Goexit()
 			}
@@ -79,7 +79,7 @@ func main() {
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Failed to move file to new fs: %s", err)
 				if er := dstMnt.FS.Delete(ctx, dstMnt.Prefix); er != nil {
-					fmt.Fprintf(os.Stderr, "Failed to deleted attempted copy of file: %s: %s", dstMnt, er)
+					fmt.Fprintf(os.Stderr, "Failed to deleted attempted copy of file: %s: %s", dstMnt.String(), er)
 				}
 				exitCode = 3
 				runtime.Goexit()
@@ -87,7 +87,7 @@ func main() {
 
 			err = srcMnt.FS.Delete(ctx, srcMnt.Prefix)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to delete old file: %s, but file has been copied to its new place", srcMnt)
+				fmt.Fprintf(os.Stderr, "Failed to delete old file: %s, but file has been copied to its new place", srcMnt.String())
 				exitCode = 4
 				runtime.Goexit()
 			}
