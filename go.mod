@@ -11,12 +11,14 @@ require (
 	github.com/docker/docker v1.13.1
 	github.com/docker/go-connections v0.4.0
 	github.com/docker/go-units v0.4.0 // indirect
+	github.com/go-delve/delve v1.4.0
 	github.com/go-ole/go-ole v1.2.4 // indirect
 	github.com/google/shlex v0.0.0-20181106134648-c34317bd91bf
 	github.com/kardianos/service v1.0.0
 	github.com/kr/pretty v0.1.0 // indirect
 	github.com/kurin/blazer v0.5.3
 	github.com/opencontainers/go-digest v1.0.0-rc1 // indirect
+	github.com/pkg/sftp v1.11.0
 	github.com/secure-io/sio-go v0.3.1
 	github.com/shirou/gopsutil v2.19.9+incompatible
 	github.com/shirou/w32 v0.0.0-20160930032740-bb4de0191aa4 // indirect

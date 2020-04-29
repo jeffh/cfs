@@ -26,7 +26,7 @@ func main() {
 	}
 
 	cli.MainClient(func(cfg *cli.ClientConfig, mnt proxy.FileSystemMount) error {
-		if flag.NArg() == 1 {
+		if flag.NArg() == 0 {
 			flag.Usage()
 			os.Exit(1)
 		}

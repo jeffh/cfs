@@ -194,6 +194,12 @@ type DefaultHandler struct {
 	Loggable
 }
 
+func (h *DefaultHandler) Shutdown() {
+	if closer, ok := h.Fs.(io.Closer); ok {
+		closer.Close()
+	}
+}
+
 func (h *DefaultHandler) Connected(addr string) {
 	h.st.Add(addr)
 }

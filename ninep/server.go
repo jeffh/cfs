@@ -39,6 +39,7 @@ type Replier interface {
 }
 
 type Handler interface {
+	Shutdown()
 	Disconnected(remoteAddr string)
 	Connected(remoteAddr string)
 	Handle9P(ctx context.Context, req Message, w Replier)
@@ -152,6 +153,8 @@ func (s *Server) Serve(l net.Listener) error {
 	s.mu.Lock()
 	s.listener = l
 	s.mu.Unlock()
+
+	defer s.Handler.Shutdown()
 
 	if s.InitialTimeout == 0 {
 		s.InitialTimeout = DefaultInitialTimeout

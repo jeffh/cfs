@@ -21,6 +21,7 @@ var (
 	ErrInvalidAccess   = errors.New("invalid access permissions")
 
 	ErrChangeUidNotAllowed = errors.New("changing uid is not allowed by protocol")
+	ErrChangeGidNotAllowed = errors.New("not allowed to change gid")
 
 	// error from functions that require an iterator given to it (and not nil)
 	ErrMissingIterator = errors.New("Internal error, no iterator returned, but got no error")
