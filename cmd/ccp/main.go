@@ -47,13 +47,13 @@ func main() {
 
 	srcMntCfg, ok := proxy.ParseMount(flag.Arg(0))
 	if !ok {
-		fmt.Fprintf(os.Stderr, "Invalid source path: %v", flag.Arg(0))
+		fmt.Fprintf(os.Stderr, "Invalid source path: %v\n", flag.Arg(0))
 		exitCode = 2
 		runtime.Goexit()
 	}
 	dstMntCfg, ok := proxy.ParseMount(flag.Arg(1))
 	if !ok {
-		fmt.Fprintf(os.Stderr, "Invalid destination path: %v", flag.Arg(1))
+		fmt.Fprintf(os.Stderr, "Invalid destination path: %v\n", flag.Arg(1))
 		exitCode = 2
 		runtime.Goexit()
 	}

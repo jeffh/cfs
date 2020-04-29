@@ -11,6 +11,7 @@ import (
 	"bazil.org/fuse"
 	"github.com/jeffh/cfs/cli"
 	efuse "github.com/jeffh/cfs/exportfs/fuse"
+	"github.com/jeffh/cfs/fs/proxy"
 	"github.com/jeffh/cfs/ninep"
 )
 
@@ -24,7 +25,7 @@ func main() {
 		fmt.Printf("Received term signal\n")
 		cancel()
 	}()
-	cli.MainClient(func(c ninep.Client, fs *ninep.FileSystemProxy) error {
+	cli.MainClient(func(cfg *cli.ClientConfig, mnt proxy.FileSystemMount) error {
 		if flag.NArg() == 1 {
 			return fmt.Errorf("Missing mountpoint")
 		} else {
@@ -39,7 +40,8 @@ func main() {
 
 		return efuse.MountAndServeFS(
 			ctx,
-			fs,
+			mnt.FS,
+			mnt.Prefix,
 			loggable,
 			mountpoint,
 			fuse.FSName("9pfuse"),

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jeffh/cfs/cli"
+	"github.com/jeffh/cfs/fs/proxy"
 	"github.com/jeffh/cfs/ninep"
 )
 
@@ -54,7 +55,6 @@ func printInfo(w io.Writer, info os.FileInfo, replacedName string) {
 }
 
 func main() {
-	var path string
 	var all bool
 	var list bool
 	var nocols bool
@@ -66,19 +66,12 @@ func main() {
 
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "ls for CFS\n")
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [OPTIONS] ADDR [PATH]\n", os.Args[0])
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [OPTIONS] ADDR/PATH\n", os.Args[0])
 		flag.PrintDefaults()
 	}
 
-	cli.MainClient(func(c ninep.Client, fs *ninep.FileSystemProxy) error {
-		if flag.NArg() == 1 {
-			path = ""
-		} else {
-			path = flag.Arg(1)
-		}
-
-		path = flag.Arg(1)
-		infos, err := fs.ListDir(context.Background(), path)
+	cli.MainClient(func(cfg *cli.ClientConfig, mnt proxy.FileSystemMount) error {
+		infos, err := mnt.FS.ListDir(context.Background(), mnt.Prefix)
 		if err != nil {
 			return err
 		}
@@ -94,11 +87,11 @@ func main() {
 				w = tw
 			}
 			if all {
-				info, err := fs.Stat(context.Background(), path)
+				info, err := mnt.FS.Stat(context.Background(), mnt.Prefix)
 				if err == nil && info != nil {
 					printInfo(w, info, ".")
 				}
-				info, err = fs.Stat(context.Background(), filepath.Join(path, ".."))
+				info, err = mnt.FS.Stat(context.Background(), filepath.Join(mnt.Prefix, ".."))
 				if err == nil && info != nil {
 					printInfo(w, info, "..")
 				}

@@ -54,7 +54,7 @@ func (c *ClientConfig) user() string {
 func (c *ClientConfig) FSMount(mnt *proxy.FileSystemMountConfig) (proxy.FileSystemMount, error) {
 	switch mnt.Addr {
 	case ":memory":
-		return proxy.FileSystemMount{&fs.Mem{}, mnt.Prefix, nil, nil}, nil
+		return proxy.FileSystemMount{&fs.Mem{}, mnt.Prefix, nil, mnt.Addr, nil}, nil
 	case ":tmp":
 		dir, err := ioutil.TempDir("", "*")
 		if err != nil {
@@ -67,7 +67,7 @@ func (c *ClientConfig) FSMount(mnt *proxy.FileSystemMountConfig) (proxy.FileSyst
 			}
 			return nil
 		}
-		return proxy.FileSystemMount{fs.Dir(dir), mnt.Prefix, nil, clean}, nil
+		return proxy.FileSystemMount{fs.Dir(dir), mnt.Prefix, nil, mnt.Addr, clean}, nil
 	case "", ".":
 		fpath := filepath.Join(mnt.Addr, mnt.Prefix)
 		if mnt.Addr == "" {
@@ -82,13 +82,13 @@ func (c *ClientConfig) FSMount(mnt *proxy.FileSystemMountConfig) (proxy.FileSyst
 			}
 		}
 
-		return proxy.FileSystemMount{fs.Dir(fpath), prefix, nil, nil}, nil
+		return proxy.FileSystemMount{fs.Dir(fpath), prefix, nil, mnt.Addr, nil}, nil
 	default:
 		client, fs, err := c.CreateFs(mnt.Addr)
 		if err != nil {
 			return proxy.FileSystemMount{}, fmt.Errorf("Failed connecting to %s/%s: %w", mnt.Addr, mnt.Prefix, err)
 		}
-		return proxy.FileSystemMount{fs, mnt.Prefix, client, nil}, nil
+		return proxy.FileSystemMount{fs, mnt.Prefix, client, mnt.Addr, nil}, nil
 	}
 }
 
@@ -164,7 +164,7 @@ func (c *ClientConfig) CreateFs(addr string) (ninep.Client, *ninep.FileSystemPro
 	return client, fs, nil
 }
 
-func MainClient(fn func(c ninep.Client, fs *ninep.FileSystemProxy) error) {
+func MainClient(fn func(cfg *ClientConfig, m proxy.FileSystemMount) error) {
 	var (
 		cfg ClientConfig
 
@@ -187,17 +187,23 @@ func MainClient(fn func(c ninep.Client, fs *ninep.FileSystemProxy) error) {
 		runtime.Goexit()
 	}
 
-	addr := flag.Arg(0)
-
-	clt, fs, err := cfg.CreateFs(addr)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
+	mntCfg, ok := proxy.ParseMount(flag.Arg(0))
+	if !ok {
+		fmt.Fprintf(os.Stderr, "Invalid path: %v\n", flag.Arg(0))
+		fmt.Fprintf(os.Stderr, "Format should be IP:PORT/PATH format.\n")
 		exitCode = 1
 		runtime.Goexit()
 	}
-	defer clt.Close()
 
-	err = fn(clt, fs)
+	mnt, err := cfg.FSMount(&mntCfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error connecting to destination fs: %s\n", err)
+		exitCode = 1
+		runtime.Goexit()
+	}
+	defer mnt.Close()
+
+	err = fn(&cfg, mnt)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed: %s\n", err)
 		exitCode = 1

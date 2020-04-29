@@ -8,11 +8,11 @@ import (
 	"os"
 
 	"github.com/jeffh/cfs/cli"
+	"github.com/jeffh/cfs/fs/proxy"
 	"github.com/jeffh/cfs/ninep"
 )
 
 func main() {
-	var path string
 	var numlines int
 	var writeFromStdin bool
 	var writeFromFile string
@@ -23,25 +23,18 @@ func main() {
 
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "cat for CFS\n")
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [OPTIONS] ADDR [PATH]\n", os.Args[0])
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [OPTIONS] ADDR/PATH\n", os.Args[0])
 		flag.PrintDefaults()
 	}
 
-	cli.MainClient(func(c ninep.Client, fs *ninep.FileSystemProxy) error {
-		if flag.NArg() == 1 {
-			path = ""
-		} else {
-			path = flag.Arg(1)
-		}
-
+	cli.MainClient(func(cfg *cli.ClientConfig, mnt proxy.FileSystemMount) error {
 		mode := ninep.OpenMode(ninep.OREAD)
 
 		if writeFromStdin {
 			mode = ninep.ORDWR
 		}
 
-		path = flag.Arg(1)
-		h, err := fs.OpenFile(context.Background(), path, mode)
+		h, err := mnt.FS.OpenFile(context.Background(), mnt.Prefix, mode)
 		if err != nil {
 			return err
 		}

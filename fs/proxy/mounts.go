@@ -13,7 +13,12 @@ type FileSystemMount struct {
 	FS     ninep.TraversableFileSystem // required
 	Prefix string                      // required
 	Client ninep.Client                // optional
+	Addr   string                      // optional
 	Clean  func() error                // optional
+}
+
+func (fsm *FileSystemMount) String() string {
+	return fmt.Sprintf("%s/%s", fsm.Addr, fsm.Prefix)
 }
 
 func (fsm *FileSystemMount) Close() error {

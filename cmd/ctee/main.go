@@ -8,12 +8,12 @@ import (
 	"os"
 
 	"github.com/jeffh/cfs/cli"
+	"github.com/jeffh/cfs/fs/proxy"
 	"github.com/jeffh/cfs/ninep"
 )
 
 func main() {
 	var (
-		path     string
 		nostdout bool
 		read     bool
 	)
@@ -23,17 +23,11 @@ func main() {
 
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "tee for CFS\n")
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [OPTIONS] ADDR [PATH]\n", os.Args[0])
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [OPTIONS] ADDR/PATH\n", os.Args[0])
 		flag.PrintDefaults()
 	}
 
-	cli.MainClient(func(c ninep.Client, fs *ninep.FileSystemProxy) error {
-		if flag.NArg() == 1 {
-			path = ""
-		} else {
-			path = flag.Arg(1)
-		}
-
+	cli.MainClient(func(cfg *cli.ClientConfig, mnt proxy.FileSystemMount) error {
 		var (
 			h   ninep.FileHandle
 			err error
@@ -41,8 +35,8 @@ func main() {
 
 		ctx := context.Background()
 
-		path = flag.Arg(1)
-		_, err = fs.Stat(ctx, path)
+		path := mnt.Prefix
+		_, err = mnt.FS.Stat(ctx, path)
 		var flags ninep.OpenMode
 		if read {
 			flags = ninep.ORDWR
@@ -52,9 +46,9 @@ func main() {
 		flags |= ninep.OTRUNC
 
 		if os.IsNotExist(err) {
-			h, err = fs.CreateFile(ctx, path, flags, 0664)
+			h, err = mnt.FS.CreateFile(ctx, path, flags, 0664)
 		} else {
-			h, err = fs.OpenFile(ctx, path, flags)
+			h, err = mnt.FS.OpenFile(ctx, path, flags)
 		}
 		if err != nil {
 			return err

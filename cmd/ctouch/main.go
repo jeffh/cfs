@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jeffh/cfs/cli"
+	"github.com/jeffh/cfs/fs/proxy"
 	"github.com/jeffh/cfs/ninep"
 )
 
@@ -16,24 +17,18 @@ func main() {
 
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "touch for CFS\n")
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [OPTIONS] ADDR [PATH]\n", os.Args[0])
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [OPTIONS] ADDR/PATH\n", os.Args[0])
 		flag.PrintDefaults()
 	}
 
-	cli.MainClient(func(c ninep.Client, fs *ninep.FileSystemProxy) error {
-		if flag.NArg() == 1 {
-			path = ""
-		} else {
-			path = flag.Arg(1)
-		}
-
+	cli.MainClient(func(cfg *cli.ClientConfig, mnt proxy.FileSystemMount) error {
 		ctx := context.Background()
 
-		path = flag.Arg(1)
-		_, err := fs.Stat(ctx, path)
+		path = mnt.Prefix
+		_, err := mnt.FS.Stat(ctx, path)
 
 		if os.IsNotExist(err) {
-			h, err := fs.CreateFile(ctx, path, ninep.OREAD, 0666)
+			h, err := mnt.FS.CreateFile(ctx, path, ninep.OREAD, 0666)
 			if err != nil {
 				return err
 			}
@@ -47,7 +42,7 @@ func main() {
 		stat.SetMtime(now)
 		stat.SetAtime(now)
 
-		err = fs.WriteStat(ctx, path, stat)
+		err = mnt.FS.WriteStat(ctx, path, stat)
 		return err
 	})
 }

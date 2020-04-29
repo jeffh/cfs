@@ -5,9 +5,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/jeffh/cfs/cli"
-	"github.com/jeffh/cfs/ninep"
+	"github.com/jeffh/cfs/fs/proxy"
 )
 
 func main() {
@@ -20,22 +21,23 @@ func main() {
 
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "rm for CFS - will delete directories\n")
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [OPTIONS] ADDR PATH [MORE_PATHS...]\n", os.Args[0])
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [OPTIONS] ADDR/PATH [MORE_PATHS...]\n", os.Args[0])
 		flag.PrintDefaults()
 	}
 
-	cli.MainClient(func(c ninep.Client, fs *ninep.FileSystemProxy) error {
+	cli.MainClient(func(cfg *cli.ClientConfig, mnt proxy.FileSystemMount) error {
 		if flag.NArg() == 1 {
 			flag.Usage()
 			os.Exit(1)
 		}
 
-		files = flag.Args()[1:]
+		files = []string{mnt.Prefix}
+		files = append(files, flag.Args()[1:]...)
 
 		for _, path := range files {
-			node, err := fs.Traverse(path)
+			node, err := mnt.FS.Traverse(path)
 			if os.IsNotExist(err) {
-				return fmt.Errorf("Path does not exist: %s", path)
+				return fmt.Errorf("Path does not exist: %s", filepath.Join(mnt.Addr, path))
 			}
 			if err != nil {
 				return err
