@@ -18,6 +18,7 @@ servers.
  - **dockerfs** is a file server that exposes the docker daemon (aka - docker cli)
  - **memfs** is a file server that serves from memory
  - **procfs** is a file server that serves local process information
+ - **sftpfs** is a file server that serves a sftp connection's set of files
 
 ## Clients
 
