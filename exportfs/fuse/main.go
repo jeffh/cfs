@@ -3,7 +3,6 @@ package fuse
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"os/user"
@@ -256,7 +255,7 @@ func (n *Dir) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.Cr
 	mode := flagModeToMode(req.Flags, req.Mode)
 
 	if req.Flags&fuse.OpenCreate == 0 {
-		fmt.Printf("FUSE: did not get OpenCreate\n")
+		n.tracef("FUSE: did not get OpenCreate\n")
 		return nil, nil, syscall.EINVAL
 	}
 
@@ -264,7 +263,7 @@ func (n *Dir) Create(ctx context.Context, req *fuse.CreateRequest, resp *fuse.Cr
 		return nil, nil, syscall.EINVAL
 	} else {
 		h, err := n.fs.CreateFile(ctx, path, flg, mode)
-		fmt.Printf("CreateFile(%#v, %s, %s) => %s\n", path, flg, mode, err)
+		n.tracef("CreateFile(%#v, %s, %s) => %s\n", path, flg, mode, err)
 		if err != nil {
 			return nil, nil, mapErr(err)
 		}
@@ -379,7 +378,7 @@ func (n *File) Setattr(ctx context.Context, req *fuse.SetattrRequest, resp *fuse
 }
 
 func (n *File) Setxattr(ctx context.Context, req *fuse.SetxattrRequest) error {
-	fmt.Printf("SETXATTR %s\n", req)
+	n.tracef("SETXATTR %s\n", req)
 	// technically, we can't support this because we're not the underlying fs,
 	// but not implementing this causes errors when using cp (in macos).
 	return nil
