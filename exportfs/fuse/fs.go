@@ -1,3 +1,4 @@
+// Mounts a 9p file server as a user-space local file system mount (using FUSE)
 package fuse
 
 import (

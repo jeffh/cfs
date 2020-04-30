@@ -26,21 +26,21 @@ func Basename(path string) string {
 	return path[i+1:]
 }
 
-func IsClosedSocket(err error) bool {
+func isClosedSocket(err error) bool {
 	return err != nil &&
 		(strings.Index(err.Error(), "use of closed network connection") != -1 ||
 			errors.Is(err, io.EOF) ||
 			errors.Is(err, syscall.EPIPE))
 }
 
-func IsTimeoutErr(err error) bool {
+func isTimeoutErr(err error) bool {
 	if err, ok := err.(net.Error); ok && err.Timeout() {
 		return true
 	}
 	return false
 }
 
-func IsTemporaryErr(err error) bool {
+func isTemporaryErr(err error) bool {
 	type t interface {
 		Temporary() bool
 	}
@@ -58,9 +58,9 @@ func readUpTo(r io.Reader, p []byte) (int, error) {
 	for n < len(p) && err == nil {
 		m, e := r.Read(p[n:])
 		n += m
-		if IsTimeoutErr(e) {
+		if isTimeoutErr(e) {
 			return 0, e
-		} else if IsTemporaryErr(e) {
+		} else if isTemporaryErr(e) {
 			continue
 		}
 		err = e

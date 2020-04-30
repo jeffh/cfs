@@ -1,3 +1,7 @@
+// 9p File System Implementations.
+//
+// Various implementations of servers that conform to the ninep.FileSystem
+// interface.
 package fs
 
 import (
@@ -11,9 +15,9 @@ import (
 	ninep "github.com/jeffh/cfs/ninep"
 )
 
-// Provides an easy struct to conform to os.FileInfo
-// Note: can "leak" memory because truncate only slices and doesn't free
-type MemFileInfo struct {
+// Provides an easy struct to conform to os.FileInfo.
+// Note: can "leak" memory because truncate only slices and doesn't free.
+type memFileInfo struct {
 	FIName    string
 	FISize    int64
 	FIMode    os.FileMode
@@ -21,20 +25,17 @@ type MemFileInfo struct {
 	FISys     interface{}
 }
 
-func (f *MemFileInfo) Name() string       { return f.FIName }
-func (f *MemFileInfo) Size() int64        { return f.FISize }
-func (f *MemFileInfo) Mode() os.FileMode  { return f.FIMode }
-func (f *MemFileInfo) ModTime() time.Time { return f.FIModTime }
-func (f *MemFileInfo) IsDir() bool        { return f.FIMode&os.ModeDir != 0 }
-func (f *MemFileInfo) Sys() interface{}   { return f.FISys }
+func (f *memFileInfo) Name() string       { return f.FIName }
+func (f *memFileInfo) Size() int64        { return f.FISize }
+func (f *memFileInfo) Mode() os.FileMode  { return f.FIMode }
+func (f *memFileInfo) ModTime() time.Time { return f.FIModTime }
+func (f *memFileInfo) IsDir() bool        { return f.FIMode&os.ModeDir != 0 }
+func (f *memFileInfo) Sys() interface{}   { return f.FISys }
 
 ////////////////////////////////////////////////
 
-type MemNode interface {
-}
-
-// Implements a basic file system in memory only
-// Also, not a particularly efficient implementation
+// Implements a basic file system in memory only.
+// Also, not a particularly efficient implementation.
 type Mem struct {
 	Root memNode
 }
@@ -238,7 +239,7 @@ func (m *Mem) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (n
 	}
 }
 
-func (m *Mem) stat(n *memNode) *MemFileInfo {
+func (m *Mem) stat(n *memNode) *memFileInfo {
 	n.mut.RLock()
 	size := int64(len(n.contents))
 	modTime := n.modTime
@@ -249,7 +250,7 @@ func (m *Mem) stat(n *memNode) *MemFileInfo {
 		mode |= os.ModeDir
 	}
 
-	return &MemFileInfo{
+	return &memFileInfo{
 		FIName:    n.name,
 		FISize:    size,
 		FIMode:    mode,

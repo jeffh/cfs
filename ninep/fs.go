@@ -25,18 +25,19 @@ type AuthFileHandle interface {
 	Authorized(usr, mnt string) bool
 }
 
-// return os.FileInfo from FileSystem can implement this if they want to
+// Return os.FileInfo from FileSystem can implement this if they want to
 // utilize modes only available in 9P protocol
 type FileInfoMode9P interface{ Mode9P() Mode }
 
-// return os.FileInfo from FileSystem can implement this if they want more
+// Return os.FileInfo from FileSystem can implement this if they want more
 // precisely control the Qid version, which should change every time the
 // version number changes.
 type FileInfoVersion interface{ Version() uint32 }
 
-// return os.FileInfo from FileSystem can implement this if they want more
-// precisely control the Qid path, which should change every time the there's a
-// different file in the file system. Two files with the same exact filepath can have different paths if:
+// Instead of a os.FileInfo from a FileSystem implement. This can be returned if that FS wants more
+// precise control the Qid path, which should change every time the there's a
+// different file in the file system. Two files with the same exact filepath
+// can have different paths if:
 //
 // - Create file // Qid with Path A
 // - Delete file
@@ -61,8 +62,8 @@ type FileInfoMuid interface{ Muid() string }
 // paths)
 // type FileInfoPath interface{ Path() uint32 }
 
-// Interface for a server to verify a client
-// Return nil, nil to indicate no authentication needed
+// Interface for a server to verify a client.
+// Return (nil, nil) to indicate no authentication needed
 type Authorizer interface {
 	Auth(ctx context.Context, addr, user, access string) (AuthFileHandle, error)
 }
@@ -74,6 +75,7 @@ type Authorizee interface {
 
 ///////////////////////////////////////////////////////////////
 
+// Interface to iterate over Stats from a listing of a directory
 type StatIterator interface {
 	FileInfoIterator
 	// callers must copy stat if they want to retain it beyond the next call to
@@ -81,6 +83,7 @@ type StatIterator interface {
 	NextStat() (Stat, error)
 }
 
+// Interface to iterate over os.FileInfos from a listing of a directory
 type FileInfoIterator interface {
 	// returns io.EOF with os.FileInfo = nil on end
 	NextFileInfo() (os.FileInfo, error)
@@ -112,6 +115,7 @@ func (itr *fileInfoSliceIterator) NextFileInfo() (os.FileInfo, error) {
 	return itr.infos[idx], nil
 }
 
+// Consumes an iterator to produce a slice of os.FileInfos
 func FileInfoSliceFromIterator(itr FileInfoIterator, max int) ([]os.FileInfo, error) {
 	if itr == nil {
 		return nil, ErrMissingIterator
@@ -149,6 +153,8 @@ func FileInfoSliceFromIterator(itr FileInfoIterator, max int) ([]os.FileInfo, er
 //  - "session"    *Session - The server's session, if available
 //  - "rawMessage" Message  - The message the server received, if available
 //
+// These keys are only populated if the FileSystem is running under a tcp
+// server context.
 type FileSystem interface {
 	// Creates a directory. Implementations can reject if parent directories are missing
 	MakeDir(ctx context.Context, path string, mode Mode) error
@@ -206,6 +212,7 @@ type fileInfoWithName struct {
 	name string
 }
 
+// Wraps an os.FileInfo to provide a different Name() return value
 func FileInfoWithName(fi os.FileInfo, name string) os.FileInfo {
 	return &fileInfoWithName{fi, name}
 }
@@ -223,6 +230,7 @@ type fileInfoWithUsers struct {
 	uid, gid, muid string
 }
 
+// An os.FileInfo with Plan9 uid & gid support
 type FileInfoUsers interface {
 	os.FileInfo
 	FileInfoUid
@@ -230,6 +238,8 @@ type FileInfoUsers interface {
 	FileInfoMuid
 }
 
+// Returns a FileInfoUser based off of an os.FileInfo, which the plan9 specific
+// values provided.
 func FileInfoWithUsers(fi os.FileInfo, uid, gid, muid string) FileInfoUsers {
 	return &fileInfoWithUsers{fi, uid, gid, muid}
 }
@@ -251,6 +261,7 @@ type fileInfoWithSize struct {
 
 func (f *fileInfoWithSize) Size() int64 { return f.newSize }
 
+// Wraps an os.FileInfo with an override of the file size
 func FileInfoWithSize(fi os.FileInfo, size int64) os.FileInfo {
 	return &fileInfoWithSize{
 		FileInfo: fi,
@@ -277,10 +288,17 @@ func (r *handleReaderWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
+// Returns an io.Reader interface around a FileHandle, starting at a given offset
 func ReaderStartingAt(h FileHandle, start int64) io.Reader { return &handleReaderWriter{h, start} }
+
+// Returns an io.Writer interface around a FileHandle, starting at a given offset
 func WriterStartingAt(h FileHandle, start int64) io.Writer { return &handleReaderWriter{h, start} }
-func Reader(h FileHandle) io.Reader                        { return &handleReaderWriter{h, 0} }
-func Writer(h FileHandle) io.Writer                        { return &handleReaderWriter{h, 0} }
+
+// Returns an io.Reader interface around a FileHandle, starting at the beginning of the file
+func Reader(h FileHandle) io.Reader { return &handleReaderWriter{h, 0} }
+
+// Returns an io.Writer interface around a FileHandle, starting at the beginning of the file
+func Writer(h FileHandle) io.Writer { return &handleReaderWriter{h, 0} }
 
 /////////////////////////////////////////////////
 

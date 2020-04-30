@@ -186,7 +186,16 @@ func cleanPath(path string) string {
 
 ////////////////////////////////////////////////
 
-type DefaultHandler struct {
+// Default implementation to manage the server's part of the 9p protocol.
+//
+// Manages sessions from multiple clients.
+//
+// Delegates the actual file manage to FileSystem interface.
+// Delegates auth to the Authorizer
+//
+// If the FileSystem implements io.Closer, then the defaultHandler will also
+// invoke Close() when the server is shutting down.
+type defaultHandler struct {
 	Fs   FileSystem
 	Auth Authorizer
 	st   SessionTracker
@@ -194,22 +203,27 @@ type DefaultHandler struct {
 	Loggable
 }
 
-func (h *DefaultHandler) Shutdown() {
+// Invoked by the server when the server is shutting down.
+func (h *defaultHandler) Shutdown() {
 	if closer, ok := h.Fs.(io.Closer); ok {
 		closer.Close()
 	}
 }
 
-func (h *DefaultHandler) Connected(addr string) {
+// Invoked by the server when a client connection is accepted and the basic 9p
+// version protocol is negotiated
+func (h *defaultHandler) Connected(addr string) {
 	h.st.Add(addr)
 }
 
-func (h *DefaultHandler) Disconnected(addr string) {
+// Invoked by the server when a client has been disconnected.
+func (h *defaultHandler) Disconnected(addr string) {
 	h.Tracef("srv: disconnect: %s", addr)
 	h.st.Remove(addr)
 }
 
-func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
+// Invoked by the server to handle a 9p protocol message
+func (h *defaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 	session := h.st.Lookup(w.RemoteAddr())
 	if session == nil {
 		h.Errorf("No previous session for %s", w.RemoteAddr())
@@ -620,7 +634,7 @@ func (h *DefaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 		}
 		name := m.Name()
 		if name == "." || name == ".." {
-			h.Errorf("srv: Tcreate: cannot make file: %v", name)
+			h.Errorf("srv: Tcreate: cannot create file: %v", name)
 			w.Rerrorf("invalid name: %#v", name)
 			return
 		}

@@ -1,3 +1,17 @@
+// Manages the client-server Plan9 File System Protocol (9p)
+//
+// 9p is a network file system thats known for its small interface while
+// provided a unix-like file system. It's relatively simple API encourages more
+// novel uses to map onto a file system-like layout.
+//
+// This package contains both low-level and high-level data structures and
+// algorithms related to the 9p protocol.
+//
+// Besides providing common interfaces for both clients and servers, it also
+// handle the encoding and decoding of 9p network messages to be used over a
+// socket.
+//
+// See cfs/fs/* for concrete file system implementations.
 package ninep
 
 import (
@@ -470,9 +484,11 @@ func (qt QidType) String() string {
 	return strings.Join(parts, "|")
 }
 
-const QidSize = 13
+const QidSize = 13 // The number of bytes a Qid takes
 
-type Qid []byte // always size 13
+// The server's version of a file descriptor.
+// Stores unique ids and some metadata about the file requested.
+type Qid []byte // always sized to QidSize
 
 var NoTouchQid Qid
 
@@ -498,12 +514,23 @@ func (q Qid) Fill(t QidType, version uint32, path uint64) Qid {
 // qid.vers[4] version number for given path
 // qid.path[8] the file server's unique identification for the file
 
-func (q Qid) Bytes() []byte       { return q[:QidSize] }
-func (q Qid) Type() QidType       { return QidType(q[0]) }
-func (q Qid) Version() uint32     { return bo.Uint32(q[1:5]) }
+func (q Qid) Bytes() []byte       { return q[:QidSize] }       // Returns the raw bytes of a Qid. Used for writing to a socket
+func (q Qid) Type() QidType       { return QidType(q[0]) }     // Returns the metadata available on a Qid
+func (q Qid) Version() uint32     { return bo.Uint32(q[1:5]) } // Returns the version of the file. The server usually changes this value when the file changes.
 func (q Qid) SetVersion(v uint32) { bo.PutUint32(q[1:5], v) }
-func (q Qid) Path() uint64        { return bo.Uint64(q[5 : 5+8]) }
-func (q Qid) SetPath(v uint64)    { bo.PutUint64(q[5:5+8], v) } // not recommended to use unless you know the impact of this
+
+// Returns the path id of the file. This is similar to inode numbers. The server should return a different path for different files, event if it's the same file path
+//
+// An example is when a file gets deleted and created:
+//
+//  1. Delete file /foo
+//  2. Create file /foo
+//
+// Both files in the example scenario should have different paths, but it's up to the server implementation.
+func (q Qid) Path() uint64     { return bo.Uint64(q[5 : 5+8]) }
+func (q Qid) SetPath(v uint64) { bo.PutUint64(q[5:5+8], v) } // not recommended to use unless you know the impact of this
+
+// Returns true based on the 9p protocol indicating "This Qid value does not change"
 func (q Qid) IsNoTouch() bool {
 	for _, v := range q.Bytes() {
 		if v != 0xff {
@@ -513,6 +540,7 @@ func (q Qid) IsNoTouch() bool {
 	return true
 }
 
+// Allocates and copies the current Qid
 func (q Qid) Clone() Qid {
 	qid := make(Qid, len(q))
 	copy(qid, q)
@@ -1011,7 +1039,10 @@ type Twalk []byte
 // MAXWELEM in fcall(3). Despite this restriction, the system imposes no limit
 // on the number of elements in a file name, only the number that may be
 // transmitted in a single message."
-const MAXWELEM = 16
+//
+// Note: this implemention current ignores this
+
+const MAXWELEM = 16 // The 9p protocol's maximum number of elements a Walk request should have.
 
 func (r Twalk) fill(t Tag, fid, newfid Fid, wnames []string) {
 	size := uint32(msgOffset + 4 + 4 + 2 + 2*len(wnames))

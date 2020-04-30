@@ -96,7 +96,7 @@ func NewServer(fs FileSystem, errLogger, traceLogger Logger) *Server {
 		TraceLog: traceLogger,
 	}
 	return &Server{
-		Handler: &DefaultHandler{
+		Handler: &defaultHandler{
 			Fs:       fs,
 			Loggable: loggable,
 		},
@@ -181,7 +181,7 @@ func (s *Server) Serve(l net.Listener) error {
 				return ErrServerClosed
 			default:
 			}
-			if IsTemporaryErr(err) {
+			if isTemporaryErr(err) {
 				retries++
 				wait := time.Duration(math.Min(math.Pow(float64(10*time.Millisecond), float64(retries)), float64(maxWait)))
 				s.Tracef("accept error: %s; retrying in %v", err, wait)

@@ -1,3 +1,4 @@
+// Implements a 9p file system encrypts its data on another 9p file server
 package encryptfs
 
 import (
@@ -129,7 +130,7 @@ func (f *EncryptedFileSystem) CreateFile(ctx context.Context, path string, flag 
 	}
 	dataFile.Close()
 
-	commitHandle, err := OpenEncryptedFile(
+	commitHandle, err := openEncryptedFile(
 		ctx,
 		f.DecryptMount.FS,
 		tmpPath,
@@ -216,7 +217,7 @@ func (f *EncryptedFileSystem) OpenFile(ctx context.Context, path string, flag ni
 	tmpPath := filepath.Join(f.DecryptMount.Prefix, path)
 	dataPath := filepath.Join(f.DataMount.Prefix, path)
 
-	commitHandle, err := OpenEncryptedFile(
+	commitHandle, err := openEncryptedFile(
 		ctx,
 		f.DecryptMount.FS,
 		tmpPath,

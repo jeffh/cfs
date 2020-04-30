@@ -1,3 +1,7 @@
+// Implements a 9p file system that talks to Amazon's S3 Object Storage
+// Service.
+//
+// Also supports any S3-compatible service as well.
 package s3fs
 
 import (

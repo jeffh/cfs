@@ -65,25 +65,26 @@ type cltChResponse struct {
 	err error
 }
 
+// Represents the interaction interface for a client implementation of the 9p protocol
 type Client interface {
 	io.Closer
-	// Core Client Protocol
-	Clunk(f Fid) error
-	Create(f Fid, name string, perm Mode, mode OpenMode) (q Qid, iounit uint32, err error)
-	Open(f Fid, flag OpenMode) (q Qid, iounit uint32, err error)
-	Read(f Fid, p []byte, offset uint64) (int, error)
-	Remove(f Fid) error
-	Stat(f Fid) (Stat, error)
-	Walk(f, newF Fid, path []string) ([]Qid, error)
-	Write(f Fid, p []byte, offset uint64) (int, error)
-	WriteStat(f Fid, s Stat) error
+	// 9p Client Protocol
+	Clunk(f Fid) error                                                                     // close file
+	Create(f Fid, name string, perm Mode, mode OpenMode) (q Qid, iounit uint32, err error) // create file
+	Open(f Fid, flag OpenMode) (q Qid, iounit uint32, err error)                           // open file
+	Read(f Fid, p []byte, offset uint64) (int, error)                                      // read opened file or directory
+	Remove(f Fid) error                                                                    // delete file or directory, then clunk the fid
+	Stat(f Fid) (Stat, error)                                                              // file info of a file or directory
+	Walk(f, newF Fid, path []string) ([]Qid, error)                                        // traverse to a new file or directory
+	Write(f Fid, p []byte, offset uint64) (int, error)                                     // write to an opened file
+	WriteStat(f Fid, s Stat) error                                                         // update file info a file or directory
 
+	// Experimental: Implementation specific construction right now. Although may be better to unify
 	Fs() (*FileSystemProxy, error)
 
 	// Absent:
 	// Auth() - assumed the constructor will manage this
 	// Attach() - assumed the constructor will manage this
-	// Fs() - implementation specific construction right now. Although may be better to unify
 }
 
 /////////////////////////////////////////////////////////
@@ -103,13 +104,8 @@ type FileProxy struct {
 var _ FileHandle = (*FileProxy)(nil)
 var _ TraversableFile = (*FileProxy)(nil)
 
-func (f *FileProxy) Type() QidType     { return f.qid.Type() }
-func (f *FileProxy) IsDir() bool       { return f.qid.Type().IsDir() }
-func (f *FileProxy) IsSymLink() bool   { return f.qid.Type()&QT_SYMLINK != 0 }
-func (f *FileProxy) IsAuth() bool      { return f.qid.Type()&QT_AUTH != 0 }
-func (f *FileProxy) IsMount() bool     { return f.qid.Type()&QT_MOUNT != 0 }
-func (f *FileProxy) IsExclusive() bool { return f.qid.Type()&QT_EXCL != 0 }
-func (f *FileProxy) IsTemporary() bool { return f.qid.Type()&QT_TMP != 0 }
+// Returns the server's abbreviated metadata about the file or directory this file proxy represents.
+func (f *FileProxy) Type() QidType { return f.qid.Type() }
 
 // Returns a new FileProxy of the new path relative to this file. It is the
 // caller responsibility to Close() the returned file proxy.
@@ -176,15 +172,22 @@ func (f *FileProxy) WriteStat(st Stat) error {
 	return err
 }
 
-// Alias to Create() with M_DIR always set
+// Alias to Create() with M_DIR always set. Closes the file that is created
+// since it should be empty and writes are disallowed against directories.
 func (f *FileProxy) CreateDir(name string, mode Mode) (*FileProxy, error) {
-	return f.CreateFile(name, ORDWR, mode|M_DIR)
+	fp, err := f.CreateFile(name, ORDWR, mode|M_DIR)
+	if err == nil {
+		fp.Close()
+	}
+	return fp, err
 }
 
+// Creates a new subdirectory with the given file mode
 func (f *FileProxy) MakeDir(name string, mode Mode) (TraversableFile, error) {
 	return f.CreateDir(name, mode)
 }
 
+// Creates a new subdirectory or file. Returns that created file's FileProxy.
 func (f *FileProxy) CreateFile(name string, flag OpenMode, mode Mode) (*FileProxy, error) {
 	fs := f.fs
 	fid := fs.allocFid()
@@ -205,6 +208,7 @@ func (f *FileProxy) CreateFile(name string, flag OpenMode, mode Mode) (*FileProx
 	return h, err
 }
 
+// Creates a new file or directory underneath this currrent directory. Returns that created file's FileProxy.
 func (f *FileProxy) Create(name string, flag OpenMode, mode Mode) (TraversableFile, error) {
 	return f.CreateFile(name, flag, mode)
 }
@@ -226,6 +230,7 @@ func (f *FileProxy) Reader(start int64) io.Reader { return ReaderStartingAt(f, s
 // Produces a write that starts at given offset. Assumes you've called Create() or Open() with write first
 func (f *FileProxy) Writer(start int64) io.Writer { return WriterStartingAt(f, start) }
 
+// Reads an open file.
 func (f *FileProxy) ReadAt(p []byte, offset int64) (int, error) {
 	size, err := f.fs.c.Read(f.fid, p, uint64(offset))
 	if size == 0 && err == nil {
@@ -234,6 +239,7 @@ func (f *FileProxy) ReadAt(p []byte, offset int64) (int, error) {
 	return int(size), err
 }
 
+// Writes to an open file.
 func (f *FileProxy) WriteAt(p []byte, offset int64) (int, error) {
 	size, err := f.fs.c.Write(f.fid, p, uint64(offset))
 	return int(size), err
@@ -242,6 +248,7 @@ func (f *FileProxy) WriteAt(p []byte, offset int64) (int, error) {
 // Alias to f.WriteStat(SyncStat())
 func (f *FileProxy) Sync() error { return f.fs.c.WriteStat(f.fid, SyncStat()) }
 
+// Closes an open file
 func (f *FileProxy) Close() error {
 	err := f.fs.c.Clunk(f.fid)
 	f.fs.releaseFid(f.fid)
@@ -255,7 +262,7 @@ func (f *FileProxy) Delete() error {
 	return err
 }
 
-// Provides an iterator to list files in dir
+// List files in a directory
 func (f *FileProxy) ListDirStat() (StatIterator, error) {
 	itr := &fileSystemProxyIterator{fp: f}
 
@@ -273,6 +280,7 @@ func (f *FileProxy) ListDirStat() (StatIterator, error) {
 	}
 }
 
+// Lists files in a directory
 func (f *FileProxy) ListDir() (FileInfoIterator, error) {
 	return f.ListDirStat()
 }
@@ -300,6 +308,10 @@ type FileSystemProxyClient interface {
 	Tracef(format string, values ...interface{})
 }
 
+// A 9p client's representation a file on a remote FileSystem
+//
+// Using this can be more efficient that using paths all the time, otherwise
+// the client effectively cd-s to the given path each time which can be slower.
 type FileSystemProxy struct {
 	c     FileSystemProxyClient
 	rootF Fid
@@ -600,7 +612,7 @@ type TraversableFile interface {
 	ListDir() (FileInfoIterator, error)
 }
 
-// An inefficient, but flexible implementation of BasicTraversableFile
+// An inefficient, but flexible implementation of TraversableFile
 type BasicTraversableFile struct {
 	FS   FileSystem
 	Path string
@@ -610,6 +622,12 @@ type BasicTraversableFile struct {
 	FileHandle
 }
 
+var _ TraversableFile = (*BasicTraversableFile)(nil)
+
+// Returns a new TraversableFile from a given filesystem and path.
+//
+// This is an easy way to add TraversableFileSystem support to a FileSystem by
+// delegating to to this function.
 func BasicTraverse(fs FileSystem, path string) (TraversableFile, error) {
 	ctx := context.Background()
 	info, err := fs.Stat(ctx, path)
@@ -626,6 +644,8 @@ func BasicTraverse(fs FileSystem, path string) (TraversableFile, error) {
 	return f, nil
 }
 
+// Traverses down to a possible file or directory.
+// An error is returned if the file or directory does not exist.
 func (t *BasicTraversableFile) Traverse(path string) (TraversableFile, error) {
 	ctx := context.Background()
 	fpath := filepath.Join(t.Path, path)
@@ -645,24 +665,31 @@ func (t *BasicTraversableFile) Traverse(path string) (TraversableFile, error) {
 	return f, nil
 }
 
+// Returns server's metadata about this file or directory.
 func (t *BasicTraversableFile) Type() QidType {
 	if t.St == nil {
 		return 0
 	}
 	return t.St.Qid().Type()
 }
+
+// Returns os.FileInfo metadata about this file or directory
 func (t *BasicTraversableFile) FileInfo() (os.FileInfo, error) {
 	if t.Info == nil {
 		return nil, os.ErrNotExist
 	}
 	return t.Info, nil
 }
+
+// Returns Plan9 Stat metadata about this file or directory
 func (t *BasicTraversableFile) Stat() (Stat, error) {
 	if t.St == nil {
 		return nil, os.ErrNotExist
 	}
 	return t.St, nil
 }
+
+// Updates the server's file or directory metadata
 func (t *BasicTraversableFile) WriteStat(s Stat) error {
 	ctx := context.Background()
 	err := t.FS.WriteStat(ctx, t.Path, s)
@@ -677,6 +704,10 @@ func (t *BasicTraversableFile) WriteStat(s Stat) error {
 	t.St = StatFromFileInfo(info)
 	return nil
 }
+
+// Create a subdirectory under this directory.
+//
+// Calling this from a non-directory has undefined behavior.
 func (t *BasicTraversableFile) MakeDir(name string, mode Mode) (TraversableFile, error) {
 	ctx := context.Background()
 	fpath := filepath.Join(t.Path, name)
@@ -698,6 +729,10 @@ func (t *BasicTraversableFile) MakeDir(name string, mode Mode) (TraversableFile,
 	}
 	return f, nil
 }
+
+// Creates a file under this directory
+//
+// Calling this from a non-directory has undefined behavior
 func (t *BasicTraversableFile) Create(name string, flag OpenMode, mode Mode) (TraversableFile, error) {
 	ctx := context.Background()
 	fpath := filepath.Join(t.Path, name)
@@ -721,6 +756,10 @@ func (t *BasicTraversableFile) Create(name string, flag OpenMode, mode Mode) (Tr
 	}
 	return f, nil
 }
+
+// Opens this file for reading. Required for Reader(), Writer() methods.
+//
+// Calling this from a non-directory has undefined behavior
 func (t *BasicTraversableFile) Open(flag OpenMode) error {
 	ctx := context.Background()
 	h, err := t.FS.OpenFile(ctx, t.Path, flag)
@@ -742,8 +781,18 @@ func (t *BasicTraversableFile) Open(flag OpenMode) error {
 	t.FileHandle = h
 	return nil
 }
+
+// Returns a reader from the beginning of a file that's opened.
+// Open or Create must be called before calling this.
 func (t *BasicTraversableFile) Reader(start int64) io.Reader { return Reader(t.FileHandle) }
+
+// Returns a writer from the beginning of a file that's opened.
+// Open or Create must be called before calling this.
 func (t *BasicTraversableFile) Writer(start int64) io.Writer { return Writer(t.FileHandle) }
+
+// Deletes the current file or directory.
+//
+// Returns any error reported by the server.
 func (t *BasicTraversableFile) Delete() error {
 	ctx := context.Background()
 	err := t.FS.Delete(ctx, t.Path)
@@ -755,6 +804,9 @@ func (t *BasicTraversableFile) Delete() error {
 	return nil
 }
 
+// Lists files and directories under this current directory
+//
+// Calling this from a non-directory has undefined behavior
 func (t *BasicTraversableFile) ListDir() (FileInfoIterator, error) {
 	ctx := context.Background()
 	return t.FS.ListDir(ctx, t.Path)

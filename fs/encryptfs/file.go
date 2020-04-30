@@ -66,7 +66,7 @@ type commitHandle struct {
 
 var _ ninep.FileHandle = (*commitHandle)(nil)
 
-func OpenEncryptedFile(
+func openEncryptedFile(
 	ctx context.Context,
 	tmpFs ninep.FileSystem,
 	tmpPath string,

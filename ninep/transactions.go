@@ -67,7 +67,7 @@ func (t *srvTransaction) writeReply(wr io.Writer) error {
 	for len(b) > 0 {
 		n, err := wr.Write(b)
 		b = b[n:]
-		if IsTemporaryErr(err) {
+		if isTemporaryErr(err) {
 			continue
 		} else if err != nil {
 			return err
@@ -307,7 +307,7 @@ func (t *cltRequest) writeRequest(wr io.Writer) error {
 	for len(b) > 0 {
 		n, err := wr.Write(b)
 		b = b[n:]
-		if IsTemporaryErr(err) {
+		if isTemporaryErr(err) {
 			continue
 		} else if err != nil {
 			return err

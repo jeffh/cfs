@@ -9,25 +9,30 @@ import (
 	ninep "github.com/jeffh/cfs/ninep"
 )
 
+// Returns a trace file system the wraps a given file system.
+//
+// The trace file system simply logs all file system operations are logged to
+// the loggable.
+//
+// Supports also walkable file systems.
 func TraceFs(fs ninep.FileSystem, l ninep.Loggable) ninep.FileSystem {
 	if f, ok := fs.(ninep.WalkableFileSystem); ok {
-		return &WalkableTraceFileSystem{
-			TraceFileSystem{fs, l},
+		return &walkableTraceFileSystem{
+			traceFileSystem{fs, l},
 			f,
 		}
 	} else {
-		return &TraceFileSystem{fs, l}
+		return &traceFileSystem{fs, l}
 	}
 }
 
-// Loggable
-type TraceFileHandle struct {
+type traceFileHandle struct {
 	H    ninep.FileHandle
 	Path string
 	ninep.Loggable
 }
 
-func (h *TraceFileHandle) ReadAt(p []byte, offset int64) (int, error) {
+func (h *traceFileHandle) ReadAt(p []byte, offset int64) (int, error) {
 	n, err := h.H.ReadAt(p, offset)
 	if err != nil {
 		h.Tracef("File(%v).ReadAt(_, %v) => (%d, %s)", h.Path, offset, n, err)
@@ -38,7 +43,7 @@ func (h *TraceFileHandle) ReadAt(p []byte, offset int64) (int, error) {
 	return n, err
 }
 
-func (h *TraceFileHandle) WriteAt(p []byte, offset int64) (int, error) {
+func (h *traceFileHandle) WriteAt(p []byte, offset int64) (int, error) {
 	n, err := h.H.WriteAt(p, offset)
 	if err != nil {
 		h.Tracef("File(%v).WriteAt(len(%d), %v) => (%d, %s)", h.Path, len(p), offset, n, err)
@@ -49,7 +54,7 @@ func (h *TraceFileHandle) WriteAt(p []byte, offset int64) (int, error) {
 	return n, err
 }
 
-func (h *TraceFileHandle) Sync() error {
+func (h *traceFileHandle) Sync() error {
 	err := h.H.Sync()
 	if err != nil {
 		h.Tracef("File(%v).Sync() => %s", h.Path, err)
@@ -60,7 +65,7 @@ func (h *TraceFileHandle) Sync() error {
 	return err
 }
 
-func (h *TraceFileHandle) Close() error {
+func (h *traceFileHandle) Close() error {
 	err := h.H.Close()
 	if err != nil {
 		h.Tracef("File(%v).Close() => %s", h.Path, err)
@@ -73,12 +78,13 @@ func (h *TraceFileHandle) Close() error {
 
 ////////////////////
 
-type TraceFileSystem struct {
+// A file system that wraps another file system, logging all the operations it receives.
+type traceFileSystem struct {
 	Fs ninep.FileSystem
 	ninep.Loggable
 }
 
-func (f TraceFileSystem) MakeDir(ctx context.Context, path string, mode ninep.Mode) error {
+func (f traceFileSystem) MakeDir(ctx context.Context, path string, mode ninep.Mode) error {
 	err := f.Fs.MakeDir(ctx, path, mode)
 	f.Tracef("FS.MakeDir(%v, %s) => %s", path, mode, err)
 	if err != nil {
@@ -87,13 +93,13 @@ func (f TraceFileSystem) MakeDir(ctx context.Context, path string, mode ninep.Mo
 	return err
 }
 
-func (f TraceFileSystem) CreateFile(ctx context.Context, path string, flag ninep.OpenMode, mode ninep.Mode) (ninep.FileHandle, error) {
+func (f traceFileSystem) CreateFile(ctx context.Context, path string, flag ninep.OpenMode, mode ninep.Mode) (ninep.FileHandle, error) {
 	h, err := f.Fs.CreateFile(ctx, path, flag, mode)
 	f.Tracef("FS.CreateFile(%v, %s, %s) => (%v, %s)", path, flag, mode, h, err)
 	if err != nil || h == nil {
 		f.Errorf("FS.CreateFile(%v, %s, %s) => (%v, %s)", path, flag, mode, h, err)
 	}
-	h = &TraceFileHandle{
+	h = &traceFileHandle{
 		H:        h,
 		Path:     path,
 		Loggable: f.Loggable,
@@ -101,13 +107,13 @@ func (f TraceFileSystem) CreateFile(ctx context.Context, path string, flag ninep
 	return h, err
 }
 
-func (f TraceFileSystem) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (ninep.FileHandle, error) {
+func (f traceFileSystem) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (ninep.FileHandle, error) {
 	h, err := f.Fs.OpenFile(ctx, path, flag)
 	f.Tracef("FS.OpenFile(%v, %s) => (%v, %s)", path, flag, h, err)
 	if err != nil || h == nil {
 		f.Errorf("FS.OpenFile(%v, %s) => (%v, %s)", path, flag, h, err)
 	}
-	h = &TraceFileHandle{
+	h = &traceFileHandle{
 		H:        h,
 		Path:     path,
 		Loggable: f.Loggable,
@@ -115,7 +121,7 @@ func (f TraceFileSystem) OpenFile(ctx context.Context, path string, flag ninep.O
 	return h, err
 }
 
-func (f TraceFileSystem) ListDir(ctx context.Context, path string) (ninep.FileInfoIterator, error) {
+func (f traceFileSystem) ListDir(ctx context.Context, path string) (ninep.FileInfoIterator, error) {
 	itr, err := f.Fs.ListDir(ctx, path)
 	var v []os.FileInfo
 	if itr != nil {
@@ -141,7 +147,7 @@ func (f TraceFileSystem) ListDir(ctx context.Context, path string) (ninep.FileIn
 	return itr, err
 }
 
-func (f TraceFileSystem) Stat(ctx context.Context, path string) (os.FileInfo, error) {
+func (f traceFileSystem) Stat(ctx context.Context, path string) (os.FileInfo, error) {
 	info, err := f.Fs.Stat(ctx, path)
 	if info != nil {
 		f.Tracef("FS.Stat(%v) => (os.FileInfo{name: %#v, size: %d...}, %s)", path, info.Name(), info.Size(), err)
@@ -154,7 +160,7 @@ func (f TraceFileSystem) Stat(ctx context.Context, path string) (os.FileInfo, er
 	return info, err
 }
 
-func (f TraceFileSystem) WriteStat(ctx context.Context, path string, s ninep.Stat) error {
+func (f traceFileSystem) WriteStat(ctx context.Context, path string, s ninep.Stat) error {
 	f.Tracef("FS.WriteStat(%v, %s)", path, s)
 	err := f.Fs.WriteStat(ctx, path, s)
 	if err != nil {
@@ -163,7 +169,7 @@ func (f TraceFileSystem) WriteStat(ctx context.Context, path string, s ninep.Sta
 	return err
 }
 
-func (f TraceFileSystem) Delete(ctx context.Context, path string) error {
+func (f traceFileSystem) Delete(ctx context.Context, path string) error {
 	f.Tracef("FS.Delete(%v)", path)
 	err := f.Fs.Delete(ctx, path)
 	if err != nil {
@@ -172,7 +178,7 @@ func (f TraceFileSystem) Delete(ctx context.Context, path string) error {
 	return err
 }
 
-func (f TraceFileSystem) DeleteWithMode(ctx context.Context, path string, mode ninep.Mode) error {
+func (f traceFileSystem) DeleteWithMode(ctx context.Context, path string, mode ninep.Mode) error {
 	if fs, ok := f.Fs.(ninep.DeleteWithModeFileSystem); ok {
 		f.Tracef("FS.DeleteWithMode(%v, %s)", path, mode)
 		err := fs.DeleteWithMode(ctx, path, mode)
@@ -187,18 +193,18 @@ func (f TraceFileSystem) DeleteWithMode(ctx context.Context, path string, mode n
 
 ////////////////////
 
-type WalkableTraceFileSystem struct {
-	TraceFileSystem
+type walkableTraceFileSystem struct {
+	traceFileSystem
 	Wfs ninep.WalkableFileSystem
 }
 
-var _ ninep.WalkableFileSystem = (*WalkableTraceFileSystem)(nil)
+var _ ninep.WalkableFileSystem = (*walkableTraceFileSystem)(nil)
 
-func (f *WalkableTraceFileSystem) Walk(ctx context.Context, parts []string) ([]os.FileInfo, error) {
-	f.TraceFileSystem.Tracef("FS.Walk(%v)", parts)
+func (f *walkableTraceFileSystem) Walk(ctx context.Context, parts []string) ([]os.FileInfo, error) {
+	f.traceFileSystem.Tracef("FS.Walk(%v)", parts)
 	infos, err := f.Wfs.Walk(ctx, parts)
 	if err != nil {
-		f.TraceFileSystem.Errorf("FS.Walk(%v) => %s", parts, err)
+		f.traceFileSystem.Errorf("FS.Walk(%v) => %s", parts, err)
 	}
 	return infos, err
 }

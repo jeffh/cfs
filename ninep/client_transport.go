@@ -369,7 +369,7 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 	})
 	for {
 		msg, err := txn.sendAndReceive(t.rwc)
-		if IsTemporaryErr(err) {
+		if isTemporaryErr(err) {
 			continue
 		}
 
@@ -472,7 +472,7 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 			return msg, nil
 		}
 
-		if IsClosedSocket(err) || IsTimeoutErr(err) {
+		if isClosedSocket(err) || isTimeoutErr(err) {
 			txn = txn.clone()
 			err = t.rwc.Close()
 			if err != nil {

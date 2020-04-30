@@ -1,3 +1,4 @@
+// Implements a 9p file server that behaves similar to /proc on some unix systems
 package procfs
 
 import (

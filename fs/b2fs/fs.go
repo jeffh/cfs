@@ -1,3 +1,5 @@
+// Implements a 9p file system that talks to Backblaze's B2 Object Storage
+// Service
 package b2fs
 
 import (

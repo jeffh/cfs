@@ -1,3 +1,4 @@
+// Implements a 9p file system that talks to a given server via SFTP
 package sftpfs
 
 import (
