@@ -35,7 +35,7 @@ func LinuxContainerExec(c *Cmd) error {
 		flags |= syscall.CLONE_NEWUSER
 	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Cloneflags: flags,
+		Cloneflags: uintptr(flags),
 	}
 
 	err := cmd.Run()
@@ -72,6 +72,6 @@ func LinuxContainerHandleContainerExec() {
 		cmd.Stderr = os.Stderr
 
 		must(cmd.Run(), 1)
-		os.Exit(cmd.ExitCode())
+		os.Exit(cmd.ProcessState.ExitCode())
 	}
 }
