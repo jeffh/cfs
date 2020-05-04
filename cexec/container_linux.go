@@ -12,26 +12,26 @@ import (
 func LinuxContainerExec(c *Cmd) error {
 	cmd := makeCmd(&Cmd{
 		Cmd:  "/proc/self/exe",
-		Args: append([]string{"cfs-container-exec"}, c.Cmd, c.Args...),
+		Args: append(append([]string{"cfs-container-exec"}, c.Cmd), c.Args...),
 	})
 
 	flags := syscall.CLONE_NEWNS
-	if cmd.Root != "" {
+	if c.Root != "" {
 		flags |= syscall.CLONE_NEWNS
 	}
-	if cmd.IsolatePids {
+	if c.IsolatePids {
 		flags |= syscall.CLONE_NEWPID
 	}
-	if cmd.IsolateHostAndDomain {
+	if c.IsolateHostAndDomain {
 		flags |= syscall.CLONE_NEWUTS
 	}
-	if cmd.IsolateIPC {
+	if c.IsolateIPC {
 		flags |= syscall.CLONE_NEWIPC
 	}
-	if cmd.IsolateNetwork {
+	if c.IsolateNetwork {
 		flags |= syscall.CLONE_NEWNET
 	}
-	if cmd.IsolateUsers {
+	if c.IsolateUsers {
 		flags |= syscall.CLONE_NEWUSER
 	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{
