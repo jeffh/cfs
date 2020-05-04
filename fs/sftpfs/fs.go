@@ -3,7 +3,9 @@ package sftpfs
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"time"
 
@@ -19,6 +21,30 @@ type sftpFs struct {
 }
 
 var _ ninep.FileSystem = (*sftpFs)(nil)
+
+func DefaultSSHConfig(sshUser, sshKeyPath string) (*ssh.ClientConfig, error) {
+	username := sshUser
+	if username == "" {
+		user, err := user.Current()
+		if err != nil {
+			return nil, fmt.Errorf("Failed to determine current user: %w", err)
+		}
+		username = user.Username
+	}
+
+	sshConfig := &ssh.ClientConfig{
+		User: username,
+		Auth: removeNils([]ssh.AuthMethod{
+			SSHAgent(),
+			publicKeyFile(sshKeyPath),
+			// publicKeyFile("~/.ssh/id_ed25519"),
+			// publicKeyFile("~/.ssh/id_rsa"),
+			// publicKeyFile("~/.ssh/id_dsa"),
+		}),
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // TODO: read local hosts file
+	}
+	return sshConfig, nil
+}
 
 func New(conn *ssh.Client, prefix string) (ninep.FileSystem, error) {
 	sftpConn, err := sftp.NewClient(conn)

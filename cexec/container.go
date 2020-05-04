@@ -1,0 +1,41 @@
+package cexec
+
+import (
+	"syscall"
+)
+
+type linuxContainerExecutor struct{}
+
+func (e *linuxContainerExecutor) Run(c *Cmd) error {
+	return LinuxContainerExec(c)
+}
+
+////////////////////////////////////////////////////////
+
+// Runs exec, but chroots to Dir
+// Supports Cmd.Root
+func ChrootExec(c *Cmd) error {
+	cmd := makeCmd(c)
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Chroot: c.Root,
+	}
+
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+
+	c.State = &ProcessState{
+		Pid:      cmd.ProcessState.Pid(),
+		ExitCode: cmd.ProcessState.ExitCode(),
+		Exited:   cmd.ProcessState.Exited(),
+	}
+
+	return nil
+}
+
+// Implements a simple fork-exec
+type chrootExecutor struct{}
+
+func (e *chrootExecutor) Run(c *Cmd) error {
+	return ChrootExec(c)
+}
