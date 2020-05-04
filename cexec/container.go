@@ -20,17 +20,17 @@ func ChrootExec(c *Cmd) error {
 		Chroot: c.Root,
 	}
 
-	if err := cmd.Run(); err != nil {
-		return err
+	err := cmd.Run()
+
+	if cmd.ProcessState != nil {
+		c.State = &ProcessState{
+			Pid:      cmd.ProcessState.Pid(),
+			ExitCode: cmd.ProcessState.ExitCode(),
+			Exited:   cmd.ProcessState.Exited(),
+		}
 	}
 
-	c.State = &ProcessState{
-		Pid:      cmd.ProcessState.Pid(),
-		ExitCode: cmd.ProcessState.ExitCode(),
-		Exited:   cmd.ProcessState.Exited(),
-	}
-
-	return nil
+	return err
 }
 
 // Implements a simple fork-exec

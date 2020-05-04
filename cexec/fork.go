@@ -17,17 +17,17 @@ func makeCmd(c *Cmd) *exec.Cmd {
 // Traditional Unix exec of a command
 func ForkExec(c *Cmd) error {
 	cmd := makeCmd(c)
-	if err := cmd.Run(); err != nil {
-		return err
+	err := cmd.Run()
+
+	if cmd.ProcessState != nil {
+		c.State = &ProcessState{
+			Pid:      cmd.ProcessState.Pid(),
+			ExitCode: cmd.ProcessState.ExitCode(),
+			Exited:   cmd.ProcessState.Exited(),
+		}
 	}
 
-	c.State = &ProcessState{
-		Pid:      cmd.ProcessState.Pid(),
-		ExitCode: cmd.ProcessState.ExitCode(),
-		Exited:   cmd.ProcessState.Exited(),
-	}
-
-	return nil
+	return err
 }
 
 // Implements a simple fork-exec

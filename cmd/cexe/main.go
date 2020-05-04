@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/gob"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -9,6 +10,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/jeffh/cfs/cexec"
@@ -23,6 +26,8 @@ const (
 	methodContainerExec = "container"
 )
 
+const TERM_BYTE = byte(0)
+
 var (
 	addr    string
 	sshAddr string
@@ -30,7 +35,6 @@ var (
 	sshKey  string
 	method  string
 	mode    string
-	srv     bool
 
 	uploads stringList
 	env     stringList
@@ -39,6 +43,8 @@ var (
 
 	progname string
 	progargs []string
+
+	exitCode int
 )
 
 func main() {
@@ -51,8 +57,7 @@ func main() {
 	flag.StringVar(&sshKey, "ssh-key", "", "The SSH Private Key")
 	flag.StringVar(&root, "root", "", "The root dir of the process. This is dependent on the method to utilize.")
 	flag.StringVar(&method, "method", "", "The strategy to execute")
-	flag.StringVar(&mode, "mode", "run", "How this binary operates, can be 'run' to indicate executing programs, 'srv' for receiving programs to run, or 'fork' to execute the program in question")
-	flag.BoolVar(&srv, "srv", false, "Run as a server to receive requests. Default mode listens on 'localhost:6667' since it's expected to use ssh tunneling to connect.")
+	flag.StringVar(&mode, "mode", "run", "How this binary operates, can be 'run' to indicate executing programs, 'server' for receiving programs to run, or 'client' to execute the program in question")
 	flag.Var(&uploads, "upload", "Uploads file to remote system, can be used multiple times.")
 	flag.Var(&env, "e", "Set an environment var to be used for the program. In form 'NAME=VALUE'. Can be used multiple times.")
 
@@ -78,58 +83,46 @@ func main() {
 
 	flag.Parse()
 
+	exitCode = -1
+	defer func() {
+		if exitCode > -1 {
+			os.Exit(exitCode)
+		}
+	}()
+
+	if addr == "" {
+		addr = "localhost:6667"
+	}
+
 	switch mode {
 	case "run":
 		runRemoteProgram()
+	case "client":
+		runRequest()
+	case "server":
+		runServer()
 	default:
 		log.Fatalf("Unsupported mode: %s\n", mode)
 	}
 }
 
-func runRemoteProgram() {
+func exit(code int) {
+	exitCode = code
+	runtime.Goexit()
+}
+
+func runRequest() {
 	if flag.NArg() < 1 {
 		flag.Usage()
-		os.Exit(1)
-	}
-
-	method = strings.ToLower(method)
-	if method == "" {
-		method = methodForkExec
-	}
-
-	var executor cexec.Executor
-	switch method {
-	case methodForkExec:
-		executor = cexec.ForkExecutor()
-	case methodChrootExec:
-		executor = cexec.ChrootExecutor()
-	case methodContainerExec:
-		executor = cexec.LinuxContainerExecutor()
+		exit(1)
 	}
 
 	progname = flag.Arg(0)
 	progargs = flag.Args()[1:]
 
-	if srv {
-		if addr == "" {
-			addr = "localhost:6667"
-		}
-
-		ln, err := net.Listen("tcp", addr)
-		if err != nil {
-			log.Fatalf("error: %s\n", err)
-		}
-		defer ln.Close()
-
-		for {
-			conn, err := ln.Accept()
-			if err != nil {
-				log.Printf("Failed to accept connection: %s\n", err)
-			}
-
-			go handleConnection(conn, executor)
-		}
-	} else if sshAddr != "" {
+	var con net.Conn
+	var err error
+	if sshAddr != "" {
 		sshCfg, err := sftpfs.DefaultSSHConfig(sshUser, sshKey)
 		if err != nil {
 			log.Fatalf("error: %s\n", err)
@@ -140,14 +133,14 @@ func runRemoteProgram() {
 
 		// log.Printf("Connecting to %s@%s\n", sshCfg.User, sshAddr)
 
-		conn, err := ssh.Dial("tcp", sshAddr, sshCfg)
+		sshClient, err := ssh.Dial("tcp", sshAddr, sshCfg)
 		if err != nil {
 			log.Fatalf("Failed to open ssh connection: %s\n", err)
 		}
 
 		if len(uploads) > 0 {
 			// Upload bootstrap executable
-			sftpConn, err := sftp.NewClient(conn)
+			sftpConn, err := sftp.NewClient(sshClient)
 			if err != nil {
 				log.Fatalf("Failed to upload file: %s\n", err)
 			}
@@ -181,7 +174,207 @@ func runRemoteProgram() {
 			}()
 		}
 
-		sess, err := conn.NewSession()
+		sess, err := sshClient.NewSession()
+		if err != nil {
+			log.Fatalf("Failed to connect to remote: %s\n", err)
+		}
+
+		defer sess.Close()
+
+		for _, stmt := range env {
+			i := strings.Index(stmt, "=")
+
+			var err error
+			if i == -1 {
+				err = sess.Setenv(stmt[:i], stmt[i+1:])
+			} else {
+				err = sess.Setenv(stmt, os.Getenv(stmt))
+			}
+
+			if err != nil {
+				log.Fatalf("Failed setting up env vars: %s\n", err)
+			}
+		}
+
+		command := make([]string, 0, len(progargs)+1)
+		command = append(command, fmt.Sprintf("%#v", progname))
+		for _, arg := range progargs {
+			command = append(command, fmt.Sprintf("%#v", arg))
+		}
+
+		con, err = sshClient.Dial("tcp", addr)
+		if err != nil {
+			log.Fatalf("Failed to connect to server: %s: %s", addr, err)
+		}
+	} else {
+		con, err = net.Dial("tcp", addr)
+		if err != nil {
+			log.Fatalf("Failed to connect to server: %s: %s", addr, err)
+		}
+	}
+	defer con.Close()
+
+	e := gob.NewEncoder(con)
+	req := ReqCmd{
+		Cmd:  progname,
+		Args: progargs,
+		Env:  env,
+	}
+	err = e.Encode(&req)
+	if err != nil {
+		log.Fatalf("Failed to encode request: %s: %s", addr, err)
+	}
+
+	// copy to os.Stdout up to TERM_BYTE, then read the last part as an exit code
+	var buf [4096]byte
+	nullByteOffset := -2
+	for {
+		n, err := con.Read(buf[:])
+		if n > 0 {
+			for i, b := range buf[:n] {
+				if b == TERM_BYTE {
+					os.Stdout.Write(buf[:i])
+					nullByteOffset = i
+					break
+				}
+			}
+
+			switch {
+			case nullByteOffset == -2:
+				os.Stdout.Write(buf[:n])
+			case nullByteOffset == -1:
+				exitCode, err = strconv.Atoi(string(buf[:n]))
+				if err != nil {
+					log.Fatalf("Failed to read exit code: %s", err)
+				}
+			case nullByteOffset == len(buf):
+				nullByteOffset = -1
+			default:
+				exitCode, err = strconv.Atoi(string(buf[nullByteOffset+1 : n]))
+				if err != nil {
+					log.Fatalf("Failed to read exit code: %s", err)
+				}
+			}
+		}
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			log.Fatalf("Failed to read result: %s", err)
+		}
+	}
+}
+
+func runServer() {
+	method = strings.ToLower(method)
+	if method == "" {
+		method = methodForkExec
+	}
+
+	var executor cexec.Executor
+	switch method {
+	case methodForkExec:
+		executor = cexec.ForkExecutor()
+	case methodChrootExec:
+		executor = cexec.ChrootExecutor()
+	case methodContainerExec:
+		executor = cexec.LinuxContainerExecutor()
+	}
+
+	log.Printf("Listening on %s\n", addr)
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatalf("error: %s\n", err)
+	}
+	defer ln.Close()
+
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			log.Printf("Failed to accept connection: %s\n", err)
+		}
+
+		go handleConnection(conn, executor)
+	}
+}
+
+func runRemoteProgram() {
+	if flag.NArg() < 1 {
+		flag.Usage()
+		exit(1)
+	}
+
+	method = strings.ToLower(method)
+	if method == "" {
+		method = methodForkExec
+	}
+
+	var executor cexec.Executor
+	switch method {
+	case methodForkExec:
+		executor = cexec.ForkExecutor()
+	case methodChrootExec:
+		executor = cexec.ChrootExecutor()
+	case methodContainerExec:
+		executor = cexec.LinuxContainerExecutor()
+	}
+
+	progname = flag.Arg(0)
+	progargs = flag.Args()[1:]
+
+	if sshAddr != "" {
+		sshCfg, err := sftpfs.DefaultSSHConfig(sshUser, sshKey)
+		if err != nil {
+			log.Fatalf("error: %s\n", err)
+		}
+		if strings.Index(sshAddr, ":") == -1 {
+			sshAddr += ":22"
+		}
+
+		// log.Printf("Connecting to %s@%s\n", sshCfg.User, sshAddr)
+
+		sshClient, err := ssh.Dial("tcp", sshAddr, sshCfg)
+		if err != nil {
+			log.Fatalf("Failed to open ssh connection: %s\n", err)
+		}
+
+		if len(uploads) > 0 {
+			// Upload bootstrap executable
+			sftpConn, err := sftp.NewClient(sshClient)
+			if err != nil {
+				log.Fatalf("Failed to upload file: %s\n", err)
+			}
+			defer sftpConn.Close()
+			for _, upload := range uploads {
+				out, err := os.Open(upload)
+				if err != nil {
+					log.Fatalf("Failed to read executable: %s: %s\n", upload, err)
+				}
+				name := filepath.Base(upload)
+				in, err := sftpConn.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
+				if err != nil {
+					out.Close()
+					log.Fatalf("Failed to upload executable: %s\n", err)
+				}
+				_, err = io.Copy(in, out)
+				out.Close()
+				in.Close()
+				if err != nil {
+					log.Fatalf("Failed to upload executable: %s\n", err)
+				}
+			}
+
+			defer func() {
+				for _, upload := range uploads {
+					name := filepath.Base(upload)
+					if name != "" {
+						sftpConn.Remove(name)
+					}
+				}
+			}()
+		}
+
+		sess, err := sshClient.NewSession()
 		if err != nil {
 			log.Fatalf("Failed to connect to remote: %s\n", err)
 		}
@@ -226,32 +419,51 @@ func runRemoteProgram() {
 		}
 		if err := executor.Run(&cmd); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %s", err)
-			os.Exit(1)
+			exit(1)
 		}
+		exit(cmd.State.ExitCode)
 	}
 }
 
 func handleConnection(rwc net.Conn, executor cexec.Executor) {
 	defer rwc.Close()
 
-	var cmd cexec.Cmd
+	var req ReqCmd
 	d := gob.NewDecoder(rwc)
 
-	err := d.Decode(&cmd)
+	err := d.Decode(&req)
 	if err != nil {
 		log.Printf("error for %s: %s\n", rwc.RemoteAddr(), err)
 		rwc.Write([]byte(fmt.Sprintf("error: %s", err)))
 		return
 	}
 
-	cmd.Stdin = rwc
-	cmd.Stdout = rwc
-	cmd.Stderr = rwc
+	cmd := cexec.Cmd{
+		Cmd:  req.Cmd,
+		Args: req.Args,
+		Env:  req.Env,
+		Dir:  req.Dir,
+
+		Root:                 req.Root,
+		IsolateHostAndDomain: req.IsolateHostAndDomain,
+		IsolatePids:          req.IsolatePids,
+		IsolateIPC:           req.IsolateIPC,
+		IsolateNetwork:       req.IsolateNetwork,
+		IsolateUsers:         req.IsolateUsers,
+
+		// Stdin:  rwc,
+		Stdout: rwc,
+		Stderr: rwc,
+	}
+
+	log.Printf("%s run: %s %s\n", rwc.RemoteAddr(), cmd.Cmd, strings.Join(cmd.Args, " "))
 
 	if err := executor.Run(&cmd); err != nil {
-		log.Printf("error for %s: %s", rwc.RemoteAddr(), err)
-		rwc.Write([]byte(fmt.Sprintf("error: %s", err)))
-		return
+		if cmd.State == nil || cmd.State.ExitCode == 0 {
+			log.Printf("error for %s: %s", rwc.RemoteAddr(), err)
+			rwc.Write([]byte(fmt.Sprintf("error: %s", err)))
+			return
+		}
 	}
 
 	if cmd.State == nil {
@@ -259,7 +471,13 @@ func handleConnection(rwc net.Conn, executor cexec.Executor) {
 		rwc.Write([]byte("Internal executor error"))
 		return
 	}
-	_, err = rwc.Write([]byte(fmt.Sprintf("\n\nExited: %v", cmd.State.ExitCode)))
+	_, err = rwc.Write([]byte{TERM_BYTE})
+	if err != nil {
+		log.Printf("error for %s: %s", rwc.RemoteAddr(), err)
+		rwc.Write([]byte(fmt.Sprintf("error: %s", err)))
+		return
+	}
+	_, err = rwc.Write([]byte(fmt.Sprintf("%v", cmd.State.ExitCode)))
 	if err != nil {
 		log.Printf("error for %s: %s", rwc.RemoteAddr(), err)
 		rwc.Write([]byte(fmt.Sprintf("error: %s", err)))
@@ -268,13 +486,10 @@ func handleConnection(rwc net.Conn, executor cexec.Executor) {
 }
 
 type ReqCmd struct {
-	Cmd    string
-	Args   []string
-	Env    []string
-	Dir    string
-	Stdin  string
-	Stdout string
-	Stderr string
+	Cmd  string
+	Args []string
+	Env  []string
+	Dir  string
 
 	Root                 string
 	IsolateHostAndDomain bool

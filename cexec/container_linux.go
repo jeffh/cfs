@@ -38,17 +38,17 @@ func LinuxContainerExec(c *Cmd) error {
 		Cloneflags: flags,
 	}
 
-	if err := cmd.Run(); err != nil {
-		return err
+	err := cmd.Run()
+
+	if cmd.ProcessState != nil {
+		c.State = &ProcessState{
+			Pid:      cmd.ProcessState.Pid(),
+			ExitCode: cmd.ProcessState.ExitCode(),
+			Exited:   cmd.ProcessState.Exited(),
+		}
 	}
 
-	c.State = &ProcessState{
-		Pid:      cmd.ProcessState.Pid(),
-		ExitCode: cmd.ProcessState.ExitCode(),
-		Exited:   cmd.ProcessState.Exited(),
-	}
-
-	return nil
+	return err
 }
 
 func LinuxContainerHandleContainerExec() {
