@@ -30,6 +30,7 @@ servers.
  - **crm** a client that removes a file or directory (akin to *rm*)
  - **ctee** a client that writes to a file (akin to *tee*)
  - **ctouch** a client that creates to a file (akin to *touch*)
+ - **cexe** a client that executes remote commands via ssh (akin to *cpu*)
 
 ## Proxies
 
