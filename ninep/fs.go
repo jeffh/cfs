@@ -158,7 +158,7 @@ func FileInfoSliceFromIterator(itr FileInfoIterator, max int) ([]os.FileInfo, er
 type FileSystem interface {
 	// Creates a directory. Implementations can reject if parent directories are missing
 	MakeDir(ctx context.Context, path string, mode Mode) error
-	// Creates a file and opens it for readng/writing
+	// Creates a file and opens it for reading/writing
 	CreateFile(ctx context.Context, path string, flag OpenMode, mode Mode) (FileHandle, error)
 	// Opens an existing file for reading/writing
 	OpenFile(ctx context.Context, path string, flag OpenMode) (FileHandle, error)
