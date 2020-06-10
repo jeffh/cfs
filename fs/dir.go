@@ -25,7 +25,7 @@ var _ ninep.FileSystem = Dir("")
 // MakeDir creates a local directory as subdirectory of the root directory of Dir
 func (d Dir) MakeDir(ctx context.Context, path string, mode ninep.Mode) error {
 	fullPath := filepath.Join(string(d), path)
-	return os.Mkdir(fullPath, mode.ToOsMode()&os.ModePerm)
+	return os.MkdirAll(fullPath, mode.ToOsMode()&os.ModePerm)
 }
 
 // CreateFile creates a new file as a descendent of the root directory of Dir
