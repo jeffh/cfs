@@ -2,6 +2,7 @@ package ninep
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -834,4 +835,15 @@ func WalkPassthrough(root Node, path []string) ([]Node, error) {
 		history = append(history, moreNodes...)
 	}
 	return history, nil
+}
+
+func MakeDirAll(ctx context.Context, fs FileSystem, path string, mode Mode) error {
+	parts := PathSplit(path)
+	for i := range parts {
+		subpath := strings.Join(parts, "/")
+		if err := fs.MakeDir(ctx, subpath, mode); err != nil && !errors.Is(err, os.ErrExist) {
+			return err
+		}
+	}
+	return nil
 }
