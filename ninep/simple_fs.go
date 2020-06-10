@@ -845,5 +845,8 @@ func MakeDirAll(ctx context.Context, fs FileSystem, path string, mode Mode) erro
 			return err
 		}
 	}
+	if err := fs.MakeDir(ctx, path, mode); err != nil && !errors.Is(err, os.ErrExist) {
+		return err
+	}
 	return nil
 }

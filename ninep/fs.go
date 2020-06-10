@@ -116,6 +116,7 @@ func (itr *fileInfoSliceIterator) NextFileInfo() (os.FileInfo, error) {
 }
 
 // Consumes an iterator to produce a slice of os.FileInfos
+// max < 0 means to fetch all items
 func FileInfoSliceFromIterator(itr FileInfoIterator, max int) ([]os.FileInfo, error) {
 	if itr == nil {
 		return nil, ErrMissingIterator
