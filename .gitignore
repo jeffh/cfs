@@ -3,3 +3,5 @@ bin
 tags
 result
 private.key
+*.out
+profile*
