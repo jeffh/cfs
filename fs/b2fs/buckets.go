@@ -27,6 +27,7 @@ type buckets struct {
 
 	m       sync.Mutex
 	cache   []*b2.Bucket // mutation of slice is not allowed
+	nodes   []ninep.Node
 	expires time.Time
 }
 
@@ -45,7 +46,8 @@ func (b *buckets) getBuckets(ignoreCache bool) ([]*b2.Bucket, error) {
 		if err == nil {
 			b.cache = bkts
 		}
-		b.expires = now.Add(15 * time.Minute)
+		b.nodes = nil
+		b.expires = now.Add(b.b2c.Expiration)
 	}
 	b.m.Unlock()
 	return b.cache, err
@@ -86,17 +88,27 @@ func (b *buckets) List() (ninep.NodeIterator, error) {
 	if err != nil {
 		return nil, err
 	}
-	now := time.Now()
-	nodes := make([]ninep.Node, 0, len(buckets))
-	for _, bucket := range buckets {
-		if bucket != nil {
-			nodes = append(nodes, &bucketNode{
-				b2c:        b.b2c,
-				bucketName: bucket.Name(),
-				bucket:     bucket,
-				now:        now,
-			})
+	b.m.Lock()
+	defer b.m.Unlock()
+	var nodes []ninep.Node
+	if b.nodes == nil {
+		now := time.Now()
+		nodes = make([]ninep.Node, 0, len(buckets))
+		for _, bucket := range buckets {
+			if bucket != nil {
+				nodes = append(nodes, &bucketNode{
+					b2c:        b.b2c,
+					bucketName: bucket.Name(),
+					bucket:     bucket,
+					now:        now,
+				})
+			}
 		}
+		if b.b2c.CacheMeta {
+			b.nodes = nodes
+		}
+	} else {
+		nodes = b.nodes
 	}
 	return ninep.MakeNodeSliceIterator(nodes), nil
 }
@@ -130,6 +142,9 @@ type bucketNode struct {
 	// optional
 	bucket *b2.Bucket
 	now    time.Time
+
+	// internal
+	nodes []ninep.Node
 }
 
 func (b *bucketNode) Info() (os.FileInfo, error) {
@@ -172,92 +187,100 @@ func parseBucketType(s string) b2.BucketType {
 }
 
 func (b *bucketNode) List() (ninep.NodeIterator, error) {
-	nodes := []ninep.Node{
-		ninep.StaticDir(
-			"objects",
-			objectsForBucket(b.b2c, "data", b.bucket, opData, b.now),
-			objectsForBucket(b.b2c, "metadata", b.bucket, opMetadata, b.now),
-			objectsForBucket(b.b2c, "presigned-download-urls", b.bucket, opPresignedDownloadUrl, b.now),
-		),
-		// doesn't seem to work
-		// objectsForBucket(b.b2c, "versions", b.bucket, opVersions, b.now),
-		// objectsForBucket(b.b2c, "unfinished-uploads", b.bucket, opUnfinishedUploads, b.now),
-		// TODO: /metadata
-		ninep.CtlFile("metadata", 755, b.now, func(m ninep.OpenMode, r io.Reader, w io.Writer) {
-			ctx := context.Background()
+	var nodes []ninep.Node
+	if b.nodes == nil {
+		nodes = []ninep.Node{
+			ninep.StaticDir(
+				"objects",
+				objectsForBucket(b.b2c, "data", b.bucket, opData, b.now),
+				objectsForBucket(b.b2c, "metadata", b.bucket, opMetadata, b.now),
+				objectsForBucket(b.b2c, "presigned-download-urls", b.bucket, opPresignedDownloadUrl, b.now),
+			),
+			// doesn't seem to work
+			// objectsForBucket(b.b2c, "versions", b.bucket, opVersions, b.now),
+			// objectsForBucket(b.b2c, "unfinished-uploads", b.bucket, opUnfinishedUploads, b.now),
+			// TODO: /metadata
+			ninep.CtlFile("metadata", 755, b.now, func(m ninep.OpenMode, r io.Reader, w io.Writer) {
+				ctx := context.Background()
 
-			read := func(ctx context.Context, b *b2.Bucket, w io.Writer) {
-				attrs, err := b.Attrs(ctx)
-				if err != nil {
-					fmt.Fprintf(w, "%s\n", ninep.KeyPair("error", err.Error()))
-				} else {
-					kp := [][2]string{{"type", bucketTypeString(attrs.Type)}}
-					for k, v := range attrs.Info {
-						kp = append(kp, [2]string{fmt.Sprintf("info-%s", k), v})
-					}
-					kp = append(kp, [2]string{"lifecycle-count", strconv.Itoa(len(attrs.LifecycleRules))})
-					for _, rule := range attrs.LifecycleRules {
-						kp = append(kp, [2]string{"lifecycle-prefix", rule.Prefix})
-						kp = append(kp, [2]string{"lifecycle-days-new-until-hidden", strconv.Itoa(rule.DaysNewUntilHidden)})
-						kp = append(kp, [2]string{"lifecycle-days-new-until-hidden", strconv.Itoa(rule.DaysHiddenUntilDeleted)})
-					}
-					fmt.Fprintf(w, "%s\n", ninep.KeyPairs(kp))
-				}
-			}
-
-			if m.IsWriteable() {
-				const maxLineSize = 8192
-				ninep.ProcessKeyValuesLineLoop(r, maxLineSize, func(k ninep.KVMap, err error) bool {
-					fmt.Printf("err: %s\n", err)
+				read := func(ctx context.Context, b *b2.Bucket, w io.Writer) {
+					attrs, err := b.Attrs(ctx)
 					if err != nil {
 						fmt.Fprintf(w, "%s\n", ninep.KeyPair("error", err.Error()))
-						return false
+					} else {
+						kp := [][2]string{{"type", bucketTypeString(attrs.Type)}}
+						for k, v := range attrs.Info {
+							kp = append(kp, [2]string{fmt.Sprintf("info-%s", k), v})
+						}
+						kp = append(kp, [2]string{"lifecycle-count", strconv.Itoa(len(attrs.LifecycleRules))})
+						for _, rule := range attrs.LifecycleRules {
+							kp = append(kp, [2]string{"lifecycle-prefix", rule.Prefix})
+							kp = append(kp, [2]string{"lifecycle-days-new-until-hidden", strconv.Itoa(rule.DaysNewUntilHidden)})
+							kp = append(kp, [2]string{"lifecycle-days-new-until-hidden", strconv.Itoa(rule.DaysHiddenUntilDeleted)})
+						}
+						fmt.Fprintf(w, "%s\n", ninep.KeyPairs(kp))
 					}
+				}
 
-					switch k.GetOne("op") {
-					case "read":
-						read(ctx, b.bucket, w)
-					case "write":
-						var attrs b2.BucketAttrs
-						attrs.Type = parseBucketType(k.GetOne("type"))
-						attrs.Info = k.GetOnePrefixOrNil("info-")
-						if k.GetOneBool("empty-info") {
-							attrs.Info = make(map[string]string)
-						}
-						if k.Has("lifecycle-count") {
-							size := int(k.GetOneInt64("lifecycle-count"))
-							attrs.LifecycleRules = make([]b2.LifecycleRule, 0, size)
-							prefixes := k.GetAll("lifecycle-prefix")
-							daysNewUntilHiddens := k.GetAllInts("lifecycle-days-new-until-hidden")
-							daysHiddenUntilDeleted := k.GetAllInts("lifecycle-days-hidden-until-deleted")
-
-							for i := 0; i < size; i++ {
-								attrs.LifecycleRules = append(attrs.LifecycleRules, b2.LifecycleRule{
-									Prefix:                 prefixes[i],
-									DaysNewUntilHidden:     daysNewUntilHiddens[i],
-									DaysHiddenUntilDeleted: daysHiddenUntilDeleted[i],
-								})
-							}
-						}
-						fmt.Printf("[B2] BucketUpload(%#v)\n", attrs)
-						err := b.bucket.Update(ctx, &attrs)
+				if m.IsWriteable() {
+					const maxLineSize = 8192
+					ninep.ProcessKeyValuesLineLoop(r, maxLineSize, func(k ninep.KVMap, err error) bool {
+						fmt.Printf("err: %s\n", err)
 						if err != nil {
 							fmt.Fprintf(w, "%s\n", ninep.KeyPair("error", err.Error()))
-						} else {
-							fmt.Fprintf(w, "%s\n", ninep.KeyPair("success", "ok"))
+							return false
 						}
-					case "close", "quit", "done":
-						return false
-					default:
-						fmt.Fprintf(w, "%s\n", ninep.KeyPair("error", "invalid op, choose 'read' or 'write'"))
-					}
 
-					return true
-				})
-			} else if m.IsReadable() {
-				read(ctx, b.bucket, w)
-			}
-		}),
+						switch k.GetOne("op") {
+						case "read":
+							read(ctx, b.bucket, w)
+						case "write":
+							var attrs b2.BucketAttrs
+							attrs.Type = parseBucketType(k.GetOne("type"))
+							attrs.Info = k.GetOnePrefixOrNil("info-")
+							if k.GetOneBool("empty-info") {
+								attrs.Info = make(map[string]string)
+							}
+							if k.Has("lifecycle-count") {
+								size := int(k.GetOneInt64("lifecycle-count"))
+								attrs.LifecycleRules = make([]b2.LifecycleRule, 0, size)
+								prefixes := k.GetAll("lifecycle-prefix")
+								daysNewUntilHiddens := k.GetAllInts("lifecycle-days-new-until-hidden")
+								daysHiddenUntilDeleted := k.GetAllInts("lifecycle-days-hidden-until-deleted")
+
+								for i := 0; i < size; i++ {
+									attrs.LifecycleRules = append(attrs.LifecycleRules, b2.LifecycleRule{
+										Prefix:                 prefixes[i],
+										DaysNewUntilHidden:     daysNewUntilHiddens[i],
+										DaysHiddenUntilDeleted: daysHiddenUntilDeleted[i],
+									})
+								}
+							}
+							fmt.Printf("[B2] BucketUpload(%#v)\n", attrs)
+							err := b.bucket.Update(ctx, &attrs)
+							if err != nil {
+								fmt.Fprintf(w, "%s\n", ninep.KeyPair("error", err.Error()))
+							} else {
+								fmt.Fprintf(w, "%s\n", ninep.KeyPair("success", "ok"))
+							}
+						case "close", "quit", "done":
+							return false
+						default:
+							fmt.Fprintf(w, "%s\n", ninep.KeyPair("error", "invalid op, choose 'read' or 'write'"))
+						}
+
+						return true
+					})
+				} else if m.IsReadable() {
+					read(ctx, b.bucket, w)
+				}
+			}),
+		}
+		if b.b2c.CacheMeta {
+			b.nodes = nodes
+		}
+	} else {
+		nodes = b.nodes
 	}
 	return ninep.MakeNodeSliceIterator(nodes), nil
 }

@@ -272,9 +272,13 @@ func (s *serverConn) prepareDeadlines() {
 	now := time.Now()
 	if s.srv.ReadTimeout > 0 {
 		s.rwc.SetReadDeadline(now.Add(s.srv.ReadTimeout))
+	} else {
+		s.rwc.SetReadDeadline(time.Time{})
 	}
 	if s.srv.WriteTimeout > 0 {
 		s.rwc.SetWriteDeadline(now.Add(s.srv.WriteTimeout))
+	} else {
+		s.rwc.SetWriteDeadline(time.Time{})
 	}
 }
 
