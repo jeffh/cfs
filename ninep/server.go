@@ -521,20 +521,11 @@ func (s *serverConn) dispatch(ctx context.Context, txn *srvTransaction) {
 ///////////////////////////////////////////////////////
 
 type serverFile struct {
-	Name     string
-	User     string
-	Flag     OpenMode
-	Mode     Mode
-	H        FileHandle
-	RefCount int32
-}
-
-func (f *serverFile) IncRef() {
-	atomic.AddInt32(&f.RefCount, 1)
-}
-
-func (f *serverFile) DecRef() bool {
-	return atomic.AddInt32(&f.RefCount, -1) == 0
+	Name string
+	User string
+	Flag OpenMode
+	Mode Mode
+	H    FileHandle
 }
 
 type Session struct {

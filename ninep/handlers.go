@@ -57,6 +57,14 @@ func (h *directoryHandle) ReadAt(p []byte, offset int64) (int, error) {
 		if h.eof {
 			return 0, io.EOF
 		}
+		// TODO: is this a good idea to clear qids to avoid a memory leak?
+		for _, info := range h.buffer {
+			if info != nil {
+				subpath := filepath.Join(h.path, info.Name())
+				h.session.DeleteQid(subpath)
+			}
+		}
+
 		h.rem = h.buffer[:0]
 		for i, c := 0, cap(h.buffer); i < c; i++ {
 			info, err := h.it.NextFileInfo()
@@ -100,6 +108,13 @@ func (h *directoryHandle) Sync() error {
 }
 
 func (h *directoryHandle) Close() error {
+	// TODO: is this a good idea to clear qids to avoid a memory leak?
+	for _, info := range h.buffer {
+		if info != nil {
+			subpath := filepath.Join(h.path, info.Name())
+			h.session.DeleteQid(subpath)
+		}
+	}
 	// reset
 	if h.it != nil {
 		h.it.Close()
@@ -593,8 +608,8 @@ func (h *defaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 					// delete the file
 					h.Fs.Delete(ctx, fil.Name)
 				}
-				session.DeleteQid(fil.Name)
 			}
+			session.DeleteQid(fil.Name) // not ideal, since there may be other active references! but this is better then leaking memory?
 			session.DeleteFid(m.Fid())
 			h.Tracef("srv: Tclunk: %s %v", m.Fid(), fil.Name)
 			w.Rclunk()

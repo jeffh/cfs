@@ -7,6 +7,8 @@ import (
 	"io"
 	"log"
 	"os"
+	"runtime"
+	"runtime/pprof"
 	"time"
 
 	"github.com/jeffh/cfs/fs"
@@ -34,6 +36,11 @@ type ServerConfig struct {
 	Stderr io.Writer
 
 	PrintHelp bool
+
+	MemProfile string
+	CpuProfile string
+
+	fCpuProfile *os.File
 }
 
 func (c *ServerConfig) SetFlags(f Flags) {
@@ -48,10 +55,23 @@ func (c *ServerConfig) SetFlags(f Flags) {
 	f.StringVar(&c.CertFile, "certfile", "", "Accept only TLS wrapped connections. Also needs to specify keyfile flag.")
 	f.StringVar(&c.KeyFile, "keyfile", "", "Accept only TLS wrapped connections. Also needs to specify certfile flag.")
 	f.StringVar(&c.Addr, "addr", "localhost:6666", "The address and port for the 9p server to listen to")
+	f.StringVar(&c.MemProfile, "memprofile", "", "File to store memory profile")
+	f.StringVar(&c.CpuProfile, "cpuprofile", "", "File to store cpu profile")
 }
 
 func (c *ServerConfig) CreateServer(createfs func() ninep.FileSystem) *ninep.Server {
 	var traceLogger, errLogger ninep.Logger
+
+	if c.CpuProfile != "" {
+		f, err := os.Create(c.CpuProfile)
+		if err != nil {
+			log.Fatal("could not create CPU profile: ", err)
+		}
+		if err := pprof.StartCPUProfile(f); err != nil {
+			log.Fatal("could not start CPU profile: ", err)
+		}
+		c.fCpuProfile = f
+	}
 
 	if c.Stdout == nil {
 		c.Stdout = os.Stdout
@@ -79,6 +99,26 @@ func (c *ServerConfig) CreateServer(createfs func() ninep.FileSystem) *ninep.Ser
 	srv := ninep.NewServer(fsys, errLogger, traceLogger)
 	srv.ReadTimeout = time.Duration(c.ReadTimeoutInSeconds) * time.Second
 	return srv
+}
+
+func (c *ServerConfig) Close() {
+	fmt.Println("CLOSING")
+	if c.fCpuProfile != nil {
+		pprof.StopCPUProfile()
+		c.fCpuProfile.Close()
+	}
+
+	if c.MemProfile != "" {
+		f, err := os.Create(c.MemProfile)
+		if err != nil {
+			log.Fatal("could not create memory profile: ", err)
+		}
+		defer f.Close() // error handling omitted for example
+		runtime.GC()    // get up-to-date statistics
+		if err := pprof.WriteHeapProfile(f); err != nil {
+			log.Fatal("could not write memory profile: ", err)
+		}
+	}
 }
 
 func (c *ServerConfig) ListenAndServe(srv *ninep.Server) error {
@@ -179,37 +219,36 @@ func (l *proxyErrorLogger) Write(p []byte) (int, error) {
 }
 
 type srv struct {
-	Main   func(exit chan struct{})
-	logger service.Logger
-	exit   chan struct{}
+	Main       func(context.Context)
+	logger     service.Logger
+	runningCtx context.Context
+	cancel     context.CancelFunc
 }
 
 func (p *srv) Start(s service.Service) error {
-	p.exit = make(chan struct{})
+	p.runningCtx, p.cancel = context.WithCancel(context.Background())
 	p.logger.Infof("Starting")
 	go p.run()
 	return nil
 }
 func (p *srv) Stop(s service.Service) error {
 	p.logger.Infof("Stopping")
-	close(p.exit)
+	p.cancel()
+	time.Sleep(1 * time.Second)
 	return nil
 }
 func (p *srv) run() error {
-	p.Main(p.exit)
+	p.Main(p.runningCtx)
+	<-p.runningCtx.Done()
 	return nil
 }
 
-func srvMainWithCfg(stdout, stderr io.Writer, mkCfg func(stdout, stderr io.Writer) ServerConfig, createfs func() ninep.FileSystem) (start func(exit chan struct{})) {
+func srvMainWithCfg(stdout, stderr io.Writer, mkCfg func(stdout, stderr io.Writer) ServerConfig, createfs func() ninep.FileSystem) (start func(ctx context.Context)) {
 	cfg := mkCfg(stdout, stderr)
 
 	srv := cfg.CreateServer(createfs)
-	return func(exit chan struct{}) {
-		ctx, cancel := context.WithCancel(context.Background())
-		go func() {
-			<-exit
-			cancel()
-		}()
+	return func(parentCtx context.Context) {
+		ctx, cancel := context.WithCancel(parentCtx)
 		go func() {
 			defer cancel()
 			fmt.Fprintf(cfg.Stdout, "Listening on %s", cfg.Addr)
@@ -219,10 +258,11 @@ func srvMainWithCfg(stdout, stderr io.Writer, mkCfg func(stdout, stderr io.Write
 			}
 		}()
 		<-ctx.Done()
+		cfg.Close()
 	}
 }
 
-func srvMain(stdout, stderr io.Writer, createfs func() ninep.FileSystem) (start func(exit chan struct{})) {
+func srvMain(stdout, stderr io.Writer, createfs func() ninep.FileSystem) (start func(ctx context.Context)) {
 	return srvMainWithCfg(stdout, stderr, func(stdout, stderr io.Writer) ServerConfig {
 		cfg := ServerConfig{
 			Stdout: stdout,
