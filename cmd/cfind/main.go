@@ -18,6 +18,7 @@ import (
 var expr *regexp.Regexp
 var kindPredicate func(os.FileInfo) bool
 var printOut chan string
+var serial bool
 
 func isFile(info os.FileInfo) bool { return !info.IsDir() }
 func isDir(info os.FileInfo) bool  { return info.IsDir() }
@@ -25,7 +26,7 @@ func isAny(info os.FileInfo) bool  { return true }
 
 func traverse(ctx context.Context, fs ninep.TraversableFileSystem, path string) chan error {
 	result := make(chan error, 1)
-	go func() {
+	work := func() {
 		infos, err := fs.ListDir(context.Background(), path)
 		if err != nil {
 			result <- err
@@ -58,7 +59,14 @@ func traverse(ctx context.Context, fs ninep.TraversableFileSystem, path string) 
 			}
 		}
 		close(result)
-	}()
+	}
+
+	if serial {
+		work()
+	} else {
+		go work()
+	}
+
 	return result
 }
 
@@ -72,6 +80,7 @@ func main() {
 	flag.BoolVar(&posixRE, "e", false, "Use POSIX Egrep syntax for expressions")
 	flag.BoolVar(&includePrefix, "p", false, "Include mount prefix when printing files")
 	flag.BoolVar(&includeHost, "h", false, "Include mount host when printing files")
+	flag.BoolVar(&serial, "serial", false, "Don't parallelize 9p requests to speed up fetching, for deterministic ordering")
 	flag.StringVar(&kind, "type", "a", "Filter files by type ('d' = directory, 'f' = non-directory, 'a' = anything)")
 
 	flag.Usage = func() {

@@ -54,7 +54,7 @@ const (
 
 	// max number of requests a session can make
 	// needs to be balanced with max number of active connections
-	DefaultMaxInflightRequestsPerSession = 10
+	DefaultMaxInflightRequestsPerSession = 4
 )
 
 type onceCloseListener struct {
@@ -364,7 +364,7 @@ func (s *serverConn) assocTag(t Tag, c context.CancelFunc) bool {
 	return true
 }
 
-func (s *serverConn) dissocTag(t Tag) {
+func (s *serverConn) dissocTag(t Tag) bool {
 	s.mut.Lock()
 	cancel, ok := s.liveTags[t]
 	delete(s.liveTags, t)
@@ -372,6 +372,7 @@ func (s *serverConn) dissocTag(t Tag) {
 	if ok {
 		cancel()
 	}
+	return ok
 }
 
 // this runs in a new goroutine
@@ -486,22 +487,30 @@ func (s *serverConn) dispatch(ctx context.Context, txn *srvTransaction) {
 	// handle dispatch result
 	select {
 	case <-ctx.Done(): // we can't dissocTag above this otherwise this branch will always resolve
-		txn.Rerrorf("canceling message: %d", req.Tag())
-		s.dissocTag(req.Tag())
-
-	default:
-		// since we're on multiple threads, we want to remove the tag ASAP, but
-		// ctx.Done() above will always be followed.
-		s.dissocTag(req.Tag())
-		if txn.handled {
+		if s.dissocTag(req.Tag()) {
+			txn.Rerrorf("canceling message: %d", req.Tag())
 			s.prepareDeadlines()
 			err := txn.writeReply(s.rwc)
 			if err != nil {
 				s.errorf("failed to write message: %s", err)
 				shouldStop = true
 			}
-		} else if !txn.handled {
-			s.errorf("failed to handle message: %#v", req)
+		}
+
+	default:
+		// since we're on multiple threads, we want to remove the tag ASAP, but
+		// ctx.Done() above will always be followed.
+		if s.dissocTag(req.Tag()) {
+			if txn.handled {
+				s.prepareDeadlines()
+				err := txn.writeReply(s.rwc)
+				if err != nil {
+					s.errorf("failed to write message: %s", err)
+					shouldStop = true
+				}
+			} else if !txn.handled {
+				s.errorf("failed to handle message: %#v", req)
+			}
 		}
 	}
 
