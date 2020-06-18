@@ -232,3 +232,51 @@ func (d Dir) Delete(ctx context.Context, path string) error {
 func (d Dir) Traverse(path string) (ninep.TraversableFile, error) {
 	return ninep.BasicTraverse(d, path)
 }
+
+func (d Dir) Walk(ctx context.Context, parts []string) ([]os.FileInfo, error) {
+	infos := make([]os.FileInfo, 0, len(parts))
+	fullPath := filepath.Join(parts...)
+
+	stat, err := d.Stat(ctx, fullPath)
+	if err == nil {
+		for i := range parts {
+			if len(parts) > i+1 {
+				infos = append(infos, &lazyDirInfo{d: d, parts: parts[:i+1]})
+			}
+		}
+		infos = append(infos, stat)
+	} else {
+		for i := range parts {
+			fpath := filepath.Join(parts[:i+1]...)
+			st, er := d.Stat(ctx, fpath)
+			infos = append(infos, st)
+			if er != nil {
+				return infos, err
+			}
+		}
+	}
+
+	return infos, nil
+}
+
+type lazyDirInfo struct {
+	d     Dir
+	parts []string
+
+	fi os.FileInfo
+}
+
+func (i *lazyDirInfo) realize() os.FileInfo {
+	if i.fi == nil {
+		// ignore error, we should have caught this earlier?
+		st, _ := i.d.Stat(context.Background(), filepath.Join(i.parts...))
+		i.fi = st
+	}
+	return i.fi
+}
+func (i *lazyDirInfo) Name() string       { return i.parts[len(i.parts)-1] }
+func (i *lazyDirInfo) Size() int64        { return i.realize().Size() }
+func (i *lazyDirInfo) Mode() os.FileMode  { return ninep.M_DIR | 0777 }
+func (i *lazyDirInfo) ModTime() time.Time { return i.realize().ModTime() }
+func (i *lazyDirInfo) IsDir() bool        { return true }
+func (i *lazyDirInfo) Sys() interface{}   { return i.realize().Sys() }
