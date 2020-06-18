@@ -10,13 +10,6 @@ import (
 )
 
 func main() {
-	// cli.BasicServerMain(func() ninep.FileSystem {
-	// 	fs, err := b2fs.NewFsFromEnv()
-	// 	if err != nil {
-	// 		log.Fatalf("error: %s", err)
-	// 	}
-	// 	return fs
-	// })
 	cfg := &service.Config{
 		Name:        "b2fs",
 		DisplayName: "B2 File System Service",
