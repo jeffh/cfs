@@ -471,7 +471,8 @@ func (s *serverConn) dispatch(ctx context.Context, txn *srvTransaction) {
 
 		default:
 			s.tracef("Receive request tag %d", tag)
-			s.handler.Handle9P(ctx, m, txn)
+			go s.handler.Handle9P(ctx, m, txn)
+			txn.wait()
 			if !txn.handled {
 				txn.Rerrorf("not implemented")
 			}

@@ -19,6 +19,7 @@ type srvTransaction struct {
 
 	remoteAddr string
 
+	sem        chan struct{}
 	handled    bool
 	disconnect bool
 }
@@ -27,12 +28,22 @@ func createServerTransaction(maxMsgSize uint32) srvTransaction {
 	return srvTransaction{
 		inMsg:  make([]byte, int(maxMsgSize)),
 		outMsg: make([]byte, int(maxMsgSize)),
+		sem:    make(chan struct{}, 1),
 	}
 }
 
+func (t *srvTransaction) wait() {
+	<-t.sem
+}
+
+func (t *srvTransaction) signalHandled(h bool) {
+	t.handled = h
+	t.sem <- struct{}{}
+}
+
 func (t *srvTransaction) Disconnect() {
-	t.handled = true
 	t.disconnect = true
+	t.signalHandled(true)
 }
 
 func (t *srvTransaction) RemoteAddr() string { return t.remoteAddr }
@@ -164,38 +175,38 @@ func (t *srvTransaction) reqTag() Tag {
 }
 
 func (t *srvTransaction) Rversion(msgSize uint32, version string) {
-	t.handled = true
 	Rversion(t.outMsg).fill(t.reqTag(), msgSize, version)
+	t.signalHandled(true)
 }
 
 func (t *srvTransaction) Rauth(q Qid) {
-	t.handled = true
 	Rattach(t.outMsg).fill(t.reqTag(), q)
+	t.signalHandled(true)
 }
 
 func (t *srvTransaction) Rattach(q Qid) {
-	t.handled = true
 	Rattach(t.outMsg).fill(t.reqTag(), q)
+	t.signalHandled(true)
 }
 
 func (t *srvTransaction) Ropen(q Qid, iounit uint32) {
-	t.handled = true
 	Ropen(t.outMsg).fill(t.reqTag(), q, iounit)
+	t.signalHandled(true)
 }
 
 func (t *srvTransaction) Rwalk(wqids []Qid) {
-	t.handled = true
 	Rwalk(t.outMsg).fill(t.reqTag(), wqids)
+	t.signalHandled(true)
 }
 
 func (t *srvTransaction) Rstat(s Stat) {
-	t.handled = true
 	Rstat(t.outMsg).fill(t.reqTag(), s)
+	t.signalHandled(true)
 }
 
 func (t *srvTransaction) Rwstat() {
-	t.handled = true
 	Rwstat(t.outMsg).fill(t.reqTag())
+	t.signalHandled(true)
 }
 
 func (t *srvTransaction) RreadBuffer() []byte {
@@ -204,44 +215,44 @@ func (t *srvTransaction) RreadBuffer() []byte {
 
 // Use RreadBuffer to access the raw data buffer before setting this
 func (t *srvTransaction) Rread(count uint32) {
-	t.handled = true
 	Rread(t.outMsg).fill(t.reqTag(), count)
+	t.signalHandled(true)
 }
 
 func (t *srvTransaction) Rclunk() {
-	t.handled = true
 	Rclunk(t.outMsg).fill(t.reqTag())
+	t.signalHandled(true)
 }
 
 func (t *srvTransaction) Rremove() {
-	t.handled = true
 	Rremove(t.outMsg).fill(t.reqTag())
+	t.signalHandled(true)
 }
 
 func (t *srvTransaction) Rcreate(q Qid, iounit uint32) {
-	t.handled = true
 	Rcreate(t.outMsg).fill(t.reqTag(), q, iounit)
+	t.signalHandled(true)
 }
 
 func (t *srvTransaction) Rwrite(count uint32) {
-	t.handled = true
 	Rwrite(t.outMsg).fill(t.reqTag(), count)
+	t.signalHandled(true)
 }
 
 func (t *srvTransaction) Rflush() {
-	t.handled = true
 	Rflush(t.outMsg).fill(t.reqTag())
+	t.signalHandled(true)
 }
 
 func (t *srvTransaction) Rerror(err error) {
-	t.handled = true
 	Rerror(t.outMsg).fill(t.reqTag(), underlyingError(err))
+	t.signalHandled(true)
 }
 
 func (t *srvTransaction) Rerrorf(format string, values ...interface{}) {
-	t.handled = true
 	msg := fmt.Sprintf(format, values...)
 	Rerror(t.outMsg).fill(t.reqTag(), msg)
+	t.signalHandled(true)
 }
 
 ////////////////////////////////////////////////////////////////////////

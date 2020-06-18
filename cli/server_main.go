@@ -28,7 +28,8 @@ type ServerConfig struct {
 	CertFile string
 	KeyFile  string
 
-	ReadTimeoutInSeconds int
+	ReadTimeoutInSeconds          int
+	MaxInflightRequestsPerSession int
 
 	Dialer ninep.Dialer // defaults to net
 
@@ -48,6 +49,7 @@ func (c *ServerConfig) SetFlags(f Flags) {
 		f = &StdFlags{}
 	}
 	f.IntVar(&c.ReadTimeoutInSeconds, "rtimeout", 0, "Timeout in seconds for client requests")
+	f.IntVar(&c.MaxInflightRequestsPerSession, "parallel", ninep.DefaultMaxInflightRequestsPerSession, "The number of parallel requests per client allowed. Increases per-client throughput at a server resource cost.")
 	f.BoolVar(&c.PrintTraceMessages, "srv-trace", false, "Print trace of 9p server to stdout")
 	f.BoolVar(&c.PrintTraceFSMessages, "srv-tracefs", false, "Print trace of 9p server to stdout")
 	f.BoolVar(&c.PrintErrorMessages, "srv-err", false, "Print errors of 9p server to stderr")
@@ -98,11 +100,11 @@ func (c *ServerConfig) CreateServer(createfs func() ninep.FileSystem) *ninep.Ser
 
 	srv := ninep.NewServer(fsys, errLogger, traceLogger)
 	srv.ReadTimeout = time.Duration(c.ReadTimeoutInSeconds) * time.Second
+	srv.MaxInflightRequestsPerSession = c.MaxInflightRequestsPerSession
 	return srv
 }
 
 func (c *ServerConfig) Close() {
-	fmt.Println("CLOSING")
 	if c.fCpuProfile != nil {
 		pprof.StopCPUProfile()
 		c.fCpuProfile.Close()
