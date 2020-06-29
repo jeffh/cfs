@@ -19,23 +19,28 @@ import (
 	"github.com/jeffh/cfs/ninep"
 )
 
-const bzEmptyFile = ".bzEmpty"
+const (
+	bzEmptyFile = ".bzEmpty"
+	debugLog    = false
+)
 
-func NewFromEnv() ninep.WalkableFileSystem {
+func NewFromEnv() *FS {
 	return NewFromEnvPrefix("")
 }
 
-func NewFromEnvPrefix(prefix string) ninep.WalkableFileSystem {
+func NewFromEnvPrefix(prefix string) *FS {
 	appID := os.Getenv(prefix + "B2_ACCOUNT_ID")
 	appKey := os.Getenv(prefix + "B2_ACCOUNT_KEY")
 	return New(appID, appKey)
 }
 
-func New(keyID, appKey string) ninep.WalkableFileSystem {
+func New(keyID, appKey string) *FS {
 	fs := &FS{}
 	fs.C.KeyID = keyID
 	fs.C.AppKey = appKey
-	fs.C.C.L = log.New(os.Stdout, "[b2] ", log.LstdFlags)
+	if debugLog {
+		fs.C.C.L = log.New(os.Stdout, "[b2] ", log.LstdFlags)
+	}
 	return fs
 }
 
@@ -51,6 +56,8 @@ type FS struct {
 	fileNamesToIds map[string]string
 	files          map[string]b2.File // bucketID+fileID->file
 }
+
+var _ ninep.WalkableFileSystem = (*FS)(nil)
 
 func (fs *FS) MakeDir(ctx context.Context, path string, mode ninep.Mode) error {
 	intent, err := parseIntent(false, path)
@@ -640,14 +647,9 @@ func (fs *FS) unsafeFetchFilesForKey(bucketID, fileName, key string) error {
 }
 
 func (fs *FS) store(r io.Reader) (TempFile, int64, error) {
-	if fs.TempStorage != nil {
-		return fs.TempStorage.Store(r)
-	} else {
-		buf := &bufTempFile{}
-		n, err := io.Copy(buf, r)
-		if err != nil {
-			return nil, n, err
-		}
-		return buf, n, err
+	if fs.TempStorage == nil {
+		// we don't want to have TempStorage use a lock, so we're using a global var fallback
+		return globalTempStorage.Store(r)
 	}
+	return fs.TempStorage.Store(r)
 }

@@ -12,6 +12,19 @@ type TempStorage interface {
 	Store(r io.Reader) (TempFile, int64, error)
 }
 
+var globalTempStorage = LocalTempStorage{Prefix: "b2fs-"}
+
+type MemTempStorage struct{}
+
+func (ts *MemTempStorage) Store(r io.Reader) (TempFile, int64, error) {
+	buf := &bufTempFile{}
+	n, err := io.Copy(buf, r)
+	if err != nil {
+		return nil, n, err
+	}
+	return buf, n, err
+}
+
 type LocalTempStorage struct {
 	Dir, Prefix string
 }

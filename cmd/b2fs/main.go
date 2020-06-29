@@ -14,11 +14,8 @@ func main() {
 		Description: "Provides a 9p file system that connects to Backblaze's B2 service",
 	}
 	cli.ServiceMain(cfg, func() ninep.FileSystem {
-		// fs, err := b2fs.NewFsFromEnv()
-		// if err != nil {
-		// 	log.Fatalf("error: %s", err)
-		// }
 		fs := b2fs.NewFromEnv()
+		fs.C.C.L
 		return fs
 	})
 }
