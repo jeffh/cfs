@@ -150,9 +150,13 @@ func (f traceFileSystem) ListDir(ctx context.Context, path string) (ninep.FileIn
 func (f traceFileSystem) Stat(ctx context.Context, path string) (os.FileInfo, error) {
 	info, err := f.Fs.Stat(ctx, path)
 	if info != nil {
-		f.Tracef("FS.Stat(%v) => (os.FileInfo{name: %#v, size: %d...}, %s)", path, info.Name(), info.Size(), err)
+		f.Tracef("FS.Stat(%v) => (os.FileInfo{name: %#v, size: %d, isDir: %v...}, %s)", path, info.Name(), info.Size(), info.IsDir(), err)
 	} else {
-		f.Tracef("FS.Stat(%v) => (nil, %s)", path, err)
+		if err != nil {
+			f.Tracef("FS.Stat(%v) => (nil, %s)", path, err)
+		} else {
+			f.Tracef("FS.Stat(%v) => (nil, nil)", path)
+		}
 	}
 	if err != nil {
 		f.Errorf("FS.Stat(%v) => (_, %s)", path, err)

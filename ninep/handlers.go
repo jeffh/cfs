@@ -89,7 +89,7 @@ func (h *directoryHandle) ReadAt(p []byte, offset int64) (int, error) {
 	h.rem = h.rem[1:]
 	size := next.Nbytes()
 	if len(p) < size {
-		fmt.Printf("%d < %d\n", len(p), size)
+		// fmt.Printf("%d < %d\n", len(p), size)
 		return 0, io.ErrShortBuffer
 	}
 	copy(p, next.Bytes())
@@ -333,6 +333,7 @@ func (h *defaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 			return
 		}
 		fullPath := cleanPath(fil.Name)
+		fmt.Printf("==> Topen: START\n")
 		info, err := h.Fs.Stat(ctx, fullPath)
 		if err != nil {
 			h.Errorf("srv: Topen: failed to call stat on %v: %s", fullPath, err)
@@ -340,15 +341,16 @@ func (h *defaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 			return
 		}
 		q := session.PutQidInfo(fil.Name, info)
+		fmt.Printf("==> Topen: %s\n", strFileInfo(info))
 		if info.IsDir() {
 			// From Topen docs:
 			//   "It is illegal to write a directory, truncate it, or attempt to remove it on close"
 			if m.Mode()&ORCLOSE != 0 {
-				h.Tracef("srv: Topen: client error: requested dir with ORCLOSE")
+				h.Tracef("srv: Topen: client error: requested dir with ORCLOSE -- %s", strFileInfo(info))
 				w.Rerrorf("dir cannot have ORCLOSE set")
 				return
 			} else if m.Mode()&OTRUNC != 0 {
-				h.Tracef("srv: Topen: client error: requested dir with OTRUNC")
+				h.Tracef("srv: Topen: client error: requested dir with OTRUNC -- %s", strFileInfo(info))
 				w.Rerrorf("dir cannot have OTRUNC set")
 				return
 			}
@@ -363,7 +365,7 @@ func (h *defaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 		} else {
 			f, err := h.Fs.OpenFile(ctx, fullPath, m.Mode())
 			if err != nil || f == nil {
-				h.Tracef("srv: Topen: error opening file %v: %s %s", fullPath, err, m.Fid)
+				h.Tracef("srv: Topen: error opening file %v: %s %v", fullPath, err, m.Fid)
 				w.Rerrorf("cannot open: %s", err)
 				return
 			}
@@ -734,6 +736,7 @@ func (h *defaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 			w.Rerrorf("fid %d wasn't opened", m.Fid())
 			return
 		}
+
 		data := m.Data()
 		h.Tracef("srv: Twrite: want fid %d (offset=%d, data=%d)", m.Fid(), m.Offset(), len(data))
 		// TODO: handle overflow of converting uint64 -> int64

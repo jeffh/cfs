@@ -195,6 +195,7 @@ type DeleteWithModeFileSystem interface {
 
 // A file system that wants to optimize Twalk operations
 type WalkableFileSystem interface {
+	FileSystem
 	// walk receives a number of directories to traverse (with the last one optionally being a file)
 	// and returns stats about every file/directory traversed.
 	//

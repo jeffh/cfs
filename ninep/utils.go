@@ -2,8 +2,10 @@ package ninep
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"net"
+	"os"
 	"strings"
 	"syscall"
 )
@@ -115,4 +117,8 @@ func underlyingError(err error) string {
 		}
 	}
 	return err.Error()
+}
+
+func strFileInfo(fi os.FileInfo) string {
+	return fmt.Sprintf("%s (mode=%s, isDir=%v)", fi.Name(), fi.Mode(), fi.IsDir())
 }

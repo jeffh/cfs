@@ -1,8 +1,6 @@
 package main
 
 import (
-	"log"
-
 	"github.com/jeffh/cfs/cli"
 	"github.com/jeffh/cfs/fs/b2fs"
 	"github.com/jeffh/cfs/ninep"
@@ -16,10 +14,11 @@ func main() {
 		Description: "Provides a 9p file system that connects to Backblaze's B2 service",
 	}
 	cli.ServiceMain(cfg, func() ninep.FileSystem {
-		fs, err := b2fs.NewFsFromEnv()
-		if err != nil {
-			log.Fatalf("error: %s", err)
-		}
+		// fs, err := b2fs.NewFsFromEnv()
+		// if err != nil {
+		// 	log.Fatalf("error: %s", err)
+		// }
+		fs := b2fs.NewFromEnv()
 		return fs
 	})
 }

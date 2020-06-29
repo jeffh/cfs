@@ -728,6 +728,10 @@ func (p *QidPool) Put(name string, t QidType, version uint32) Qid {
 			qid.SetVersion(version)
 			p.pool[name] = qid
 		}
+		if qid.Type() != t {
+			qid.SetType(t)
+			p.pool[name] = qid
+		}
 	} else {
 		if version == NoQidVersion {
 			version = 0

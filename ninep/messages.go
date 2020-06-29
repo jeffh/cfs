@@ -517,6 +517,7 @@ func (q Qid) Fill(t QidType, version uint32, path uint64) Qid {
 func (q Qid) Bytes() []byte       { return q[:QidSize] }       // Returns the raw bytes of a Qid. Used for writing to a socket
 func (q Qid) Type() QidType       { return QidType(q[0]) }     // Returns the metadata available on a Qid
 func (q Qid) Version() uint32     { return bo.Uint32(q[1:5]) } // Returns the version of the file. The server usually changes this value when the file changes.
+func (q Qid) SetType(t QidType)   { q[0] = byte(t) }
 func (q Qid) SetVersion(v uint32) { bo.PutUint32(q[1:5], v) }
 
 // Returns the path id of the file. This is similar to inode numbers. The server should return a different path for different files, event if it's the same file path
