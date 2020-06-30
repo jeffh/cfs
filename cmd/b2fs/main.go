@@ -15,7 +15,6 @@ func main() {
 	}
 	cli.ServiceMain(cfg, func() ninep.FileSystem {
 		fs := b2fs.NewFromEnv()
-		fs.C.C.L
 		return fs
 	})
 }
