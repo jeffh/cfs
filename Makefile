@@ -6,7 +6,10 @@ CMDS := $(shell ls cmd)
 # Example goargs
 # GOARGS=-race for race condition checking
 
-all: $(CMDS)
+all: deps $(CMDS)
+
+deps:
+	env 'GOPRIVATE=github.com/jeffh/*' go get github.com/jeffh/b2client 
 
 $(CMDS): $(find . -type '*.go')
 	$(GO) build --ldflags="-s -w" $(GOARGS) -o ./bin/$@ ./cmd/$@
