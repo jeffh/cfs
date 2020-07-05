@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/gob"
 	"errors"
 	"flag"
@@ -11,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 
 	"github.com/jeffh/cfs/cexec"
@@ -45,6 +45,8 @@ var (
 	progargs []string
 
 	exitCode int
+
+	logCommands bool
 )
 
 func main() {
@@ -56,10 +58,11 @@ func main() {
 	flag.StringVar(&sshUser, "ssh-user", "", "The SSH Username")
 	flag.StringVar(&sshKey, "ssh-key", "", "The SSH Private Key")
 	flag.StringVar(&root, "root", "", "The root dir of the process. This is dependent on the method to utilize.")
-	flag.StringVar(&method, "method", "", "The strategy to execute")
+	flag.StringVar(&method, "method", methodForkExec, "The strategy to execute")
 	flag.StringVar(&mode, "mode", "run", "How this binary operates, can be 'run' to indicate executing programs, 'server' for receiving programs to run, or 'client' to execute the program in question")
 	flag.Var(&uploads, "upload", "Uploads file to remote system, can be used multiple times.")
 	flag.Var(&env, "e", "Set an environment var to be used for the program. In form 'NAME=VALUE'. Can be used multiple times.")
+	flag.BoolVar(&logCommands, "log-cmds", false, "Print commands to stdout. Only affects server.")
 
 	flag.Usage = func() {
 		o := flag.CommandLine.Output()
@@ -74,7 +77,6 @@ func main() {
 		fmt.Fprintf(o, " - chroot + exec\n")
 		fmt.Fprintf(o, " - linux namespaces + exec\n")
 		fmt.Fprintf(o, "\n")
-		fmt.Fprintf(o, "Note: these methods do not ensure isolation or for security.\n")
 		fmt.Fprintf(o, "Note: these methods do not ensure isolation or for security.\n")
 		fmt.Fprintf(o, "\n")
 		fmt.Fprintf(o, "Usage: %s [OPTIONS] CMD [ARGS]\n", os.Args[0])
@@ -120,8 +122,17 @@ func runRequest() {
 	progname = flag.Arg(0)
 	progargs = flag.Args()[1:]
 
+	var stdin io.Reader
+	stat, err := os.Stdin.Stat()
+	if err != nil {
+		log.Fatalf("Stdin error: %s", err)
+	}
+	if stat.Mode()&os.ModeCharDevice == 0 {
+		stdin = os.Stdin
+		defer os.Stdin.Close()
+	}
+
 	var con net.Conn
-	var err error
 	if sshAddr != "" {
 		sshCfg, err := sftpfs.DefaultSSHConfig(sshUser, sshKey)
 		if err != nil {
@@ -216,61 +227,76 @@ func runRequest() {
 
 	e := gob.NewEncoder(con)
 	req := ReqCmd{
-		Cmd:  progname,
-		Args: progargs,
-		Env:  env,
+		Cmd:   progname,
+		Args:  progargs,
+		Env:   env,
+		Stdin: stdin != nil,
 	}
 	err = e.Encode(&req)
 	if err != nil {
 		log.Fatalf("Failed to encode request: %s: %s", addr, err)
 	}
 
-	// copy to os.Stdout up to TERM_BYTE, then read the last part as an exit code
-	var buf [4096]byte
-	nullByteOffset := -2
-	for {
-		n, err := con.Read(buf[:])
-		if n > 0 {
-			for i, b := range buf[:n] {
-				if b == TERM_BYTE {
-					os.Stdout.Write(buf[:i])
-					nullByteOffset = i
-					break
-				}
+	if stdin != nil {
+		var tmp [4096]byte
+		var r ReqMessage
+		buf := tmp[:]
+		for {
+			n, err := stdin.Read(buf)
+			r.Text = buf[:n]
+
+			if er := e.Encode(&r); er != nil {
+				log.Fatalf("Failed to encode stdin: %s: %s", addr, er)
 			}
 
-			switch {
-			case nullByteOffset == -2:
-				os.Stdout.Write(buf[:n])
-			case nullByteOffset == -1:
-				exitCode, err = strconv.Atoi(string(buf[:n]))
-				if err != nil {
-					log.Fatalf("Failed to read exit code: %s", err)
+			if err != nil {
+				if errors.Is(err, io.EOF) {
+					break
 				}
-			case nullByteOffset == len(buf):
-				nullByteOffset = -1
-			default:
-				exitCode, err = strconv.Atoi(string(buf[nullByteOffset+1 : n]))
-				if err != nil {
-					log.Fatalf("Failed to read exit code: %s", err)
-				}
+				log.Fatalf("Failed to write stdin: %s: %s", addr, err)
 			}
 		}
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			log.Fatalf("Failed to read result: %s", err)
+		r.Text = nil
+		r.Kind = ReqMessageTypeWait
+
+		if err := e.Encode(&r); err != nil {
+			log.Fatalf("Failed to encode wait: %s: %s", addr, err)
 		}
 	}
+
+	d := gob.NewDecoder(con)
+
+	var exitCode int
+	for {
+		var m Message
+		if err := d.Decode(&m); err != nil {
+			if !errors.Is(err, io.EOF) {
+				log.Fatalf("Failed to parse response: %s: %s", addr, err)
+				exitCode = 1
+			}
+			break
+		}
+
+		switch m.Kind {
+		case MessageTypeStdout:
+			os.Stdout.Write(m.Text)
+		case MessageTypeStderr:
+			os.Stderr.Write(m.Text)
+		case MessageTypeError:
+			os.Stderr.Write(m.Text)
+			exitCode = m.ExitCode
+			break
+		case MessageTypeExited:
+			os.Stderr.Write(m.Text)
+			exitCode = m.ExitCode
+			break
+		}
+	}
+	os.Exit(exitCode)
 }
 
 func runServer() {
 	method = strings.ToLower(method)
-	if method == "" {
-		method = methodForkExec
-	}
-
 	var executor cexec.Executor
 	switch method {
 	case methodForkExec:
@@ -279,6 +305,8 @@ func runServer() {
 		executor = cexec.ChrootExecutor()
 	case methodContainerExec:
 		executor = cexec.LinuxContainerExecutor()
+	default:
+		log.Fatalf("Unsupported executor: %#v", method)
 	}
 
 	log.Printf("Listening on %s\n", addr)
@@ -321,6 +349,15 @@ func runRemoteProgram() {
 
 	progname = flag.Arg(0)
 	progargs = flag.Args()[1:]
+
+	var stdin io.Reader
+	stat, err := os.Stdin.Stat()
+	if err != nil {
+		log.Fatalf("Stdin error: %s", err)
+	}
+	if stat.Mode()&os.ModeCharDevice == 0 {
+		stdin = os.Stdin
+	}
 
 	if sshAddr != "" {
 		sshCfg, err := sftpfs.DefaultSSHConfig(sshUser, sshKey)
@@ -401,7 +438,7 @@ func runRemoteProgram() {
 		for _, arg := range progargs {
 			command = append(command, fmt.Sprintf("%#v", arg))
 		}
-		sess.Stdin = os.Stdin
+		sess.Stdin = stdin
 		sess.Stdout = os.Stdout
 		sess.Stderr = os.Stderr
 		err = sess.Run(strings.Join(command, " "))
@@ -413,7 +450,7 @@ func runRemoteProgram() {
 			Cmd:    progname,
 			Args:   progargs,
 			Env:    env,
-			Stdin:  os.Stdin,
+			Stdin:  stdin,
 			Stdout: os.Stdout,
 			Stderr: os.Stderr,
 		}
@@ -425,17 +462,86 @@ func runRemoteProgram() {
 	}
 }
 
+type MessageType int
+
+const (
+	MessageTypeNone MessageType = iota
+	MessageTypeStdout
+	MessageTypeStderr
+	MessageTypeError
+	MessageTypeExited
+)
+
+type Message struct {
+	Kind     MessageType
+	Text     []byte
+	ExitCode int
+}
+
+type messageWriter struct {
+	e    *gob.Encoder
+	kind MessageType
+}
+
+func (w *messageWriter) Write(p []byte) (int, error) {
+	m := Message{
+		Kind:     w.kind,
+		Text:     p,
+		ExitCode: 0,
+	}
+	err := w.e.Encode(&m)
+	return len(p), err
+}
+
 func handleConnection(rwc net.Conn, executor cexec.Executor) {
 	defer rwc.Close()
 
 	var req ReqCmd
 	d := gob.NewDecoder(rwc)
+	e := gob.NewEncoder(rwc)
 
 	err := d.Decode(&req)
 	if err != nil {
 		log.Printf("error for %s: %s\n", rwc.RemoteAddr(), err)
-		rwc.Write([]byte(fmt.Sprintf("error: %s", err)))
+		err = e.Encode(&Message{
+			Kind:     MessageTypeError,
+			Text:     []byte(err.Error()),
+			ExitCode: 1,
+		})
+		if err != nil {
+			log.Printf("error encoding message for %s: %s\n", rwc.RemoteAddr(), err)
+		}
 		return
+	}
+
+	var stdin io.Reader
+
+	if req.Stdin {
+		r, w := io.Pipe()
+		defer r.Close()
+		stdin = r
+
+		go func() {
+			for {
+				var req ReqMessage
+				if err := d.Decode(&req); err != nil {
+					break
+				}
+
+				switch req.Kind {
+				case ReqMessageTypeStdin:
+					w.Write(req.Text)
+				case ReqMessageTypeWait:
+					w.Write(req.Text)
+					w.Close()
+					break
+				case ReqMessageTypeSignal:
+					// TODO: handle signal
+					w.Close()
+					break
+				}
+			}
+		}()
 	}
 
 	cmd := cexec.Cmd{
@@ -451,37 +557,66 @@ func handleConnection(rwc net.Conn, executor cexec.Executor) {
 		IsolateNetwork:       req.IsolateNetwork,
 		IsolateUsers:         req.IsolateUsers,
 
-		// Stdin:  rwc,
-		Stdout: rwc,
-		Stderr: rwc,
+		Stdin:  stdin,
+		Stdout: &messageWriter{e, MessageTypeStdout},
+		Stderr: &messageWriter{e, MessageTypeStderr},
 	}
 
-	log.Printf("%s run: %s %s\n", rwc.RemoteAddr(), cmd.Cmd, strings.Join(cmd.Args, " "))
+	if logCommands {
+		log.Printf("%s start: %s %s\n", rwc.RemoteAddr(), cmd.Cmd, strings.Join(cmd.Args, " "))
+	}
 
 	if err := executor.Run(&cmd); err != nil {
 		if cmd.State == nil || cmd.State.ExitCode == 0 {
 			log.Printf("error for %s: %s", rwc.RemoteAddr(), err)
-			rwc.Write([]byte(fmt.Sprintf("error: %s", err)))
+			m := Message{
+				Kind:     MessageTypeError,
+				Text:     []byte(fmt.Sprintf("error: %s", err)),
+				ExitCode: 254,
+			}
+			if err := e.Encode(&m); err != nil {
+				log.Printf("error for %s: failed encoding value: %s", rwc.RemoteAddr(), err)
+			}
+			return
+		}
+		if cmd.State.ExitCode != 0 {
+			log.Printf("error for %s: %s", rwc.RemoteAddr(), err)
+			m := Message{
+				Kind:     MessageTypeError,
+				Text:     []byte(fmt.Sprintf("error: %s", err)),
+				ExitCode: cmd.State.ExitCode,
+			}
+			if err := e.Encode(&m); err != nil {
+				log.Printf("error for %s: failed encoding value: %s", rwc.RemoteAddr(), err)
+			}
 			return
 		}
 	}
 
 	if cmd.State == nil {
 		log.Printf("error for %s: executor did not fill State", rwc.RemoteAddr())
-		rwc.Write([]byte("Internal executor error"))
+		m := Message{
+			Kind:     MessageTypeError,
+			Text:     []byte(fmt.Sprintf("Internal executor error")),
+			ExitCode: 255,
+		}
+		if err := e.Encode(&m); err != nil {
+			log.Printf("error for %s: failed encoding value: %s", rwc.RemoteAddr(), err)
+		}
 		return
 	}
-	_, err = rwc.Write([]byte{TERM_BYTE})
-	if err != nil {
-		log.Printf("error for %s: %s", rwc.RemoteAddr(), err)
-		rwc.Write([]byte(fmt.Sprintf("error: %s", err)))
-		return
+
+	m := Message{
+		Kind:     MessageTypeExited,
+		Text:     nil,
+		ExitCode: cmd.State.ExitCode,
 	}
-	_, err = rwc.Write([]byte(fmt.Sprintf("%v", cmd.State.ExitCode)))
-	if err != nil {
+	if err := e.Encode(&m); err != nil {
 		log.Printf("error for %s: %s", rwc.RemoteAddr(), err)
-		rwc.Write([]byte(fmt.Sprintf("error: %s", err)))
-		return
+	}
+
+	if logCommands {
+		log.Printf("%s exited %d: %s %s\n", rwc.RemoteAddr(), cmd.State.ExitCode, cmd.Cmd, strings.Join(cmd.Args, " "))
 	}
 }
 
@@ -497,4 +632,45 @@ type ReqCmd struct {
 	IsolateIPC           bool
 	IsolateNetwork       bool
 	IsolateUsers         bool
+	Stdin                bool
+}
+
+type ReqMessageType int
+
+const (
+	ReqMessageTypeStdin ReqMessageType = iota
+	ReqMessageTypeWait
+	ReqMessageTypeSignal
+)
+
+type ReqMessage struct {
+	Kind   ReqMessageType
+	Text   []byte
+	Signal int
+}
+
+type readToNullTerm struct {
+	r       net.Conn
+	buf     bytes.Buffer
+	wOffset int
+	rOffset int
+}
+
+func (r *readToNullTerm) Read(p []byte) (int, error) {
+	mem := [1]byte{0}
+	b := mem[:]
+	for i := range p {
+		fmt.Printf("Read: %v\n", len(b))
+		_, err := r.r.Read(b)
+		if err != nil {
+			fmt.Printf("Read(%d) 1\n", i)
+			return i, err
+		}
+		if b[0] == 0 {
+			fmt.Printf("Read(%d) 2\n", i)
+			return i, io.EOF
+		}
+		p[i] = b[0]
+	}
+	return len(p), nil
 }
