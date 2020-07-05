@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/gob"
 	"errors"
 	"flag"
@@ -53,7 +52,7 @@ func main() {
 
 	cexec.LinuxContainerHandleContainerExec()
 
-	flag.StringVar(&addr, "addr", "", "The remote srv to connect to execute commands")
+	flag.StringVar(&addr, "addr", "localhost:7171", "The remote srv to connect to execute commands")
 	flag.StringVar(&sshAddr, "ssh-addr", "", "The remote system to run this command on. Host should support SSH. Default runs against current machine.")
 	flag.StringVar(&sshUser, "ssh-user", "", "The SSH Username")
 	flag.StringVar(&sshKey, "ssh-key", "", "The SSH Private Key")
@@ -647,30 +646,4 @@ type ReqMessage struct {
 	Kind   ReqMessageType
 	Text   []byte
 	Signal int
-}
-
-type readToNullTerm struct {
-	r       net.Conn
-	buf     bytes.Buffer
-	wOffset int
-	rOffset int
-}
-
-func (r *readToNullTerm) Read(p []byte) (int, error) {
-	mem := [1]byte{0}
-	b := mem[:]
-	for i := range p {
-		fmt.Printf("Read: %v\n", len(b))
-		_, err := r.r.Read(b)
-		if err != nil {
-			fmt.Printf("Read(%d) 1\n", i)
-			return i, err
-		}
-		if b[0] == 0 {
-			fmt.Printf("Read(%d) 2\n", i)
-			return i, io.EOF
-		}
-		p[i] = b[0]
-	}
-	return len(p), nil
 }
