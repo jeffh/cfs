@@ -6,7 +6,7 @@ CMDS := $(shell ls cmd)
 # Example goargs
 # GOARGS=-race for race condition checking
 
-all: deps $(CMDS)
+all: $(CMDS)
 
 deps:
 	env 'GOPRIVATE=github.com/jeffh/*' go get github.com/jeffh/b2client 
