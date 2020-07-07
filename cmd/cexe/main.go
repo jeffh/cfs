@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net"
 	"os"
@@ -46,6 +47,7 @@ var (
 	exitCode int
 
 	logCommands bool
+	uploadCmd   string
 )
 
 func main() {
@@ -57,9 +59,10 @@ func main() {
 	flag.StringVar(&sshUser, "ssh-user", "", "The SSH Username")
 	flag.StringVar(&sshKey, "ssh-key", "", "The SSH Private Key")
 	flag.StringVar(&root, "root", "", "The root dir of the process. This is dependent on the method to utilize.")
-	flag.StringVar(&method, "method", methodForkExec, "The strategy to execute")
+	flag.StringVar(&method, "method", methodForkExec, "The strategy to execute.  Can be 'fork', 'chroot', or 'container'")
 	flag.StringVar(&mode, "mode", "run", "How this binary operates, can be 'run' to indicate executing programs, 'server' for receiving programs to run, or 'client' to execute the program in question")
-	flag.Var(&uploads, "upload", "Uploads file to remote system, can be used multiple times.")
+	flag.StringVar(&uploadCmd, "upload-cmd", "", "Uploads a file to the remote server before running the command on the server as the environment variable: $CEXE_FILE")
+	flag.Var(&uploads, "upload", "Uploads file to remote system, can be used multiple times. Only works for ssh executions with mode=run")
 	flag.Var(&env, "e", "Set an environment var to be used for the program. In form 'NAME=VALUE'. Can be used multiple times.")
 	flag.BoolVar(&logCommands, "log-cmds", false, "Print commands to stdout. Only affects server.")
 
@@ -231,36 +234,52 @@ func runRequest() {
 		Env:   env,
 		Stdin: stdin != nil,
 	}
+
+	if uploadCmd != "" {
+		f, err := os.Open(uploadCmd)
+		if err != nil {
+			log.Fatalf("Failed to open binary to upload: %s", err)
+		}
+		data, err := ioutil.ReadAll(f)
+		f.Close()
+		if err != nil {
+			log.Fatalf("Failed to read binary to upload: %s", err)
+		}
+		req.ProgData = data
+	}
+
 	err = e.Encode(&req)
 	if err != nil {
 		log.Fatalf("Failed to encode request: %s: %s", addr, err)
 	}
 
 	if stdin != nil {
-		var tmp [4096]byte
-		var r ReqMessage
-		buf := tmp[:]
-		for {
-			n, err := stdin.Read(buf)
-			r.Text = buf[:n]
+		go func() {
+			var tmp [4096]byte
+			var r ReqMessage
+			buf := tmp[:]
+			for {
+				n, err := stdin.Read(buf)
+				r.Text = buf[:n]
 
-			if er := e.Encode(&r); er != nil {
-				log.Fatalf("Failed to encode stdin: %s: %s", addr, er)
-			}
-
-			if err != nil {
-				if errors.Is(err, io.EOF) {
-					break
+				if er := e.Encode(&r); er != nil {
+					log.Fatalf("Failed to encode stdin: %s: %s", addr, er)
 				}
-				log.Fatalf("Failed to write stdin: %s: %s", addr, err)
-			}
-		}
-		r.Text = nil
-		r.Kind = ReqMessageTypeWait
 
-		if err := e.Encode(&r); err != nil {
-			log.Fatalf("Failed to encode wait: %s: %s", addr, err)
-		}
+				if err != nil {
+					if errors.Is(err, io.EOF) {
+						break
+					}
+					log.Fatalf("Failed to write stdin: %s: %s", addr, err)
+				}
+			}
+			r.Text = nil
+			r.Kind = ReqMessageTypeWait
+
+			if err := e.Encode(&r); err != nil {
+				log.Fatalf("Failed to encode wait: %s: %s", addr, err)
+			}
+		}()
 	}
 
 	d := gob.NewDecoder(con)
@@ -445,6 +464,9 @@ func runRemoteProgram() {
 			log.Fatalf("error: %s\n", err)
 		}
 	} else {
+		if uploadCmd != "" {
+			env.Set(fmt.Sprintf("CEXE_FILE=%#v", uploadCmd))
+		}
 		cmd := cexec.Cmd{
 			Cmd:    progname,
 			Args:   progargs,
@@ -511,6 +533,30 @@ func handleConnection(rwc net.Conn, executor cexec.Executor) {
 			log.Printf("error encoding message for %s: %s\n", rwc.RemoteAddr(), err)
 		}
 		return
+	}
+
+	if req.ProgData != nil {
+		f, err := ioutil.TempFile("", "cexe-")
+		name := f.Name()
+		if err != nil {
+			log.Printf("Failed to create temp file for %s: %s", rwc.RemoteAddr(), err)
+			return
+		}
+		defer f.Close()
+		_, err = f.Write(req.ProgData)
+		if err != nil {
+			log.Printf("Failed to write temp file for %s: %s", rwc.RemoteAddr(), err)
+		}
+		req.Env = append(req.Env, fmt.Sprintf("CEXE_FILE=%#v", name))
+
+		if req.Cmd == "$CEXE_FILE" {
+			req.Cmd = name
+		}
+		for i, v := range req.Args {
+			if v == "$CEXE_FILE" {
+				req.Args[i] = name
+			}
+		}
 	}
 
 	var stdin io.Reader
@@ -624,6 +670,8 @@ type ReqCmd struct {
 	Args []string
 	Env  []string
 	Dir  string
+
+	ProgData []byte
 
 	Root                 string
 	IsolateHostAndDomain bool
