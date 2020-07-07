@@ -31,6 +31,7 @@ servers.
  - **ctee** a client that writes to a file (akin to *tee*)
  - **ctouch** a client that creates to a file (akin to *touch*)
  - **cexe** a client that executes remote commands via ssh (akin to *cpu*)
+ - **cpipe** a client that writes to a file from contents of stdin (similiar to bash's '>' operator)
 
 ## Proxies
 
