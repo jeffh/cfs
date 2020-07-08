@@ -33,6 +33,8 @@ func ForkExec(c *Cmd) error {
 // Implements a simple fork-exec
 type forkExecutor struct{}
 
+func (e *forkExecutor) Name() string { return "fork" }
+
 func (e *forkExecutor) Run(c *Cmd) error {
 	return ForkExec(c)
 }

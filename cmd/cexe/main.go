@@ -232,6 +232,7 @@ func runRequest() {
 		Cmd:   progname,
 		Args:  progargs,
 		Env:   env,
+		Root:  root,
 		Stdin: stdin != nil,
 	}
 
@@ -472,6 +473,7 @@ func runRemoteProgram() {
 			Args:   progargs,
 			Env:    env,
 			Stdin:  stdin,
+			Root:   root,
 			Stdout: os.Stdout,
 			Stderr: os.Stderr,
 		}
@@ -608,7 +610,7 @@ func handleConnection(rwc net.Conn, executor cexec.Executor) {
 	}
 
 	if logCommands {
-		log.Printf("%s start: %s %s\n", rwc.RemoteAddr(), cmd.Cmd, strings.Join(cmd.Args, " "))
+		log.Printf("%s start %v: %s %s\n", rwc.RemoteAddr(), executor.Name(), cmd.Cmd, strings.Join(cmd.Args, " "))
 	}
 
 	if err := executor.Run(&cmd); err != nil {

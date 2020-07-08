@@ -32,6 +32,7 @@ func (s *ProcessState) Success() bool { return s.Exited && s.ExitCode == 0 }
 
 type Executor interface {
 	Run(c *Cmd) error
+	Name() string
 }
 
 func ForkExecutor() Executor           { return &forkExecutor{} }

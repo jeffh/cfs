@@ -6,6 +6,8 @@ import (
 
 type linuxContainerExecutor struct{}
 
+func (e *linuxContainerExecutor) Name() string { return "lxc" }
+
 func (e *linuxContainerExecutor) Run(c *Cmd) error {
 	return LinuxContainerExec(c)
 }
@@ -35,6 +37,8 @@ func ChrootExec(c *Cmd) error {
 
 // Implements a simple fork-exec
 type chrootExecutor struct{}
+
+func (e *chrootExecutor) Name() string { return "chroot" }
 
 func (e *chrootExecutor) Run(c *Cmd) error {
 	return ChrootExec(c)
