@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -26,6 +25,8 @@ type ClientConfig struct {
 	Mount string
 
 	TimeoutInSeconds int
+
+	f Flags
 }
 
 func (c *ClientConfig) SetFlags(f Flags) {
@@ -38,6 +39,7 @@ func (c *ClientConfig) SetFlags(f Flags) {
 	f.BoolVar(&c.PrintTraceMessages, "trace", false, "Print trace of 9p client to stdout")
 	f.BoolVar(&c.PrintErrorMessages, "err", false, "Print errors of 9p client to stderr")
 	f.BoolVar(&c.UseRecoverClient, "recover", false, "Use recover client for talking over flaky/unreliable networks")
+	c.f = f
 }
 
 func (c *ClientConfig) user() string {
@@ -178,18 +180,17 @@ func MainClient(fn func(cfg *ClientConfig, m proxy.FileSystemMount) error) {
 	}()
 
 	cfg.SetFlags(nil)
+	args, _ := cfg.f.Parse()
 
-	flag.Parse()
-
-	if flag.NArg() == 0 {
-		flag.Usage()
+	if len(args) == 0 {
+		cfg.f.Usage()
 		exitCode = 1
 		runtime.Goexit()
 	}
 
-	mntCfg, ok := proxy.ParseMount(flag.Arg(0))
+	mntCfg, ok := proxy.ParseMount(args[0])
 	if !ok {
-		fmt.Fprintf(os.Stderr, "Invalid path: %v\n", flag.Arg(0))
+		fmt.Fprintf(os.Stderr, "Invalid path: %v\n", args[0])
 		fmt.Fprintf(os.Stderr, "Format should be IP:PORT/PATH format.\n")
 		exitCode = 1
 		runtime.Goexit()

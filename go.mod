@@ -10,11 +10,13 @@ require (
 	github.com/docker/docker v1.13.1
 	github.com/docker/go-connections v0.4.0
 	github.com/docker/go-units v0.4.0 // indirect
+	github.com/fatih/color v1.10.0
 	github.com/google/shlex v0.0.0-20181106134648-c34317bd91bf
 	github.com/jeffh/b2client v0.0.0-20200628231947-94600a6b43e7
 	github.com/kardianos/service v1.0.0
 	github.com/kr/pretty v0.1.0 // indirect
 	github.com/kurin/blazer v0.5.3
+	github.com/mattn/go-isatty v0.0.12
 	github.com/opencontainers/go-digest v1.0.0-rc1 // indirect
 	github.com/pkg/sftp v1.11.0
 	github.com/secure-io/sio-go v0.3.1

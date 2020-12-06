@@ -11,9 +11,15 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/fatih/color"
 	"github.com/jeffh/cfs/cli"
 	"github.com/jeffh/cfs/fs/proxy"
 	"github.com/jeffh/cfs/ninep"
+)
+
+var (
+	dirColor           = color.BlueString
+	irregularFileColor = color.MagentaString
 )
 
 const (
@@ -24,6 +30,7 @@ const (
 	PB = TB * 1024
 )
 
+var nocolors bool
 var humanSizes bool
 
 func printInfo(w io.Writer, info os.FileInfo, replacedName string) {
@@ -51,6 +58,11 @@ func printInfo(w io.Writer, info os.FileInfo, replacedName string) {
 	if replacedName != "" {
 		n = replacedName
 	}
+	if info.IsDir() {
+		n = dirColor(n)
+	} else if !info.Mode().IsRegular() {
+		n = irregularFileColor(n)
+	}
 	fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t %s\n", info.Mode(), usr, gid, muid, sizeStr, info.ModTime().Format(time.RFC822), n)
 }
 
@@ -63,6 +75,9 @@ func main() {
 	flag.BoolVar(&list, "l", false, "list long format stats about each file")
 	flag.BoolVar(&humanSizes, "h", false, "list file sizes in human-readable formats")
 	flag.BoolVar(&nocols, "nocols", false, "avoids printing in nice columns, useful to verify streaming behavior")
+	flag.BoolVar(&nocolors, "nocolor", false, "Disable color for terminal output")
+
+	cli.SupportsColor(nocolors)
 
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "ls for CFS\n")
@@ -111,14 +126,20 @@ func main() {
 			}
 		} else {
 			if all {
-				fmt.Println(".")
-				fmt.Println("..")
+				fmt.Println(dirColor("."))
+				fmt.Println(dirColor(".."))
 			}
 			for {
 				info, err := infos.NextFileInfo()
 				if info != nil {
-					if all || !strings.HasPrefix(info.Name(), ".") {
-						fmt.Println(info.Name())
+					n := info.Name()
+					if all || !strings.HasPrefix(n, ".") {
+						if info.IsDir() {
+							n = dirColor(n)
+						} else if !info.Mode().IsRegular() {
+							n = irregularFileColor(n)
+						}
+						fmt.Println(n)
 					}
 				}
 				if err == io.EOF {
