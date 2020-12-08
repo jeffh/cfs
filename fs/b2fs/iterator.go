@@ -1,6 +1,7 @@
 package b2fs
 
 import (
+	"context"
 	"io"
 	"os"
 	"strings"
@@ -11,6 +12,7 @@ import (
 type keysIterator struct {
 	C            *b2.RetryClient
 	I            intent
+	Ctx          context.Context
 	bucketID     string
 	limit        int
 	prefixOffset int
@@ -35,7 +37,7 @@ func (it *keysIterator) NextFileInfo() (os.FileInfo, error) {
 			if key != "" {
 				key += "/"
 			}
-			res, err := it.C.ListFileNames(it.bucketID, &b2.ListFileNamesOptions{
+			res, err := it.C.ListFileNames(it.Ctx, it.bucketID, &b2.ListFileNamesOptions{
 				StartFileName: it.nextFileName,
 				MaxFileCount:  it.getLimit(),
 				Prefix:        key,

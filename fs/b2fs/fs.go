@@ -68,7 +68,7 @@ func (fs *FS) MakeDir(ctx context.Context, path string, mode ninep.Mode) error {
 	switch intent.op {
 	case bucketOpNone:
 		if intent.bucketName != "" {
-			bkt, err := fs.C.CreateBucket(intent.bucketName, intent.bucketType, nil)
+			bkt, err := fs.C.CreateBucket(ctx, intent.bucketName, intent.bucketType, nil)
 			if err != nil {
 				return err
 			}
@@ -80,12 +80,12 @@ func (fs *FS) MakeDir(ctx context.Context, path string, mode ninep.Mode) error {
 		}
 		return ninep.ErrWriteNotAllowed
 	case bucketOpObjectData:
-		bucketID, err := fs.getBucketID(intent.bucketType, intent.bucketName)
+		bucketID, err := fs.getBucketID(ctx, intent.bucketType, intent.bucketName)
 		if err != nil {
 			return err
 		}
 		buf := bytes.NewBuffer(nil)
-		res, err := fs.C.UploadFile(bucketID, b2.UploadFileOptions{
+		res, err := fs.C.UploadFile(ctx, bucketID, b2.UploadFileOptions{
 			FileName:      filepath.Join(intent.key, bzEmptyFile),
 			ContentLength: 0,
 			Body:          b2.Closer(buf),
@@ -108,7 +108,7 @@ func (fs *FS) CreateFile(ctx context.Context, path string, flag ninep.OpenMode, 
 
 	switch intent.op {
 	case bucketOpObjectData:
-		bucketID, err := fs.getBucketID(intent.bucketType, intent.bucketName)
+		bucketID, err := fs.getBucketID(ctx, intent.bucketType, intent.bucketName)
 		if err != nil {
 			return nil, err
 		}
@@ -131,19 +131,19 @@ func (fs *FS) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (n
 
 	switch intent.op {
 	case bucketOpObjectData:
-		bucketID, err := fs.getBucketID(intent.bucketType, intent.bucketName)
+		bucketID, err := fs.getBucketID(ctx, intent.bucketType, intent.bucketName)
 		if err != nil {
 			return nil, err
 		}
 
-		fileID, err := fs.getFileID(bucketID, intent.key)
+		fileID, err := fs.getFileID(ctx, bucketID, intent.key)
 		if err != nil {
 			return nil, err
 		}
 
 		var r io.Reader
 		if flag&ninep.OTRUNC == 0 {
-			res, err := fs.C.DownloadFileByID(fileID, nil)
+			res, err := fs.C.DownloadFileByID(ctx, fileID, nil)
 			if err != nil {
 				return nil, err
 			}
@@ -172,11 +172,11 @@ func (fs *FS) Delete(ctx context.Context, path string) error {
 	switch intent.op {
 	case bucketOpNone:
 		if intent.bucketName != "" {
-			id, err := fs.getBucketID(intent.bucketType, intent.bucketName)
+			id, err := fs.getBucketID(ctx, intent.bucketType, intent.bucketName)
 			if err != nil {
 				return err
 			}
-			_, err = fs.C.DeleteBucket(id)
+			_, err = fs.C.DeleteBucket(ctx, id)
 			if err != nil {
 				return err
 			}
@@ -189,23 +189,23 @@ func (fs *FS) Delete(ctx context.Context, path string) error {
 		}
 		return ninep.ErrWriteNotAllowed
 	case bucketOpObjectData:
-		bucketID, err := fs.getBucketID(intent.bucketType, intent.bucketName)
+		bucketID, err := fs.getBucketID(ctx, intent.bucketType, intent.bucketName)
 		if err != nil {
 			return err
 		}
 
 		key := intent.key
-		fileID, err := fs.getFileID(bucketID, key)
+		fileID, err := fs.getFileID(ctx, bucketID, key)
 		if err != nil {
 			// delete if it's a directory:
 			if errors.Is(err, os.ErrNotExist) {
 				key = filepath.Join(intent.key, bzEmptyFile)
-				fileID, err = fs.getFileID(bucketID, key)
+				fileID, err = fs.getFileID(ctx, bucketID, key)
 				if err != nil {
 					return err
 				}
 				// walk through all "subdirectories" and delete them
-				it := &keysIterator{C: &fs.C, I: intent, bucketID: bucketID}
+				it := &keysIterator{C: &fs.C, I: intent, Ctx: ctx, bucketID: bucketID}
 				defer it.Close()
 				for {
 					fi, err := it.NextFileInfo()
@@ -217,12 +217,12 @@ func (fs *FS) Delete(ctx context.Context, path string) error {
 					}
 					if fi.Name() != key {
 						k := fi.Name()
-						fid, err := fs.getFileID(bucketID, k)
+						fid, err := fs.getFileID(ctx, bucketID, k)
 						if err != nil {
 							return err
 						}
 						// TODO(jeff): we should probably delete all versions?
-						_, err = fs.C.DeleteFileVersion(fid, k)
+						_, err = fs.C.DeleteFileVersion(ctx, fid, k)
 						if err != nil {
 							return err
 						}
@@ -234,7 +234,7 @@ func (fs *FS) Delete(ctx context.Context, path string) error {
 		}
 
 		// TODO(jeff): we should probably delete all versions?
-		_, err = fs.C.DeleteFileVersion(fileID, key)
+		_, err = fs.C.DeleteFileVersion(ctx, fileID, key)
 		return err
 	default:
 		return ninep.ErrUnsupported
@@ -259,7 +259,7 @@ func (fs *FS) ListDir(ctx context.Context, path string) (ninep.FileInfoIterator,
 			}
 			return ninep.FileInfoSliceIterator(infos), nil
 		} else if intent.bucketName == "" {
-			buckets, err := fs.getBucketInfos(intent.bucketType)
+			buckets, err := fs.getBucketInfos(ctx, intent.bucketType)
 			if err != nil {
 				return nil, err
 			}
@@ -274,7 +274,7 @@ func (fs *FS) ListDir(ctx context.Context, path string) (ninep.FileInfoIterator,
 			return ninep.FileInfoSliceIterator(infos), nil
 		}
 	case bucketOpObjectData:
-		bucketID, err := fs.getBucketID(intent.bucketType, intent.bucketName)
+		bucketID, err := fs.getBucketID(ctx, intent.bucketType, intent.bucketName)
 		if err != nil {
 			return nil, err
 		}
@@ -282,7 +282,7 @@ func (fs *FS) ListDir(ctx context.Context, path string) (ninep.FileInfoIterator,
 		if prefixOffset > 0 {
 			prefixOffset++
 		}
-		return &keysIterator{C: &fs.C, I: intent, bucketID: bucketID, prefixOffset: prefixOffset}, nil
+		return &keysIterator{C: &fs.C, I: intent, Ctx: ctx, bucketID: bucketID, prefixOffset: prefixOffset}, nil
 	default:
 		return nil, ninep.ErrUnsupported
 	}
@@ -298,7 +298,7 @@ func (fs *FS) Stat(ctx context.Context, path string) (os.FileInfo, error) {
 	case bucketOpNone:
 		now := time.Now()
 		if intent.bucketName != "" {
-			bkt, err := fs.getBucketInfo(intent.bucketType, intent.bucketName)
+			bkt, err := fs.getBucketInfo(ctx, intent.bucketType, intent.bucketName)
 			return bkt, err
 		}
 		switch intent.bucketType {
@@ -316,7 +316,7 @@ func (fs *FS) Stat(ctx context.Context, path string) (os.FileInfo, error) {
 			return nil, os.ErrNotExist
 		}
 	case bucketOpObjectData:
-		bucketID, err := fs.getBucketID(intent.bucketType, intent.bucketName)
+		bucketID, err := fs.getBucketID(ctx, intent.bucketType, intent.bucketName)
 		if err != nil {
 			return nil, err
 		}
@@ -324,11 +324,11 @@ func (fs *FS) Stat(ctx context.Context, path string) (os.FileInfo, error) {
 		if index == -1 {
 			index = 0
 		}
-		file, err := fs.getFileInfo(bucketID, intent.key, index)
+		file, err := fs.getFileInfo(ctx, bucketID, intent.key, index)
 		if errors.Is(err, os.ErrNotExist) {
 			now := time.Now()
 			// check if .bzInfo exists, so this is a "directory"
-			_, err := fs.getFileInfo(bucketID, filepath.Join(intent.key, bzEmptyFile), index)
+			_, err := fs.getFileInfo(ctx, bucketID, filepath.Join(intent.key, bzEmptyFile), index)
 			if err == nil {
 				return &staticDirInfo{intent.key, now}, nil
 			}
@@ -399,7 +399,7 @@ func (fs *FS) Walk(ctx context.Context, parts []string) ([]os.FileInfo, error) {
 	var bucketID string
 	var err error
 	if bucketName != "" && bucketName != "." {
-		bucketID, err = fs.getBucketID(bt, bucketName)
+		bucketID, err = fs.getBucketID(ctx, bt, bucketName)
 		if err != nil {
 			return infos, err
 		}
@@ -436,11 +436,11 @@ func (fs *FS) Walk(ctx context.Context, parts []string) ([]os.FileInfo, error) {
 		index = 0
 	}
 	var fi os.FileInfo
-	fi, err = fs.getFileInfo(bucketID, key, index)
+	fi, err = fs.getFileInfo(ctx, bucketID, key, index)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			// check if .bzInfo exists, so this is a "directory"
-			_, err := fs.getFileInfo(bucketID, filepath.Join(key, bzEmptyFile), index)
+			_, err := fs.getFileInfo(ctx, bucketID, filepath.Join(key, bzEmptyFile), index)
 			if err == nil {
 				fi = &staticDirInfo{key[index:], now}
 			} else {
@@ -466,14 +466,14 @@ func (fs *FS) Walk(ctx context.Context, parts []string) ([]os.FileInfo, error) {
 	return infos, nil
 }
 
-func (fs *FS) getBucketInfos(bt b2.BucketType) ([]os.FileInfo, error) {
+func (fs *FS) getBucketInfos(ctx context.Context, bt b2.BucketType) ([]os.FileInfo, error) {
 	fs.mBuckets.Lock()
 	defer fs.mBuckets.Unlock()
 
 	if fs.buckets == nil {
 		fs.bucketNamesToIds = make(map[string]string)
 		fs.buckets = make(map[string]b2.Bucket)
-		res, err := fs.C.ListBuckets(nil)
+		res, err := fs.C.ListBuckets(ctx, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -493,14 +493,14 @@ func (fs *FS) getBucketInfos(bt b2.BucketType) ([]os.FileInfo, error) {
 	return infos, nil
 }
 
-func (fs *FS) getBucketInfo(bt b2.BucketType, bucketName string) (*bucketInfo, error) {
+func (fs *FS) getBucketInfo(ctx context.Context, bt b2.BucketType, bucketName string) (*bucketInfo, error) {
 	fs.mBuckets.Lock()
 	defer fs.mBuckets.Unlock()
 
 	if fs.buckets == nil {
 		fs.bucketNamesToIds = make(map[string]string)
 		fs.buckets = make(map[string]b2.Bucket)
-		res, err := fs.C.ListBuckets(nil)
+		res, err := fs.C.ListBuckets(ctx, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -519,7 +519,7 @@ func (fs *FS) getBucketInfo(bt b2.BucketType, bucketName string) (*bucketInfo, e
 	return nil, os.ErrNotExist
 }
 
-func (fs *FS) getBucketID(bt b2.BucketType, bucketName string) (string, error) {
+func (fs *FS) getBucketID(ctx context.Context, bt b2.BucketType, bucketName string) (string, error) {
 	fs.mBuckets.Lock()
 	defer fs.mBuckets.Unlock()
 
@@ -530,7 +530,7 @@ func (fs *FS) getBucketID(bt b2.BucketType, bucketName string) (string, error) {
 
 	id, ok := fs.bucketNamesToIds[bucketName]
 	if !ok {
-		res, err := fs.C.ListBuckets(nil)
+		res, err := fs.C.ListBuckets(ctx, nil)
 		if err != nil {
 			return "", err
 		}
@@ -562,7 +562,7 @@ func (fs *FS) storeFileID(bucketID, fileName string, f b2.File) {
 	fs.files[key] = f
 }
 
-func (fs *FS) getFileID(bucketID, fileName string) (string, error) {
+func (fs *FS) getFileID(ctx context.Context, bucketID, fileName string) (string, error) {
 	fs.mFiles.Lock()
 	defer fs.mFiles.Unlock()
 
@@ -573,7 +573,7 @@ func (fs *FS) getFileID(bucketID, fileName string) (string, error) {
 	key := fs.fileKey(bucketID, fileName)
 	id, ok := fs.fileNamesToIds[key]
 	if !ok {
-		if err := fs.unsafeFetchFilesForKey(bucketID, fileName, key); err != nil {
+		if err := fs.unsafeFetchFilesForKey(ctx, bucketID, fileName, key); err != nil {
 			return "", err
 		}
 		id, ok = fs.fileNamesToIds[key]
@@ -584,7 +584,7 @@ func (fs *FS) getFileID(bucketID, fileName string) (string, error) {
 	return id, nil
 }
 
-func (fs *FS) getFileInfo(bucketID, fileName string, prefixOffset int) (*fileInfo, error) {
+func (fs *FS) getFileInfo(ctx context.Context, bucketID, fileName string, prefixOffset int) (*fileInfo, error) {
 	fs.mFiles.Lock()
 	defer fs.mFiles.Unlock()
 
@@ -596,7 +596,7 @@ func (fs *FS) getFileInfo(bucketID, fileName string, prefixOffset int) (*fileInf
 
 	fileID, ok := fs.fileNamesToIds[key]
 	if !ok {
-		if err := fs.unsafeFetchFilesForKey(bucketID, fileName, key); err != nil {
+		if err := fs.unsafeFetchFilesForKey(ctx, bucketID, fileName, key); err != nil {
 			return nil, err
 		}
 		fileID, ok = fs.fileNamesToIds[key]
@@ -617,8 +617,8 @@ func (fs *FS) fileKey(bucketID, fileName string) string {
 	return fmt.Sprintf("%s://%s", bucketID, fileName)
 }
 
-func (fs *FS) unsafeFetchFilesForKey(bucketID, fileName, key string) error {
-	res, err := fs.C.ListFileNames(bucketID, nil)
+func (fs *FS) unsafeFetchFilesForKey(ctx context.Context, bucketID, fileName, key string) error {
+	res, err := fs.C.ListFileNames(ctx, bucketID, nil)
 	if err != nil {
 		return err
 	}
@@ -630,7 +630,7 @@ func (fs *FS) unsafeFetchFilesForKey(bucketID, fileName, key string) error {
 
 	_, ok := fs.fileNamesToIds[key]
 	if res.NextFileName != "" && !ok {
-		res, err = fs.C.ListFileNames(bucketID, &b2.ListFileNamesOptions{
+		res, err = fs.C.ListFileNames(ctx, bucketID, &b2.ListFileNamesOptions{
 			Prefix: fileName,
 		})
 		if err != nil {

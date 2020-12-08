@@ -1,6 +1,7 @@
 package b2fs
 
 import (
+	"context"
 	"io"
 	"io/ioutil"
 
@@ -75,7 +76,8 @@ func (h *handle) Sync() error {
 		return err
 	}
 	// TODO: don't double write to files
-	_, err := h.C.UploadFile(h.bucketID, b2.UploadFileOptions{
+	ctx := context.Background()
+	_, err := h.C.UploadFile(ctx, h.bucketID, b2.UploadFileOptions{
 		FileName:      h.key,
 		ContentLength: b2.ContentLengthDetermineUsingTempStorage,
 		Body:          h.f,

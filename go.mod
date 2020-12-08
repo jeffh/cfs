@@ -12,7 +12,7 @@ require (
 	github.com/docker/go-units v0.4.0 // indirect
 	github.com/fatih/color v1.10.0
 	github.com/google/shlex v0.0.0-20181106134648-c34317bd91bf
-	github.com/jeffh/b2client v0.0.0-20200628231947-94600a6b43e7
+	github.com/jeffh/b2client v0.0.0-20201208051109-e2be374a00d3
 	github.com/kardianos/service v1.0.0
 	github.com/kr/pretty v0.1.0 // indirect
 	github.com/kurin/blazer v0.5.3
