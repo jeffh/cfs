@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"os"
 
 	"github.com/jeffh/cfs/cli"
 	"github.com/jeffh/cfs/fs"
@@ -19,6 +20,14 @@ func main() {
 		Name:        "dirfs",
 		DisplayName: "Dir File System Service",
 		Description: "Provides a 9p file system that exposes a local directory",
+	}
+
+	flag.Usage = func() {
+		w := flag.CommandLine.Output()
+		fmt.Fprintf(w, "Usage: %s [OPTIONS]\n\n", os.Args[0])
+		fmt.Fprintf(w, "Exposes a local file directory as a 9p file server.\n\n")
+		fmt.Fprintf(w, "OPTIONS:\n")
+		flag.PrintDefaults()
 	}
 
 	cli.ServiceMain(cfg, func() ninep.FileSystem {

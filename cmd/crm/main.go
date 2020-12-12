@@ -20,8 +20,10 @@ func main() {
 	flag.BoolVar(&recursive, "r", false, "Recursively delete directories")
 
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "rm for CFS - will delete directories\n")
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [OPTIONS] ADDR/PATH [MORE_PATHS...]\n", os.Args[0])
+		w := flag.CommandLine.Output()
+		fmt.Fprintf(w, "Usage: %s [OPTIONS] ADDR/PATH [MORE_PATHS...]\n\n", os.Args[0])
+		fmt.Fprintf(w, "rm for CFS - will delete directories\n\n")
+		fmt.Fprintf(w, "OPTIONS:\n")
 		flag.PrintDefaults()
 	}
 

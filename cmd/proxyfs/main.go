@@ -19,7 +19,10 @@ func main() {
 	srvCfg.SetFlags(nil)
 
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [OPTIONS] FORWARD_ADDR\n", os.Args[0])
+		w := flag.CommandLine.Output()
+		fmt.Fprintf(w, "Usage: %s [OPTIONS] FORWARD_ADDR\n\n", os.Args[0])
+		fmt.Fprintf(w, "Useful for proxying 9p file servers to a new network address\n\n")
+		fmt.Fprintf(w, "OPTIONS\n")
 		flag.PrintDefaults()
 	}
 

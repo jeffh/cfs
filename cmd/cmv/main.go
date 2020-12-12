@@ -16,8 +16,10 @@ import (
 
 func main() {
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "mv for CFS - move files and directories\n")
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [OPTIONS] ADDR/PATH NEW_ADDR/NEW_PATH\n", os.Args[0])
+		w := flag.CommandLine.Output()
+		fmt.Fprintf(w, "Usage: %s [OPTIONS] ADDR/PATH NEW_ADDR/NEW_PATH\n\n", os.Args[0])
+		fmt.Fprintf(w, "mv for CFS - move files and directories\n\n")
+		fmt.Fprintf(w, "OPTIONS:\n")
 		flag.PrintDefaults()
 	}
 

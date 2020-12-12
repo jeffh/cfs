@@ -17,11 +17,11 @@ require (
 	github.com/kr/pretty v0.1.0 // indirect
 	github.com/kurin/blazer v0.5.3
 	github.com/mattn/go-isatty v0.0.12
+	github.com/mmcdole/gofeed v1.1.0
 	github.com/opencontainers/go-digest v1.0.0-rc1 // indirect
 	github.com/pkg/sftp v1.11.0
 	github.com/secure-io/sio-go v0.3.1
 	golang.org/x/crypto v0.0.0-20200302210943-78000ba7a073
-	golang.org/x/net v0.0.0-20191021144547-ec77196f6094 // indirect
 	golang.org/x/sys v0.0.0-20200302150141-5c8b2ff67527
 	gopkg.in/check.v1 v1.0.0-20180628173108-788fd7840127 // indirect
 )

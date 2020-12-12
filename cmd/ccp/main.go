@@ -28,8 +28,10 @@ func main() {
 	flag.BoolVar(&allAttrs, "a", false, "copy all file timestamps")
 
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "cp for CFS - Copy files and directories\n")
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [OPTIONS] SRC_HOST/SRC_PATH DEST_HOST/DEST_PATH \n", os.Args[0])
+		w := flag.CommandLine.Output()
+		fmt.Fprintf(w, "Usage: %s [OPTIONS] SRC_HOST/SRC_PATH DEST_HOST/DEST_PATH\n\n", os.Args[0])
+		fmt.Fprintf(w, "cp for CFS - Copy files and directories\n\n")
+		fmt.Fprintf(w, "OPTIONS:\n")
 		flag.PrintDefaults()
 	}
 

@@ -16,14 +16,20 @@ func main() {
 	var numlines int
 	var writeFromStdin bool
 	var writeFromFile string
+	var newline bool
+	var printFilename bool
 
 	flag.IntVar(&numlines, "n", 0, "number of lines to print")
 	flag.BoolVar(&writeFromStdin, "stdin", false, "writes data read from stdin before reading from the 9p file")
 	flag.StringVar(&writeFromFile, "stdin-file", "", "writes data read from a file before reading from the 9p file")
+	flag.BoolVar(&newline, "newline", false, "print a newline at the end")
+	flag.BoolVar(&printFilename, "filename", false, "prints the filename prior to writing its contents")
 
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "cat for CFS\n")
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [OPTIONS] ADDR/PATH\n", os.Args[0])
+		w := flag.CommandLine.Output()
+		fmt.Fprintf(w, "Usage: %s [OPTIONS] ADDR/PATH\n\n", os.Args[0])
+		fmt.Fprintf(w, "cat for CFS\n\n")
+		fmt.Fprintf(w, "OPTIONS:\n")
 		flag.PrintDefaults()
 	}
 
@@ -39,6 +45,10 @@ func main() {
 			return err
 		}
 		defer h.Close()
+
+		if printFilename {
+			fmt.Printf("=== %s ===\n", mnt.Prefix)
+		}
 
 		if writeFromFile != "" {
 			wr := ninep.Writer(h)
@@ -99,6 +109,10 @@ func main() {
 					return err
 				}
 			}
+		}
+
+		if newline {
+			os.Stdout.Write([]byte("\n"))
 		}
 
 		return nil

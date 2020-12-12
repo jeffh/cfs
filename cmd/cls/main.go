@@ -80,8 +80,10 @@ func main() {
 	cli.SupportsColor(nocolors)
 
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "ls for CFS\n")
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [OPTIONS] ADDR/PATH\n", os.Args[0])
+		w := flag.CommandLine.Output()
+		fmt.Fprintf(w, "Usage: %s [OPTIONS] ADDR/PATH\n\n", os.Args[0])
+		fmt.Fprintf(w, "ls for CFS\n\n")
+		fmt.Fprintf(w, "OPTIONS:\n")
 		flag.PrintDefaults()
 	}
 

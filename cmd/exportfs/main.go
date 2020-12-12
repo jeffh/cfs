@@ -25,8 +25,18 @@ func main() {
 		fmt.Printf("Received term signal\n")
 		cancel()
 	}()
+
+	flag.Usage = func() {
+		w := flag.CommandLine.Output()
+		fmt.Fprintf(w, "mount for CFS\n")
+		fmt.Fprintf(w, "Usage: %s [OPTIONS] LOCAL_MOUNT\n", os.Args[0])
+		fmt.Fprintf(w, "Translate a 9p file server mount point into a locally mounted file system\n\n")
+		fmt.Fprintf(w, "OPTIONS:\n")
+		flag.PrintDefaults()
+	}
+
 	cli.MainClient(func(cfg *cli.ClientConfig, mnt proxy.FileSystemMount) error {
-		if flag.NArg() == 1 {
+		if flag.NArg() == 0 {
 			return fmt.Errorf("Missing mountpoint")
 		} else {
 			mountpoint = flag.Arg(1)

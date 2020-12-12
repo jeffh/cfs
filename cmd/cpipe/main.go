@@ -19,8 +19,10 @@ func main() {
 	flag.IntVar(&mode, "mode", 0644, "The mode to set the file that gets created")
 
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "writes STDIN into a file in CFS\n")
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [OPTIONS] ADDR/PATH\n", os.Args[0])
+		w := flag.CommandLine.Output()
+		fmt.Fprintf(w, "Usage: %s [OPTIONS] ADDR/PATH\n\n", os.Args[0])
+		fmt.Fprintf(w, "Shell Pipe for CFS. Writes STDIN into a file.\n\n")
+		fmt.Fprintf(w, "OPTIONS:\n")
 		flag.PrintDefaults()
 	}
 

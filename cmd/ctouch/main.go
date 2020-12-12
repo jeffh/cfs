@@ -16,8 +16,10 @@ func main() {
 	var path string
 
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "touch for CFS\n")
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [OPTIONS] ADDR/PATH\n", os.Args[0])
+		w := flag.CommandLine.Output()
+		fmt.Fprintf(w, "Usage: %s [OPTIONS] ADDR/PATH\n\n", os.Args[0])
+		fmt.Fprintf(w, "touch for CFS\n\n")
+		fmt.Fprintf(w, "OPTIONS:\n")
 		flag.PrintDefaults()
 	}
 

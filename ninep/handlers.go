@@ -333,7 +333,7 @@ func (h *defaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 			return
 		}
 		fullPath := cleanPath(fil.Name)
-		fmt.Printf("==> Topen: START\n")
+		// fmt.Printf("==> Topen: START\n")
 		info, err := h.Fs.Stat(ctx, fullPath)
 		if err != nil {
 			h.Errorf("srv: Topen: failed to call stat on %v: %s", fullPath, err)
@@ -341,7 +341,7 @@ func (h *defaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 			return
 		}
 		q := session.PutQidInfo(fil.Name, info)
-		fmt.Printf("==> Topen: %s\n", strFileInfo(info))
+		// fmt.Printf("==> Topen: %s\n", strFileInfo(info))
 		if info.IsDir() {
 			// From Topen docs:
 			//   "It is illegal to write a directory, truncate it, or attempt to remove it on close"

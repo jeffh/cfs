@@ -4,7 +4,6 @@ package procfs
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/user"
 	"sort"
@@ -103,9 +102,6 @@ type Fd struct {
 	SocketRemoteAddr string
 }
 
-func procCtl(m ninep.OpenMode, r io.Reader, w io.Writer) {
-}
-
 func procDir(pid Pid) func() ([]ninep.Node, error) {
 	return func() ([]ninep.Node, error) {
 		now := time.Now()
@@ -166,7 +162,7 @@ func procDir(pid Pid) func() ([]ninep.Node, error) {
 	}
 }
 
-func procList(readOnly bool) func() ([]ninep.Node, error) {
+func procList() func() ([]ninep.Node, error) {
 	return func() ([]ninep.Node, error) {
 		pids, err := pidsList(QUERY_ALL)
 		if err != nil {
@@ -174,17 +170,9 @@ func procList(readOnly bool) func() ([]ninep.Node, error) {
 		}
 		sort.Sort(SortablePids(pids))
 		var nodes []ninep.Node
-		if readOnly {
-			nodes = make([]ninep.Node, len(pids))
-			for i, pid := range pids {
-				nodes[i] = dynamicDir(strconv.Itoa(int(pid)), procDir(pid))
-			}
-		} else {
-			nodes = make([]ninep.Node, len(pids)+1)
-			nodes[0] = dynamicCtlFile("ctl", procCtl)
-			for i, pid := range pids {
-				nodes[i+1] = dynamicDir(strconv.Itoa(int(pid)), procDir(pid))
-			}
+		nodes = make([]ninep.Node, len(pids))
+		for i, pid := range pids {
+			nodes[i] = dynamicDir(strconv.Itoa(int(pid)), procDir(pid))
 		}
 		return nodes, nil
 	}
@@ -192,14 +180,7 @@ func procList(readOnly bool) func() ([]ninep.Node, error) {
 
 func NewFs() ninep.FileSystem {
 	fs := &ninep.SimpleFileSystem{
-		Root: ninep.DynamicRootDir(procList(false)),
-	}
-	return fs
-}
-
-func NewReadOnlyFs() ninep.FileSystem {
-	fs := &ninep.SimpleFileSystem{
-		Root: ninep.DynamicRootDir(procList(true)),
+		Root: ninep.DynamicRootDir(procList()),
 	}
 	return fs
 }
@@ -222,10 +203,6 @@ func dynamicDir(name string, resolve func() ([]ninep.Node, error)) *ninep.Dynami
 		},
 		GetChildren: resolve,
 	}
-}
-
-func dynamicCtlFile(name string, thread func(m ninep.OpenMode, r io.Reader, w io.Writer)) *ninep.SimpleFile {
-	return ninep.CtlFile(name, 0777, time.Time{}, thread)
 }
 
 func staticStringFile(name string, modTime time.Time, contents string) *ninep.SimpleFile {

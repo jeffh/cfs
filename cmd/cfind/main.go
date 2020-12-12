@@ -84,8 +84,10 @@ func main() {
 	flag.StringVar(&kind, "type", "a", "Filter files by type ('d' = directory, 'f' = non-directory, 'a' = anything)")
 
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "find for CFS\n")
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [OPTIONS] ADDR/PATH EXPRESSION\n", os.Args[0])
+		w := flag.CommandLine.Output()
+		fmt.Fprintf(w, "Usage: %s [OPTIONS] ADDR/PATH EXPRESSION\n\n", os.Args[0])
+		fmt.Fprintf(w, "find for CFS\n\n")
+		fmt.Fprintf(w, "OPTIONS:\n")
 		flag.PrintDefaults()
 	}
 

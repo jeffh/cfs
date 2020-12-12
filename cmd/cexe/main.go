@@ -68,6 +68,7 @@ func main() {
 
 	flag.Usage = func() {
 		o := flag.CommandLine.Output()
+		fmt.Fprintf(o, "Usage: %s [OPTIONS] CMD [ARGS]\n\n", os.Args[0])
 		fmt.Fprintf(o, "exec for a remote system\n")
 		fmt.Fprintf(o, "\n")
 		fmt.Fprintf(o, "Executes a command. There's several modes of operation:\n")
@@ -81,7 +82,6 @@ func main() {
 		fmt.Fprintf(o, "\n")
 		fmt.Fprintf(o, "Note: these methods do not ensure isolation or for security.\n")
 		fmt.Fprintf(o, "\n")
-		fmt.Fprintf(o, "Usage: %s [OPTIONS] CMD [ARGS]\n", os.Args[0])
 		flag.PrintDefaults()
 	}
 
