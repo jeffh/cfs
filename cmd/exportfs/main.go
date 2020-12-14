@@ -5,18 +5,27 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/signal"
+	"strings"
 
 	"bazil.org/fuse"
 	"github.com/jeffh/cfs/cli"
+	ebilly "github.com/jeffh/cfs/exportfs/billy"
 	efuse "github.com/jeffh/cfs/exportfs/fuse"
 	"github.com/jeffh/cfs/fs/proxy"
 	"github.com/jeffh/cfs/ninep"
+	"github.com/willscott/go-nfs"
+	"github.com/willscott/go-nfs/helpers"
 )
 
 func main() {
+	var mountType string
 	var mountpoint string
+	var nfsAddr string
+	var cancelers []func()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
 		s := make(chan os.Signal, 1)
@@ -24,7 +33,14 @@ func main() {
 		<-s
 		fmt.Printf("Received term signal\n")
 		cancel()
+
+		for _, c := range cancelers {
+			c()
+		}
 	}()
+
+	flag.StringVar(&mountType, "type", "fuse", "Mount type to use, defaults to 'fuse', but can also be 'nfs'")
+	flag.StringVar(&nfsAddr, "nfs-addr", "127.0.0.1:0", "Address for NFS to listen on")
 
 	flag.Usage = func() {
 		w := flag.CommandLine.Output()
@@ -48,18 +64,40 @@ func main() {
 			TraceLog: logger,
 		}
 
-		return efuse.MountAndServeFS(
-			ctx,
-			mnt.FS,
-			mnt.Prefix,
-			loggable,
-			mountpoint,
-			fuse.FSName("9pfuse"),
-			fuse.Subtype("9pfusefs"),
-			fuse.VolumeName("exportfs"),
-			fuse.NoBrowse(),
-			fuse.NoAppleXattr(),
-			fuse.NoAppleDouble(),
-		)
+		switch mountType {
+		case "fuse":
+			return efuse.MountAndServeFS(
+				ctx,
+				mnt.FS,
+				mnt.Prefix,
+				loggable,
+				mountpoint,
+				fuse.FSName("9pfuse"),
+				fuse.Subtype("9pfusefs"),
+				fuse.VolumeName("exportfs"),
+				fuse.NoBrowse(),
+				fuse.NoAppleXattr(),
+				fuse.NoAppleDouble(),
+			)
+		case "nfs":
+			listener, err := net.Listen("tcp", nfsAddr)
+			if err != nil {
+				return err
+			}
+			cancelers = append(cancelers, func() {
+				listener.Close()
+			})
+			fmt.Printf("Listening on %s\n", listener.Addr())
+			handler := helpers.NewCachingHandler(helpers.NewNullAuthHandler(ebilly.ToBillyFS(mnt)))
+			srv := nfs.Server{Handler: handler}
+			srv.Context = ctx
+			err = srv.Serve(listener)
+			if strings.Contains(err.Error(), "use of closed network connection") {
+				err = nil
+			}
+			return err
+		default:
+			return fmt.Errorf("Unknown mount type: got %#v. Expected 'fuse' or 'nfs'", mountType)
+		}
 	})
 }

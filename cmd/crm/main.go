@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -27,6 +28,8 @@ func main() {
 		flag.PrintDefaults()
 	}
 
+	ctx := context.Background()
+
 	cli.MainClient(func(cfg *cli.ClientConfig, mnt proxy.FileSystemMount) error {
 		if flag.NArg() == 0 {
 			flag.Usage()
@@ -37,7 +40,7 @@ func main() {
 		files = append(files, flag.Args()[1:]...)
 
 		for _, path := range files {
-			node, err := mnt.FS.Traverse(path)
+			node, err := mnt.FS.Traverse(ctx, path)
 			if os.IsNotExist(err) {
 				return fmt.Errorf("Path does not exist: %s", filepath.Join(mnt.Addr, path))
 			}

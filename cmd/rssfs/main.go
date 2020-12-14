@@ -27,11 +27,11 @@ func main() {
 		flag.PrintDefaults()
 	}
 	cli.ServiceMain(cfg, func() ninep.FileSystem {
-		if len(os.Args) < 2 {
+		if flag.NArg() < 1 {
 			flag.Usage()
 			log.Fatalf("Expected to receive url of feed to load")
 		}
-		fs, err := rssfs.NewFsFromURL(os.Args[1])
+		fs, err := rssfs.NewFsFromURL(flag.Arg(0))
 		if err != nil {
 			log.Fatalf("failed to create dockerfs: %s", err)
 		}

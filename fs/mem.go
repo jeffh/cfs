@@ -409,6 +409,6 @@ func (m *Mem) Delete(ctx context.Context, path string) error {
 	}
 }
 
-func (m *Mem) Traverse(path string) (ninep.TraversableFile, error) {
-	return ninep.BasicTraverse(m, path)
+func (m *Mem) Traverse(ctx context.Context, path string) (ninep.TraversableFile, error) {
+	return ninep.BasicTraverse(ctx, m, path)
 }

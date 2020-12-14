@@ -1,8 +1,11 @@
 package proxy
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/jeffh/cfs/ninep"
@@ -16,6 +19,8 @@ type FileSystemMount struct {
 	Addr   string                      // optional
 	Clean  func() error                // optional
 }
+
+var _ ninep.TraversableFileSystem = (*FileSystemMount)(nil)
 
 func (fsm *FileSystemMount) String() string {
 	return fmt.Sprintf("%s/%s", fsm.Addr, fsm.Prefix)
@@ -71,4 +76,47 @@ func PrintMountsHelp(w io.Writer) {
 	fmt.Fprintf(w, "  - ':memory' indicates an in memory file system that gets discarded after the program exits.\n")
 	fmt.Fprintf(w, "  - ':tmp' indicates an on-disk temporarily directory that gets discarded after the program exits.\n")
 	fmt.Fprintf(w, "  -  starting with a '/' or '.' indicates an on-disk local path.\n")
+}
+
+func (fsm *FileSystemMount) Join(elem ...string) string {
+	path := filepath.Join(fsm.Prefix, filepath.Join(elem...))
+	fmt.Printf("Join(%#v, %#v)\n", fsm.Prefix, path)
+	if fsm.Prefix == "" || strings.HasPrefix(fsm.Prefix, path) {
+		return path
+	}
+	return fsm.Prefix
+}
+
+func (fsm *FileSystemMount) MakeDir(ctx context.Context, path string, mode ninep.Mode) error {
+	return fsm.FS.MakeDir(ctx, fsm.Join(path), mode)
+}
+func (fsm *FileSystemMount) CreateFile(ctx context.Context, path string, flag ninep.OpenMode, mode ninep.Mode) (ninep.FileHandle, error) {
+	return fsm.FS.CreateFile(ctx, fsm.Join(path), flag, mode)
+}
+func (fsm *FileSystemMount) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (ninep.FileHandle, error) {
+	return fsm.FS.OpenFile(ctx, fsm.Join(path), flag)
+}
+func (fsm *FileSystemMount) ListDir(ctx context.Context, path string) (ninep.FileInfoIterator, error) {
+	return fsm.FS.ListDir(ctx, fsm.Join(path))
+}
+func (fsm *FileSystemMount) Stat(ctx context.Context, path string) (os.FileInfo, error) {
+	fmt.Printf("FSM.Stat(%#v)\n", fsm.Join(path))
+	st, err := fsm.FS.Stat(ctx, fsm.Join(path))
+	if err != nil {
+		return nil, err
+	}
+
+	return ninep.FileInfoWithName(st, path), err
+}
+func (fsm *FileSystemMount) WriteStat(ctx context.Context, path string, s ninep.Stat) error {
+	if !s.NameNoTouch() {
+		s = s.CopyWithNewName(fsm.Join(s.Name()))
+	}
+	return fsm.FS.WriteStat(ctx, fsm.Join(path), s)
+}
+func (fsm *FileSystemMount) Delete(ctx context.Context, path string) error {
+	return fsm.FS.Delete(ctx, fsm.Join(path))
+}
+func (fsm *FileSystemMount) Traverse(ctx context.Context, path string) (ninep.TraversableFile, error) {
+	return fsm.FS.Traverse(ctx, fsm.Join(path))
 }

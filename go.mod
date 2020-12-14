@@ -11,17 +11,19 @@ require (
 	github.com/docker/go-connections v0.4.0
 	github.com/docker/go-units v0.4.0 // indirect
 	github.com/fatih/color v1.10.0
+	github.com/go-git/go-billy v4.2.0+incompatible
+	github.com/go-git/go-billy/v5 v5.0.0
 	github.com/google/shlex v0.0.0-20181106134648-c34317bd91bf
 	github.com/jeffh/b2client v0.0.0-20201208051109-e2be374a00d3
 	github.com/kardianos/service v1.0.0
-	github.com/kr/pretty v0.1.0 // indirect
 	github.com/kurin/blazer v0.5.3
 	github.com/mattn/go-isatty v0.0.12
 	github.com/mmcdole/gofeed v1.1.0
 	github.com/opencontainers/go-digest v1.0.0-rc1 // indirect
 	github.com/pkg/sftp v1.11.0
 	github.com/secure-io/sio-go v0.3.1
+	github.com/willscott/go-nfs v0.0.0-20201202020421-edac417fac47
 	golang.org/x/crypto v0.0.0-20200302210943-78000ba7a073
 	golang.org/x/sys v0.0.0-20200302150141-5c8b2ff67527
-	gopkg.in/check.v1 v1.0.0-20180628173108-788fd7840127 // indirect
+	gopkg.in/src-d/go-billy.v4 v4.3.2 // indirect
 )

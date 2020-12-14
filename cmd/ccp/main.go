@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -34,6 +35,8 @@ func main() {
 		fmt.Fprintf(w, "OPTIONS:\n")
 		flag.PrintDefaults()
 	}
+
+	ctx := context.Background()
 
 	cfg := cli.ClientConfig{}
 	cfg.SetFlags(nil)
@@ -79,7 +82,7 @@ func main() {
 	}
 	defer dstMnt.Close()
 
-	srcNode, err := srcMnt.FS.Traverse(srcMnt.Prefix)
+	srcNode, err := srcMnt.FS.Traverse(ctx, srcMnt.Prefix)
 	{
 
 		if errors.Is(err, os.ErrNotExist) {
@@ -102,13 +105,13 @@ func main() {
 	}
 	defer srcNode.Close()
 
-	dstNode, err := dstMnt.FS.Traverse(dstMnt.Prefix)
+	dstNode, err := dstMnt.FS.Traverse(ctx, dstMnt.Prefix)
 	dstIsParent := false
 	{
 		path := dstMnt.Prefix
 		if errors.Is(err, os.ErrNotExist) {
 			path = ninep.Dirname(path)
-			dstNode, err = dstMnt.FS.Traverse(path)
+			dstNode, err = dstMnt.FS.Traverse(ctx, path)
 			dstIsParent = true
 		}
 		if err != nil {
@@ -163,7 +166,7 @@ func main() {
 			last := stack[len(stack)-1]
 			fi, err := it.NextFileInfo()
 			name := fi.Name()
-			src, er := last.src.Traverse(name)
+			src, er := last.src.Traverse(ctx, name)
 			if er != nil {
 				fmt.Fprintf(os.Stderr, "Error read path on source fs: %s: %s\n", path.Join(srcMnt.Prefix, name), er)
 				continue

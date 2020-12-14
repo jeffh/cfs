@@ -252,6 +252,26 @@ func (m OpenMode) ToOsFlag() int {
 	return flags
 }
 
+func OpenModeFromOS(flag int) OpenMode {
+	var m OpenMode
+	if flag&os.O_RDWR != 0 {
+		m |= ORDWR
+	} else if flag&os.O_WRONLY != 0 {
+		m |= OWRITE
+	} else if flag&os.O_RDONLY != 0 {
+		m |= OREAD
+	}
+
+	if flag&os.O_EXCL != 0 {
+		m |= OCEXEC
+	}
+
+	if flag&os.O_TRUNC != 0 {
+		m |= OTRUNC
+	}
+	return m
+}
+
 type Mode uint32
 
 const (
@@ -707,6 +727,12 @@ func (s Stat) CopyFixedFieldsFrom(o Stat) {
 	s.SetAtime(o.Atime())
 	s.SetMtime(o.Mtime())
 	s.SetLength(o.Length())
+}
+
+func (s Stat) CopyWithNewName(n string) Stat {
+	st := NewStat(n, s.Uid(), s.Gid(), s.Muid())
+	st.CopyFixedFieldsFrom(s)
+	return st
 }
 
 func (s Stat) Nbytes() int   { return int(s.Size() + 2) }

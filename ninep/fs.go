@@ -157,7 +157,7 @@ func FileInfoSliceFromIterator(itr FileInfoIterator, max int) ([]os.FileInfo, er
 // These keys are only populated if the FileSystem is running under a tcp
 // server context.
 type FileSystem interface {
-	// Creates a directory. Implementations can reject if parent directories are missing
+	// Creates a directory. Implementions should recursively make directories whenever possible.
 	MakeDir(ctx context.Context, path string, mode Mode) error
 	// Creates a file and opens it for reading/writing
 	CreateFile(ctx context.Context, path string, flag OpenMode, mode Mode) (FileHandle, error)
@@ -399,7 +399,9 @@ type WriteOnlyFileHandle struct {
 	OnWrite func(p []byte) (int, error)
 }
 
-func (h *WriteOnlyFileHandle) ReadAt(p []byte, off int64) (n int, err error) { return 0, ErrUnsupported }
+func (h *WriteOnlyFileHandle) ReadAt(p []byte, off int64) (n int, err error) {
+	return 0, ErrUnsupported
+}
 func (h *WriteOnlyFileHandle) WriteAt(p []byte, off int64) (n int, err error) {
 	h.m.Lock()
 	defer h.m.Unlock()

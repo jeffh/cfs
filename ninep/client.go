@@ -118,7 +118,7 @@ func (f *FileProxy) TraverseFile(path string) (*FileProxy, error) {
 	return &FileProxy{f.fs, fid, qid, nil}, nil
 }
 
-func (f *FileProxy) Traverse(path string) (TraversableFile, error) {
+func (f *FileProxy) Traverse(ctx context.Context, path string) (TraversableFile, error) {
 	return f.TraverseFile(path)
 }
 
@@ -574,7 +574,7 @@ func (fs *FileSystemProxy) TraverseFile(path string) (*FileProxy, error) {
 	return &FileProxy{fs, fid, qid, nil}, nil
 }
 
-func (fs *FileSystemProxy) Traverse(path string) (TraversableFile, error) {
+func (fs *FileSystemProxy) Traverse(ctx context.Context, path string) (TraversableFile, error) {
 	f, err := fs.TraverseFile(path)
 	return f, err
 }
@@ -590,7 +590,7 @@ type TraversableFileSystem interface {
 }
 
 type Traversable interface {
-	Traverse(path string) (TraversableFile, error)
+	Traverse(ctx context.Context, path string) (TraversableFile, error)
 }
 
 // TODO: think about this interface more
@@ -628,8 +628,7 @@ var _ TraversableFile = (*BasicTraversableFile)(nil)
 //
 // This is an easy way to add TraversableFileSystem support to a FileSystem by
 // delegating to to this function.
-func BasicTraverse(fs FileSystem, path string) (TraversableFile, error) {
-	ctx := context.Background()
+func BasicTraverse(ctx context.Context, fs FileSystem, path string) (TraversableFile, error) {
 	info, err := fs.Stat(ctx, path)
 	if err != nil {
 		return nil, err
@@ -646,8 +645,7 @@ func BasicTraverse(fs FileSystem, path string) (TraversableFile, error) {
 
 // Traverses down to a possible file or directory.
 // An error is returned if the file or directory does not exist.
-func (t *BasicTraversableFile) Traverse(path string) (TraversableFile, error) {
-	ctx := context.Background()
+func (t *BasicTraversableFile) Traverse(ctx context.Context, path string) (TraversableFile, error) {
 	fpath := filepath.Join(t.Path, path)
 	info, err := t.FS.Stat(ctx, fpath)
 	if err != nil {
