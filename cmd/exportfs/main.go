@@ -52,12 +52,6 @@ func main() {
 	}
 
 	cli.MainClient(func(cfg *cli.ClientConfig, mnt proxy.FileSystemMount) error {
-		if flag.NArg() == 0 {
-			return fmt.Errorf("Missing mountpoint")
-		} else {
-			mountpoint = flag.Arg(1)
-		}
-
 		var logger ninep.Logger = log.New(os.Stderr, "", log.LstdFlags)
 		loggable := ninep.Loggable{
 			ErrorLog: logger,
@@ -66,6 +60,12 @@ func main() {
 
 		switch mountType {
 		case "fuse":
+			if flag.NArg() == 0 {
+				return fmt.Errorf("Missing mountpoint")
+			} else {
+				mountpoint = flag.Arg(1)
+			}
+
 			return efuse.MountAndServeFS(
 				ctx,
 				mnt.FS,

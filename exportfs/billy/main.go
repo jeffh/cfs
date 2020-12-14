@@ -16,6 +16,8 @@ import (
 
 var ErrUnsupported = errors.New("Unsupported")
 
+const trace = false
+
 func ToBillyFS(fsm proxy.FileSystemMount) bill.Filesystem {
 	return chroot.New(&bfs{fsm, ""}, string(filepath.Separator))
 }
@@ -32,7 +34,9 @@ func (fs *bfs) Open(filename string) (bill.File, error) {
 	return fs.OpenFile(filename, os.O_RDONLY, 0)
 }
 func (fs *bfs) OpenFile(filename string, flag int, perm os.FileMode) (bill.File, error) {
-	fmt.Printf("billy.FileSystem.OpenFile(%#v, %#v, %#v)\n", filename, flag, perm)
+	if trace {
+		fmt.Printf("billy.FileSystem.OpenFile(%#v, %#v, %#v)\n", filename, flag, perm)
+	}
 	ctx := context.Background()
 	path := filepath.Join(fs.Prefix, filename)
 	if flag&os.O_CREATE != 0 {
@@ -60,22 +64,30 @@ func (fs *bfs) OpenFile(filename string, flag int, perm os.FileMode) (bill.File,
 	}
 }
 func (fs *bfs) Stat(filename string) (os.FileInfo, error) {
-	fmt.Printf("billy.FileSystem.Stat(%#v) -> %#v\n", filename, filepath.Join(fs.Prefix, filename))
+	if trace {
+		fmt.Printf("billy.FileSystem.Stat(%#v) -> %#v\n", filename, filepath.Join(fs.Prefix, filename))
+	}
 	return fs.FS.Stat(context.Background(), filepath.Join(fs.Prefix, filename))
 }
 func (fs *bfs) Rename(oldpath, newpath string) error {
-	fmt.Printf("billy.FileSystem.Rename(%#v, %#v)\n", oldpath, newpath)
+	if trace {
+		fmt.Printf("billy.FileSystem.Rename(%#v, %#v)\n", oldpath, newpath)
+	}
 	st := ninep.SyncStatWithName(filepath.Join(fs.Prefix, newpath))
 	return fs.FS.WriteStat(context.Background(), filepath.Join(fs.Prefix, oldpath), st)
 }
 func (fs *bfs) Remove(filename string) error {
-	fmt.Printf("billy.FileSystem.Remove(%#v)\n", filename)
+	if trace {
+		fmt.Printf("billy.FileSystem.Remove(%#v)\n", filename)
+	}
 	return fs.FS.Delete(context.Background(), filepath.Join(fs.Prefix, filename))
 }
 func (fs *bfs) Join(elem ...string) string { return filepath.Clean(filepath.Join(elem...)) }
 
 func (fs *bfs) ReadDir(path string) ([]os.FileInfo, error) {
-	fmt.Printf("billy.FileSystem.ReadDir(%#v)\n", path)
+	if trace {
+		fmt.Printf("billy.FileSystem.ReadDir(%#v)\n", path)
+	}
 	it, err := fs.FS.ListDir(context.Background(), filepath.Join(fs.Prefix, path))
 	if err != nil {
 		return nil, err
@@ -83,7 +95,9 @@ func (fs *bfs) ReadDir(path string) ([]os.FileInfo, error) {
 	return ninep.FileInfoSliceFromIterator(it, -1)
 }
 func (fs *bfs) MkdirAll(filename string, perm os.FileMode) error {
-	fmt.Printf("billy.FileSystem.ReadDir(%#v, %#v)\n", filename, perm)
+	if trace {
+		fmt.Printf("billy.FileSystem.ReadDir(%#v, %#v)\n", filename, perm)
+	}
 	return fs.FS.MakeDir(context.Background(), filepath.Join(fs.Prefix, filename), ninep.ModeFromOS(perm))
 }
 

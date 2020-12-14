@@ -80,7 +80,6 @@ func PrintMountsHelp(w io.Writer) {
 
 func (fsm *FileSystemMount) Join(elem ...string) string {
 	path := filepath.Join(fsm.Prefix, filepath.Join(elem...))
-	fmt.Printf("Join(%#v, %#v)\n", fsm.Prefix, path)
 	if fsm.Prefix == "" || strings.HasPrefix(fsm.Prefix, path) {
 		return path
 	}
@@ -97,10 +96,10 @@ func (fsm *FileSystemMount) OpenFile(ctx context.Context, path string, flag nine
 	return fsm.FS.OpenFile(ctx, fsm.Join(path), flag)
 }
 func (fsm *FileSystemMount) ListDir(ctx context.Context, path string) (ninep.FileInfoIterator, error) {
+	// TODO: modify file info names...?
 	return fsm.FS.ListDir(ctx, fsm.Join(path))
 }
 func (fsm *FileSystemMount) Stat(ctx context.Context, path string) (os.FileInfo, error) {
-	fmt.Printf("FSM.Stat(%#v)\n", fsm.Join(path))
 	st, err := fsm.FS.Stat(ctx, fsm.Join(path))
 	if err != nil {
 		return nil, err
