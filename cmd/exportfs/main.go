@@ -10,7 +10,8 @@ import (
 	"os/signal"
 	"strings"
 
-	"bazil.org/fuse"
+	"github.com/hanwen/go-fuse/fs"
+	"github.com/hanwen/go-fuse/fuse"
 	"github.com/jeffh/cfs/cli"
 	ebilly "github.com/jeffh/cfs/exportfs/billy"
 	efuse "github.com/jeffh/cfs/exportfs/fuse"
@@ -66,18 +67,27 @@ func main() {
 				mountpoint = flag.Arg(1)
 			}
 
+			opts := fs.Options{
+				MountOptions: fuse.MountOptions{
+					FsName:        "9pfuse",
+					Name:          "exportfs",
+					DisableXAttrs: true,
+				},
+			}
+			// fuse.FSName("9pfuse"),
+			// fuse.Subtype("9pfusefs"),
+			// fuse.VolumeName("exportfs"),
+			// fuse.NoBrowse(),
+			// fuse.NoAppleXattr(),
+			// fuse.NoAppleDouble(),
+
 			return efuse.MountAndServeFS(
 				ctx,
 				mnt.FS,
 				mnt.Prefix,
 				loggable,
 				mountpoint,
-				fuse.FSName("9pfuse"),
-				fuse.Subtype("9pfusefs"),
-				fuse.VolumeName("exportfs"),
-				fuse.NoBrowse(),
-				fuse.NoAppleXattr(),
-				fuse.NoAppleDouble(),
+				&opts,
 			)
 		case "nfs":
 			listener, err := net.Listen("tcp", nfsAddr)

@@ -93,6 +93,37 @@ type FileInfoIterator interface {
 	Close() error
 }
 
+func MapFileInfoIterator(itr FileInfoIterator, f func(os.FileInfo) os.FileInfo) MappableFileInfoIterator {
+	if itr == nil {
+		return nil
+	}
+	if it, ok := itr.(MappableFileInfoIterator); ok {
+		return it.Map(f)
+	}
+	return &mapFileInfoIterator{itr, f}
+}
+
+type MappableFileInfoIterator interface {
+	FileInfoIterator
+	Map(f func(os.FileInfo) os.FileInfo) MappableFileInfoIterator
+}
+
+type mapFileInfoIterator struct {
+	FileInfoIterator
+	apply func(os.FileInfo) os.FileInfo
+}
+
+func (itr *mapFileInfoIterator) NextFileInfo() (os.FileInfo, error) {
+	fi, err := itr.FileInfoIterator.NextFileInfo()
+	if fi != nil {
+		fi = itr.apply(fi)
+	}
+	return fi, err
+}
+func (itr *mapFileInfoIterator) Map(f func(os.FileInfo) os.FileInfo) MappableFileInfoIterator {
+	return &mapFileInfoIterator{itr.FileInfoIterator, func(fi os.FileInfo) os.FileInfo { return f(itr.apply(fi)) }}
+}
+
 type fileInfoSliceIterator struct {
 	infos []os.FileInfo
 	index int
@@ -113,6 +144,9 @@ func (itr *fileInfoSliceIterator) NextFileInfo() (os.FileInfo, error) {
 	}
 	itr.index++
 	return itr.infos[idx], nil
+}
+func (itr *fileInfoSliceIterator) Map(f func(os.FileInfo) os.FileInfo) MappableFileInfoIterator {
+	return &mapFileInfoIterator{itr, f}
 }
 
 // Consumes an iterator to produce a slice of os.FileInfos

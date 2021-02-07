@@ -18,6 +18,8 @@ var ErrUnsupported = errors.New("Unsupported")
 
 const trace = false
 
+// ToBillyFS returns a billy file system proxy of the given ninep file system mount.
+// Currently, the returned file system proxy doesn't implement TempFile or Symlinks.
 func ToBillyFS(fsm proxy.FileSystemMount) bill.Filesystem {
 	return chroot.New(&bfs{fsm, ""}, string(filepath.Separator))
 }
@@ -106,8 +108,6 @@ func (fs *bfs) Symlink(target, link string) error          { return ErrUnsupport
 func (fs *bfs) Readlink(link string) (string, error)       { return "", ErrUnsupported }
 
 func (fs *bfs) TempFile(dir, prefix string) (bill.File, error) { return nil, ErrUnsupported }
-
-func (fs *bfs) Close() error { return fs.FS.Close() }
 
 type bfile struct {
 	fsm      proxy.FileSystemMount

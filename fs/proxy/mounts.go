@@ -96,8 +96,14 @@ func (fsm *FileSystemMount) OpenFile(ctx context.Context, path string, flag nine
 	return fsm.FS.OpenFile(ctx, fsm.Join(path), flag)
 }
 func (fsm *FileSystemMount) ListDir(ctx context.Context, path string) (ninep.FileInfoIterator, error) {
-	// TODO: modify file info names...?
-	return fsm.FS.ListDir(ctx, fsm.Join(path))
+	it, err := fsm.FS.ListDir(ctx, fsm.Join(path))
+	return ninep.MapFileInfoIterator(it, func(fi os.FileInfo) os.FileInfo {
+		name := fi.Name()
+		if strings.HasPrefix(fsm.Prefix, name) {
+			name = "/" + name[len(fsm.Prefix):]
+		}
+		return ninep.FileInfoWithName(fi, name)
+	}), err
 }
 func (fsm *FileSystemMount) Stat(ctx context.Context, path string) (os.FileInfo, error) {
 	st, err := fsm.FS.Stat(ctx, fsm.Join(path))
