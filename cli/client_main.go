@@ -5,6 +5,7 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"os/signal"
 	"os/user"
 	"path/filepath"
 	"runtime"
@@ -21,8 +22,8 @@ type ClientConfig struct {
 
 	PrintPrefix string
 
-	User  string
-	Mount string
+	User string
+	Root string
 
 	TimeoutInSeconds int
 
@@ -34,7 +35,7 @@ func (c *ClientConfig) SetFlags(f Flags) {
 		f = &StdFlags{}
 	}
 	f.StringVar(&c.User, "user", "", "Username to connect as, defaults to current system user")
-	f.StringVar(&c.Mount, "mount", "", "Default access path, defaults to empty string")
+	f.StringVar(&c.Root, "clientroot", "", "Default access path, defaults to empty string")
 	f.IntVar(&c.TimeoutInSeconds, "timeout", 5, "Timeout in seconds for client requests")
 	f.BoolVar(&c.PrintTraceMessages, "trace", false, "Print trace of 9p client to stdout")
 	f.BoolVar(&c.PrintErrorMessages, "err", false, "Print errors of 9p client to stderr")
@@ -144,7 +145,7 @@ func (c *ClientConfig) CreateClient(addr string) (ninep.Client, error) {
 		Transport: transport,
 		Loggable:  loggable,
 		User:      usr,
-		Mount:     c.Mount,
+		Mount:     c.Root,
 	}
 
 	if err = clt.Connect(addr); err != nil {
@@ -164,6 +165,15 @@ func (c *ClientConfig) CreateFs(addr string) (ninep.Client, *ninep.FileSystemPro
 		return nil, nil, fmt.Errorf("Failed to attach to 9p server: %s\n", err)
 	}
 	return client, fs, nil
+}
+
+func OnInterrupt(f func()) {
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt)
+	go func() {
+		<-c
+		f()
+	}()
 }
 
 func MainClient(fn func(cfg *ClientConfig, m proxy.FileSystemMount) error) {

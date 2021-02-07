@@ -7,11 +7,11 @@ import (
 	"log"
 	"net"
 	"os"
-	"os/signal"
 	"strings"
+	"time"
 
-	"github.com/hanwen/go-fuse/fs"
-	"github.com/hanwen/go-fuse/fuse"
+	"github.com/hanwen/go-fuse/v2/fs"
+	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/jeffh/cfs/cli"
 	ebilly "github.com/jeffh/cfs/exportfs/billy"
 	efuse "github.com/jeffh/cfs/exportfs/fuse"
@@ -25,23 +25,10 @@ func main() {
 	var mountType string
 	var mountpoint string
 	var nfsAddr string
-	var cancelers []func()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		s := make(chan os.Signal, 1)
-		signal.Notify(s, os.Interrupt)
-		<-s
-		fmt.Printf("Received term signal\n")
-		cancel()
-
-		for _, c := range cancelers {
-			c()
-		}
-	}()
 
 	flag.StringVar(&mountType, "type", "fuse", "Mount type to use, defaults to 'fuse', but can also be 'nfs'")
 	flag.StringVar(&nfsAddr, "nfs-addr", "127.0.0.1:0", "Address for NFS to listen on")
+	flag.StringVar(&mountpoint, "mount", "/tmp/exportfs", "Directory to mount the 9p file system on")
 
 	flag.Usage = func() {
 		w := flag.CommandLine.Output()
@@ -52,6 +39,9 @@ func main() {
 		flag.PrintDefaults()
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	cli.OnInterrupt(cancel)
+
 	cli.MainClient(func(cfg *cli.ClientConfig, mnt proxy.FileSystemMount) error {
 		var logger ninep.Logger = log.New(os.Stderr, "", log.LstdFlags)
 		loggable := ninep.Loggable{
@@ -61,18 +51,16 @@ func main() {
 
 		switch mountType {
 		case "fuse":
-			if flag.NArg() == 0 {
-				return fmt.Errorf("Missing mountpoint")
-			} else {
-				mountpoint = flag.Arg(1)
-			}
-
+			oneSec := time.Second
 			opts := fs.Options{
 				MountOptions: fuse.MountOptions{
 					FsName:        "9pfuse",
 					Name:          "exportfs",
 					DisableXAttrs: true,
+					DirectMount:   true,
 				},
+				EntryTimeout: &oneSec,
+				AttrTimeout:  &oneSec,
 			}
 			// fuse.FSName("9pfuse"),
 			// fuse.Subtype("9pfusefs"),
@@ -94,9 +82,8 @@ func main() {
 			if err != nil {
 				return err
 			}
-			cancelers = append(cancelers, func() {
-				listener.Close()
-			})
+			cli.OnInterrupt(func() { listener.Close() })
+			defer listener.Close()
 			fmt.Printf("Listening on %s\n", listener.Addr())
 			handler := helpers.NewCachingHandler(helpers.NewNullAuthHandler(ebilly.ToBillyFS(mnt)))
 			srv := nfs.Server{Handler: handler}

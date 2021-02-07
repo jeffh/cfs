@@ -14,8 +14,8 @@ import (
 	"syscall"
 	"unsafe"
 
-	fs "github.com/hanwen/go-fuse/fs"
-	"github.com/hanwen/go-fuse/fuse"
+	fs "github.com/hanwen/go-fuse/v2/fs"
+	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/jeffh/cfs/ninep"
 )
 
@@ -27,40 +27,40 @@ func MountAndServeFS(ctx context.Context, f ninep.FileSystem, prefix string, log
 	}
 	root := &Dir{fs: f, path: "", config: fscfg}
 
-	srv, err := fs.Mount(mountpoint, root, opts)
-	if err != nil {
+	out := make(chan error, 1)
+
+	go func() {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithCancel(ctx)
+		defer cancel()
+
+		srv, err := fs.Mount(mountpoint, root, opts)
+		if err != nil {
+			out <- err
+			close(out)
+			return
+		}
+		go func() {
+			fmt.Printf("Wait for done\n")
+			select {
+			case <-ctx.Done():
+			case <-out:
+				return
+			}
+			fmt.Printf("Unmounting\n")
+			err := srv.Unmount()
+			fmt.Printf("Unmount: %s\n", err)
+		}()
+
+		srv.Wait()
+		close(out)
+	}()
+
+	err, ok := <-out
+	if ok {
 		return err
 	}
-
-	srv.Wait()
 	return nil
-	// c, err := fs.Mount(mountpoint, opts)
-	// if err != nil {
-	// 	return err
-	// }
-
-	// subctx, cancel := context.WithCancel(ctx)
-	// defer cancel()
-	// defer c.Close()
-	// defer fuse.Unmount(mountpoint)
-
-	// errCh := make(chan error)
-	// go func() {
-	// 	errCh <- fs.Serve(c, &Fs{Fs: f, Config: fscfg})
-	// }()
-
-	// // check if the mount process has an error to report
-	// <-c.Ready
-	// if err := c.MountError; err != nil {
-	// 	return err
-	// }
-
-	// select {
-	// case err := <-errCh:
-	// 	return err
-	// case <-subctx.Done():
-	// }
-	// return nil
 }
 
 type FsConfig struct {
