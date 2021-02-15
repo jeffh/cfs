@@ -61,7 +61,7 @@ func (h *directoryHandle) ReadAt(p []byte, offset int64) (int, error) {
 		for _, info := range h.buffer {
 			if info != nil {
 				subpath := filepath.Join(h.path, info.Name())
-				h.session.DeleteQid(subpath)
+				h.session.MayDeleteQid(subpath)
 			}
 		}
 
@@ -112,7 +112,7 @@ func (h *directoryHandle) Close() error {
 	for _, info := range h.buffer {
 		if info != nil {
 			subpath := filepath.Join(h.path, info.Name())
-			h.session.DeleteQid(subpath)
+			h.session.MayDeleteQid(subpath)
 		}
 	}
 	// reset
@@ -611,7 +611,7 @@ func (h *defaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 					h.Fs.Delete(ctx, fil.Name)
 				}
 			}
-			session.DeleteQid(fil.Name) // not ideal, since there may be other active references! but this is better then leaking memory?
+			session.MayDeleteQid(fil.Name) // not ideal, since there may be other active references! but this is better then leaking memory?
 			session.DeleteFid(m.Fid())
 			h.Tracef("srv: Tclunk: %s %v", m.Fid(), fil.Name)
 			w.Rclunk()

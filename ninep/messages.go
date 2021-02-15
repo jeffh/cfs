@@ -369,7 +369,7 @@ func ModeFromFileInfo(info os.FileInfo) Mode {
 }
 
 func ModeFromOS(mode os.FileMode) Mode {
-	var perm Mode
+	perm := Mode(mode.Perm())
 	if mode&os.ModeDir != 0 {
 		perm |= M_DIR
 	}
@@ -382,7 +382,7 @@ func ModeFromOS(mode os.FileMode) Mode {
 	if mode&os.ModeTemporary != 0 {
 		perm |= M_TMP
 	}
-	return perm | Mode(mode.Perm())
+	return perm
 }
 
 var bo = binary.LittleEndian

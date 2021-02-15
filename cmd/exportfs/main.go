@@ -58,9 +58,11 @@ func main() {
 					Name:          "exportfs",
 					DisableXAttrs: true,
 					DirectMount:   true,
+					Debug:         true,
 				},
 				EntryTimeout: &oneSec,
 				AttrTimeout:  &oneSec,
+				Logger:       log.New(os.Stdout, "[fuse] ", log.LstdFlags),
 			}
 			// fuse.FSName("9pfuse"),
 			// fuse.Subtype("9pfusefs"),

@@ -583,6 +583,8 @@ func (s *Session) DeleteQid(name string) {
 	s.qids.Delete(name)
 }
 
+func (s *Session) MayDeleteQid(name string) {}
+
 func (s *Session) DeleteFileHandle(q Qid) {
 	s.m.Lock()
 	delete(s.qidsToHandle, q.Path())
