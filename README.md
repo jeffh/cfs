@@ -1,6 +1,6 @@
 # CFS
 
-Cloud File System. [Project](https://3.basecamp.com/4288314/projects/13730131)
+Cloud File System.
 
 A cloud-abstraction for a file system. Provides a unified way of operating on
 files in the cloud.
