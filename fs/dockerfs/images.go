@@ -248,7 +248,7 @@ func imageBuildCtl(c *client.Client) func(ninep.OpenMode, io.Reader, io.Writer) 
 			return
 		}
 
-		kvs := kvp.ParseKeyValues(line)
+		kvs := kvp.MustParseKeyValues(line)
 		buildOpts := types.ImageBuildOptions{
 			Tags:           kvs.GetAll("tags"),
 			SuppressOutput: kvs.GetOneBool("suppress_output"),

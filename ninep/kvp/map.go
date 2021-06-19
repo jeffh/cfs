@@ -15,14 +15,26 @@ type Map map[string][]string
 
 func (kv Map) SortedKeyPairs() [][2]string {
 	cnt := 0
+	emptyKeys := make([]string, 0, len(kv))
 	keys := make([]string, 0, len(kv))
 	for k, vs := range kv {
-		keys = append(keys, k)
+		if len(vs) == 1 && vs[0] == "" {
+			emptyKeys = append(emptyKeys, k)
+		} else {
+			keys = append(keys, k)
+		}
 		cnt += len(vs)
 	}
+	sort.Strings(emptyKeys)
 	sort.Strings(keys)
 	pairs := make([][2]string, 0, cnt)
 
+	for _, k := range emptyKeys {
+		vs := kv[k]
+		for _, v := range vs {
+			pairs = append(pairs, [2]string{k, v})
+		}
+	}
 	for _, k := range keys {
 		vs := kv[k]
 		for _, v := range vs {
@@ -60,10 +72,9 @@ func (kv Map) GetAllInt64s(k string) []int64 {
 		i := make([]int64, 0, len(v))
 		for _, value := range v {
 			n, err := strconv.ParseInt(value, 10, 64)
-			if err != nil {
-				n = 0
+			if err == nil {
+				i = append(i, n)
 			}
-			i = append(i, n)
 		}
 		return i
 	}
@@ -171,10 +182,9 @@ func (kv Map) Flatten() map[string]string {
 	return m
 }
 
-func removeQuotesIfNeeded(v string) string {
-	// v = strings.TrimSpace(v)
+func unescape(v string) string {
 	Lk := len(v)
-	if Lk >= 2 && v[0] == '"' && v[Lk-1] == '"' {
+	if Lk >= 2 && unicode.In(rune(v[0]), unicode.Quotation_Mark) && v[Lk-1] == v[0] {
 		idx := strings.IndexAny(v[1:Lk-1], "\"\\")
 
 		if idx == -1 {
@@ -255,7 +265,23 @@ func (cfg *Config) mustParseString(value string) []string {
 	return r
 }
 
-func (cfg *Config) ParseKeyPairs(value string) [][2]string {
+func (cfg *Config) ParseKeyPairs(value string) ([][2]string, error) {
+	items, err := cfg.parseString(value)
+
+	pairs := make([][2]string, 0, len(items))
+	for _, item := range items {
+		x := strings.Split(item, string(cfg.KVSeparator))
+		var v string
+		if len(x) > 1 {
+			v = unescape(x[1])
+		}
+		pairs = append(pairs, [2]string{unescape(x[0]), v})
+	}
+
+	return pairs, err
+}
+
+func (cfg *Config) MustParseKeyPairs(value string) [][2]string {
 	items := cfg.mustParseString(value)
 
 	pairs := make([][2]string, 0, len(items))
@@ -263,43 +289,44 @@ func (cfg *Config) ParseKeyPairs(value string) [][2]string {
 		x := strings.Split(item, string(cfg.KVSeparator))
 		var v string
 		if len(x) > 1 {
-			v = removeQuotesIfNeeded(x[1])
+			v = unescape(x[1])
 		}
-		pairs = append(pairs, [2]string{removeQuotesIfNeeded(x[0]), v})
+		pairs = append(pairs, [2]string{unescape(x[0]), v})
 	}
 
 	return pairs
 }
-func ParseKeyPairs(value string) [][2]string { return DefaultConfig.ParseKeyPairs(value) }
 
-func (cfg *Config) ParseKeyValues(value string) Map {
-	lastQuote := rune(0)
-	isSeparator := cfg.IsPairSeparator
+func ParseKeyPairs(value string) ([][2]string, error) { return DefaultConfig.ParseKeyPairs(value) }
+func MustParseKeyPairs(value string) [][2]string      { return DefaultConfig.MustParseKeyPairs(value) }
 
-	items := strings.FieldsFunc(value, func(c rune) bool {
-		switch {
-		case c == '\\':
-			return false
-		case c == lastQuote:
-			lastQuote = rune(0)
-			return false
-		case lastQuote != rune(0):
-			return false
-		case unicode.In(c, unicode.Quotation_Mark):
-			return false
-		default:
-			return isSeparator(c)
-
-		}
-	})
+func (cfg *Config) ParseKeyValues(value string) (Map, error) {
+	items, err := cfg.parseString(value)
 
 	m := make(Map)
 	for _, item := range items {
 		x := strings.Split(item, string(cfg.KVSeparator))
-		k := removeQuotesIfNeeded(x[0])
+		k := unescape(x[0])
 		var v string
 		if len(x) > 1 {
-			v = removeQuotesIfNeeded(x[1])
+			v = unescape(x[1])
+		}
+
+		m[k] = append(m[k], v)
+	}
+
+	return m, err
+}
+func (cfg *Config) MustParseKeyValues(value string) Map {
+	items := cfg.mustParseString(value)
+
+	m := make(Map)
+	for _, item := range items {
+		x := strings.Split(item, string(cfg.KVSeparator))
+		k := unescape(x[0])
+		var v string
+		if len(x) > 1 {
+			v = unescape(x[1])
 		}
 
 		m[k] = append(m[k], v)
@@ -307,7 +334,8 @@ func (cfg *Config) ParseKeyValues(value string) Map {
 
 	return m
 }
-func ParseKeyValues(value string) Map { return DefaultConfig.ParseKeyValues(value) }
+func ParseKeyValues(value string) (Map, error) { return DefaultConfig.ParseKeyValues(value) }
+func MustParseKeyValues(value string) Map      { return DefaultConfig.MustParseKeyValues(value) }
 
 func (cfg *Config) ProcessKeyValuesLineLoop(r io.Reader, maxLineLen int, do func(k Map, err error) (ok bool)) {
 	if maxLineLen <= 0 {
@@ -338,7 +366,7 @@ func (cfg *Config) ProcessKeyValuesLineLoop(r io.Reader, maxLineLen int, do func
 				}
 			}
 		} else {
-			kv := cfg.ParseKeyValues(string(line))
+			kv := cfg.MustParseKeyValues(string(line))
 			if do(kv, nil) {
 				continue
 			}

@@ -29,21 +29,31 @@ func (cfg *Config) keyValueNeedsEscape(s string) bool {
 }
 
 func (cfg *Config) KeyPair(key, value string) string {
-	if cfg.keyValueNeedsEscape(key) || cfg.keyValueNeedsEscape(value) {
-		return fmt.Sprintf("%#v%c%#v", key, cfg.KVSeparator, value)
+	keyNeedsEscape := cfg.keyValueNeedsEscape(key)
+	if len(value) != 0 {
+		valueNeedsEscape := cfg.keyValueNeedsEscape(value)
+		if keyNeedsEscape && valueNeedsEscape {
+			return fmt.Sprintf("%#v%c%#v", key, cfg.KVSeparator, value)
+		} else if keyNeedsEscape {
+			return fmt.Sprintf("%#v%c%s", key, cfg.KVSeparator, value)
+		} else if valueNeedsEscape {
+			return fmt.Sprintf("%s%c%#v", key, cfg.KVSeparator, value)
+		} else {
+			return fmt.Sprintf("%s%c%s", key, cfg.KVSeparator, value)
+		}
 	} else {
-		return fmt.Sprintf("%v%c%v", key, cfg.KVSeparator, value)
+		if keyNeedsEscape {
+			return fmt.Sprintf("%#v", key)
+		} else {
+			return key
+		}
 	}
 }
 
 func (cfg *Config) KeyPairs(pairs [][2]string) string {
 	res := make([]string, len(pairs))
 	for i, p := range pairs {
-		if cfg.keyValueNeedsEscape(p[0]) || cfg.keyValueNeedsEscape(p[1]) {
-			res[i] = fmt.Sprintf("%#v%c%#v", p[0], cfg.KVSeparator, p[1])
-		} else {
-			res[i] = fmt.Sprintf("%v%c%v", p[0], cfg.KVSeparator, p[1])
-		}
+		res[i] = cfg.KeyPair(p[0], p[1])
 	}
 	return strings.Join(res, string(cfg.OutputPairSeparator))
 }
@@ -52,11 +62,7 @@ func (cfg *Config) NonEmptyKeyPairs(pairs [][2]string) string {
 	res := make([]string, 0, len(pairs))
 	for _, p := range pairs {
 		if p[1] != "" {
-			if cfg.keyValueNeedsEscape(p[0]) || cfg.keyValueNeedsEscape(p[1]) {
-				res = append(res, fmt.Sprintf("%#v%c%#v", p[0], cfg.KVSeparator, p[1]))
-			} else {
-				res = append(res, fmt.Sprintf("%v%c%v", p[0], cfg.KVSeparator, p[1]))
-			}
+			res = append(res, cfg.KeyPair(p[0], p[1]))
 		}
 	}
 	return strings.Join(res, string(cfg.OutputPairSeparator))
@@ -65,11 +71,7 @@ func (cfg *Config) NonEmptyKeyPairs(pairs [][2]string) string {
 func (cfg *Config) KeyValues(kvs map[string]string) string {
 	res := make([]string, 0, len(kvs))
 	for k, v := range kvs {
-		if cfg.keyValueNeedsEscape(k) || cfg.keyValueNeedsEscape(v) {
-			res = append(res, fmt.Sprintf("%#v%c%#v", k, cfg.KVSeparator, v))
-		} else {
-			res = append(res, fmt.Sprintf("%v%c%v", k, cfg.KVSeparator, v))
-		}
+		res = append(res, cfg.KeyPair(k, v))
 	}
 	return strings.Join(res, string(cfg.OutputPairSeparator))
 }

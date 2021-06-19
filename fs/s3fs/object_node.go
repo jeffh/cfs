@@ -138,7 +138,7 @@ func objectFileHandle(s3c *S3Ctx, bucketName, objectKey string, op objectOperati
 						}
 						fmt.Fprintf(rw, "error: line too long\n")
 					} else {
-						kv := kvp.ParseKeyValues(string(line))
+						kv := kvp.MustParseKeyValues(string(line))
 						total := interpretTimeKeyValues(kv)
 						if total <= 0 {
 							fmt.Fprintf(rw, "error: duration cannot be less than or equal to zero seconds")
@@ -377,7 +377,7 @@ func objectFileHandle(s3c *S3Ctx, bucketName, objectKey string, op objectOperati
 				var buf []byte
 				buf, err = ioutil.ReadAll(r)
 				if err == nil {
-					kv := kvp.ParseKeyValues(string(buf))
+					kv := kvp.MustParseKeyValues(string(buf))
 					input := s3.PutObjectInput{
 						Bucket: aws.String(bucketName),
 						Key:    aws.String(objectKey),

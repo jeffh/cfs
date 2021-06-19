@@ -197,7 +197,7 @@ func bucketAclFile(s3c *S3Ctx, bucketName string) *ninep.SimpleFile {
 									}
 								}
 							} else {
-								kv := kvp.ParseKeyValues(string(line))
+								kv := kvp.MustParseKeyValues(string(line))
 								input := s3.PutBucketAclInput{
 									Bucket: aws.String(bucketName),
 								}
