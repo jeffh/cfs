@@ -12,7 +12,6 @@ require (
 	github.com/fatih/color v1.10.0
 	github.com/go-git/go-billy/v5 v5.0.0
 	github.com/google/shlex v0.0.0-20181106134648-c34317bd91bf
-	github.com/hanwen/go-fuse v1.0.1-0.20190726130028-2f298055551b
 	github.com/hanwen/go-fuse/v2 v2.0.4-0.20210125162859-8e0bbdb16cb7
 	github.com/jeffh/b2client v0.0.0-20201208051109-e2be374a00d3
 	github.com/kardianos/service v1.0.0
