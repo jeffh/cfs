@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/jeffh/cfs/ninep"
+	"github.com/jeffh/cfs/ninep/kvp"
 )
 
 ////////////////////////////////
@@ -196,7 +197,7 @@ func bucketAclFile(s3c *S3Ctx, bucketName string) *ninep.SimpleFile {
 									}
 								}
 							} else {
-								kv := ninep.ParseKeyValues(string(line))
+								kv := kvp.ParseKeyValues(string(line))
 								input := s3.PutBucketAclInput{
 									Bucket: aws.String(bucketName),
 								}
@@ -253,7 +254,7 @@ func bucketAclFile(s3c *S3Ctx, bucketName string) *ninep.SimpleFile {
 							pairs = append(pairs, [2]string{"type", aws.StringValue(g.Type)})
 							pairs = append(pairs, [2]string{"uri", aws.StringValue(g.URI)})
 						}
-						fmt.Fprintf(rw, "%s\n", ninep.NonEmptyKeyPairs(pairs))
+						fmt.Fprintf(rw, "%s\n", kvp.NonEmptyKeyPairs(pairs))
 					}
 				}()
 			}
@@ -336,7 +337,7 @@ func bucketCorsFile(s3c *S3Ctx, bucketName string) *ninep.SimpleFile {
 								values = values[:0]
 							}
 
-							fmt.Fprintf(rw, "%s\n", ninep.NonEmptyKeyPairs(pairs))
+							fmt.Fprintf(rw, "%s\n", kvp.NonEmptyKeyPairs(pairs))
 						}
 					}()
 				}

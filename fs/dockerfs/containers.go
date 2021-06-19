@@ -18,6 +18,7 @@ import (
 	"github.com/docker/go-connections/nat"
 	"github.com/google/shlex"
 	"github.com/jeffh/cfs/ninep"
+	"github.com/jeffh/cfs/ninep/kvp"
 )
 
 func containerDir(c *client.Client, name string, ct types.Container) ninep.Node {
@@ -107,7 +108,7 @@ func containerDir(c *client.Client, name string, ct types.Container) ninep.Node 
 					return
 				}
 
-				_, err = fmt.Fprintf(wr, "%s\n", ninep.KeyPairs([][2]string{
+				_, err = fmt.Fprintf(wr, "%s\n", kvp.KeyPairs([][2]string{
 					{"read_timestamp", fmt.Sprintf("%s", stat.Read)},
 					{"cpu_usage.total", fmt.Sprintf("%d", stat.CPUStats.CPUUsage.TotalUsage)},
 					{"cpu_usage.per_cpu", uint64sStr(stat.CPUStats.CPUUsage.PercpuUsage)},

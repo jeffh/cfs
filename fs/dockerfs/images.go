@@ -13,6 +13,7 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/google/shlex"
 	"github.com/jeffh/cfs/ninep"
+	"github.com/jeffh/cfs/ninep/kvp"
 )
 
 func imageDir(c *client.Client, name string, img types.ImageSummary) ninep.Node {
@@ -247,7 +248,7 @@ func imageBuildCtl(c *client.Client) func(ninep.OpenMode, io.Reader, io.Writer) 
 			return
 		}
 
-		kvs := ninep.ParseKeyValues(line)
+		kvs := kvp.ParseKeyValues(line)
 		buildOpts := types.ImageBuildOptions{
 			Tags:           kvs.GetAll("tags"),
 			SuppressOutput: kvs.GetOneBool("suppress_output"),

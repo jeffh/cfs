@@ -11,6 +11,7 @@ import (
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/client"
 	"github.com/jeffh/cfs/ninep"
+	"github.com/jeffh/cfs/ninep/kvp"
 )
 
 type Fs struct {
@@ -136,7 +137,7 @@ state - list a subset of containers by their current state.`
 						files := make([]ninep.Node, 0, 53)
 						files = append(files, staticStringFile("id", now, info.ID))
 
-						files = append(files, staticStringFile("stats", now, ninep.KeyValues(map[string]string{
+						files = append(files, staticStringFile("stats", now, kvp.KeyValues(map[string]string{
 							"num_containers":         intStr(info.Containers),
 							"num_containers_running": intStr(info.ContainersRunning),
 							"num_containers_paused":  intStr(info.ContainersPaused),
@@ -154,10 +155,10 @@ state - list a subset of containers by their current state.`
 							info.Driver,
 							info.LoggingDriver,
 							info.CgroupDriver,
-							ninep.KeyPairs(info.DriverStatus),
+							kvp.KeyPairs(info.DriverStatus),
 						)))
-						files = append(files, staticStringFile("status", now, ninep.KeyPairs(info.SystemStatus)))
-						files = append(files, staticStringFile("flags", now, ninep.KeyValues(map[string]string{
+						files = append(files, staticStringFile("status", now, kvp.KeyPairs(info.SystemStatus)))
+						files = append(files, staticStringFile("flags", now, kvp.KeyValues(map[string]string{
 							"memory_limit":         boolStr(info.MemoryLimit),
 							"swap_limit":           boolStr(info.SwapLimit),
 							"kernel_memory":        boolStr(info.KernelMemory),
@@ -179,7 +180,7 @@ state - list a subset of containers by their current state.`
 							staticStringFile("authorization", now, strings.Join(info.Plugins.Authorization, "\n")),
 						))
 
-						files = append(files, staticStringFile("about", now, ninep.KeyValues(map[string]string{
+						files = append(files, staticStringFile("about", now, kvp.KeyValues(map[string]string{
 							"kernel_version":    info.KernelVersion,
 							"os":                info.OperatingSystem,
 							"os_type":           info.OSType,

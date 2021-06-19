@@ -6,19 +6,19 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/jeffh/cfs/ninep"
+	"github.com/jeffh/cfs/ninep/kvp"
 )
 
-func interpretTimeKeyValues(kv ninep.KVMap) time.Duration {
+func interpretTimeKeyValues(m kvp.Map) time.Duration {
 	total := time.Duration(0)
-	total += time.Duration(kv.GetOneInt64("seconds"))
-	total += time.Duration(kv.GetOneInt64("second"))
-	total += time.Duration(kv.GetOneInt64("minute")) * time.Minute
-	total += time.Duration(kv.GetOneInt64("minutes")) * time.Minute
-	total += time.Duration(kv.GetOneInt64("hour")) * time.Hour
-	total += time.Duration(kv.GetOneInt64("hours")) * time.Hour
-	total += time.Duration(kv.GetOneInt64("day")) * 24 * time.Hour
-	total += time.Duration(kv.GetOneInt64("days")) * 24 * time.Hour
+	total += time.Duration(m.GetOneInt64("seconds"))
+	total += time.Duration(m.GetOneInt64("second"))
+	total += time.Duration(m.GetOneInt64("minute")) * time.Minute
+	total += time.Duration(m.GetOneInt64("minutes")) * time.Minute
+	total += time.Duration(m.GetOneInt64("hour")) * time.Hour
+	total += time.Duration(m.GetOneInt64("hours")) * time.Hour
+	total += time.Duration(m.GetOneInt64("day")) * 24 * time.Hour
+	total += time.Duration(m.GetOneInt64("days")) * 24 * time.Hour
 	return total
 }
 
@@ -45,7 +45,7 @@ func timePtrIfNotEmpty(s string) *time.Time {
 	return &t
 }
 
-func mapPtrIfNotEmpty(m ninep.KVMap) map[string]*string {
+func mapPtrIfNotEmpty(m kvp.Map) map[string]*string {
 	if len(m) != 0 {
 		res := make(map[string]*string)
 		for k, v := range m {
@@ -60,14 +60,14 @@ func mapPtrIfNotEmpty(m ninep.KVMap) map[string]*string {
 
 func writeKeyStringPtr(w io.Writer, key string, value *string) (err error) {
 	if v := value; v != nil {
-		_, err = fmt.Fprintf(w, "%s\n", ninep.KeyPair(key, *v))
+		_, err = fmt.Fprintf(w, "%s\n", kvp.KeyPair(key, *v))
 	}
 	return
 }
 
 func writeKeyInt64Ptr(w io.Writer, key string, value *int64) (err error) {
 	if v := value; v != nil {
-		_, err = fmt.Fprintf(w, "%s\n", ninep.KeyPair(key, strconv.FormatInt(*v, 10)))
+		_, err = fmt.Fprintf(w, "%s\n", kvp.KeyPair(key, strconv.FormatInt(*v, 10)))
 	}
 	return
 }
@@ -80,13 +80,13 @@ func writeKeyBoolPtr(w io.Writer, key string, value *bool) (err error) {
 		} else {
 			s = "false"
 		}
-		_, err = fmt.Fprintf(w, "%s\n", ninep.KeyPair(key, s))
+		_, err = fmt.Fprintf(w, "%s\n", kvp.KeyPair(key, s))
 	}
 	return
 }
 func writeKeyTimePtr(w io.Writer, key string, value *time.Time) (err error) {
 	if v := value; v != nil {
-		_, err = fmt.Fprintf(w, "%s\n", ninep.KeyPair(key, v.String()))
+		_, err = fmt.Fprintf(w, "%s\n", kvp.KeyPair(key, v.String()))
 	}
 	return
 }

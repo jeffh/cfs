@@ -15,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/jeffh/cfs/ninep"
+	"github.com/jeffh/cfs/ninep/kvp"
 )
 
 type objectOperation int
@@ -91,7 +92,7 @@ func objectInfo(nameOffset int, object *s3.Object, fallbackKey string) os.FileIn
 }
 
 func objectFileHandle(s3c *S3Ctx, bucketName, objectKey string, op objectOperation, m ninep.OpenMode) (ninep.FileHandle, error) {
-	timeBasedFileHandle := func(h *ninep.RWFileHandle, read func(w io.Writer, d time.Duration, kv ninep.KVMap)) error {
+	timeBasedFileHandle := func(h *ninep.RWFileHandle, read func(w io.Writer, d time.Duration, kv kvp.Map)) error {
 		wr, ww := io.Pipe()
 		rr, rw := io.Pipe()
 		h.R = rr
@@ -137,7 +138,7 @@ func objectFileHandle(s3c *S3Ctx, bucketName, objectKey string, op objectOperati
 						}
 						fmt.Fprintf(rw, "error: line too long\n")
 					} else {
-						kv := ninep.ParseKeyValues(string(line))
+						kv := kvp.ParseKeyValues(string(line))
 						total := interpretTimeKeyValues(kv)
 						if total <= 0 {
 							fmt.Fprintf(rw, "error: duration cannot be less than or equal to zero seconds")
@@ -190,7 +191,7 @@ func objectFileHandle(s3c *S3Ctx, bucketName, objectKey string, op objectOperati
 			h.W = w
 		}
 	case opPresignedDownloadUrl:
-		err := timeBasedFileHandle(h, func(w io.Writer, d time.Duration, kv ninep.KVMap) {
+		err := timeBasedFileHandle(h, func(w io.Writer, d time.Duration, kv kvp.Map) {
 			input := s3.GetObjectInput{
 				Bucket: aws.String(bucketName),
 				Key:    aws.String(objectKey),
@@ -225,7 +226,7 @@ func objectFileHandle(s3c *S3Ctx, bucketName, objectKey string, op objectOperati
 		})
 		return h, err
 	case opPresignedUploadUrl:
-		err := timeBasedFileHandle(h, func(w io.Writer, d time.Duration, kv ninep.KVMap) {
+		err := timeBasedFileHandle(h, func(w io.Writer, d time.Duration, kv kvp.Map) {
 			input := s3.PutObjectInput{
 				Bucket: aws.String(bucketName),
 				Key:    aws.String(objectKey),
@@ -376,7 +377,7 @@ func objectFileHandle(s3c *S3Ctx, bucketName, objectKey string, op objectOperati
 				var buf []byte
 				buf, err = ioutil.ReadAll(r)
 				if err == nil {
-					kv := ninep.ParseKeyValues(string(buf))
+					kv := kvp.ParseKeyValues(string(buf))
 					input := s3.PutObjectInput{
 						Bucket: aws.String(bucketName),
 						Key:    aws.String(objectKey),
