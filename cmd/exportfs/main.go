@@ -87,7 +87,8 @@ func main() {
 			cli.OnInterrupt(func() { listener.Close() })
 			defer listener.Close()
 			fmt.Printf("Listening on %s\n", listener.Addr())
-			handler := helpers.NewCachingHandler(helpers.NewNullAuthHandler(ebilly.ToBillyFS(mnt)))
+			const cacheLimit = 0
+			handler := helpers.NewCachingHandler(helpers.NewNullAuthHandler(ebilly.ToBillyFS(mnt)), cacheLimit)
 			srv := nfs.Server{Handler: handler}
 			srv.Context = ctx
 			err = srv.Serve(listener)

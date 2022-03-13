@@ -436,7 +436,8 @@ func containersCtl(c *client.Client, opts types.ContainerListOptions) func(ninep
 						hostCfg.PortBindings = bindings
 					}
 
-					res, err := c.ContainerCreate(context.Background(), &cfg, &hostCfg, &netCfg, containerName)
+					// TODO(jeff): support specs.Platform
+					res, err := c.ContainerCreate(context.Background(), &cfg, &hostCfg, &netCfg, nil, containerName)
 					if err != nil {
 						wr.CloseWithError(err)
 					}
