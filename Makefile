@@ -9,7 +9,7 @@ CMDS := $(shell ls cmd)
 all: $(CMDS)
 
 deps:
-	env 'GOPRIVATE=github.com/jeffh/*' go get github.com/jeffh/b2client
+	go get github.com/jeffh/b2client
 
 # $(GO) build --ldflags="-s -w" $(GOARGS) -o ./bin/$@ ./cmd/$@
 $(CMDS): $(find . -type '*.go')

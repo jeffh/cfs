@@ -17,10 +17,6 @@ jobs:
         go-version: 1.17.8
       id: go
 
-    - name: Granting private modules access
-      run: |
-        git config --global url."https://${{ secrets.GO_MODULES_TOKEN }}:x-oauth-basic@github.com/jeffh".insteadOf "https://github.com/jeffh"
-
     - name: Check out code into the Go module directory
       uses: actions/checkout@v1
 
