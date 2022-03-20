@@ -62,7 +62,7 @@ file server.
  - **ccat** a client that reads from a file (akin to *cat*)
  - **ccp** a client that copies a file (akin to *cp*)
  - **cexe** a client that executes remote commands via ssh (akin to *cpu*)
- - **cfind** a client that searches for files in a file server (akin to *cfind*)
+ - **cfind** a client that searches for files in a file server (akin to *find*)
  - **cls** a client that lists files and directories a given location (akin to *ls*)
  - **cmkdir** a client that creates to a directory (akin to *mkdir*)
  - **cmv** a client that moves a file or directory (akin to *mv*)
