@@ -61,14 +61,15 @@ file server.
 
  - **ccat** a client that reads from a file (akin to *cat*)
  - **ccp** a client that copies a file (akin to *cp*)
+ - **cexe** a client that executes remote commands via ssh (akin to *cpu*)
+ - **cfind** a client that searches for files in a file server (akin to *cfind*)
  - **cls** a client that lists files and directories a given location (akin to *ls*)
  - **cmkdir** a client that creates to a directory (akin to *mkdir*)
  - **cmv** a client that moves a file or directory (akin to *mv*)
+ - **cpipe** a client that writes to a file from contents of stdin (similiar to bash's '>' operator)
  - **crm** a client that removes a file or directory (akin to *rm*)
  - **ctee** a client that writes to a file (akin to *tee*)
  - **ctouch** a client that creates to a file (akin to *touch*)
- - **cexe** a client that executes remote commands via ssh (akin to *cpu*)
- - **cpipe** a client that writes to a file from contents of stdin (similiar to bash's '>' operator)
 
 ## Proxies
 
