@@ -3,10 +3,9 @@ module github.com/jeffh/cfs
 go 1.13
 
 require (
-	github.com/Microsoft/go-winio v0.5.2 // indirect
 	github.com/PuerkitoBio/goquery v1.8.0 // indirect
 	github.com/aws/aws-sdk-go v1.43.17
-	github.com/containerd/containerd v1.6.1 // indirect
+	github.com/containerd/containerd v1.6.18 // indirect
 	github.com/creack/pty v1.1.17 // indirect
 	github.com/docker/distribution v2.8.1+incompatible // indirect
 	github.com/docker/docker v20.10.13+incompatible
@@ -25,15 +24,11 @@ require (
 	github.com/mattn/go-isatty v0.0.14
 	github.com/mmcdole/gofeed v1.1.3
 	github.com/mmcdole/goxpp v0.0.0-20200921145534-2f3784f67354 // indirect
-	github.com/opencontainers/image-spec v1.0.2 // indirect
 	github.com/pkg/sftp v1.13.4
 	github.com/rogpeppe/go-internal v1.8.1 // indirect
 	github.com/secure-io/sio-go v0.3.1
 	github.com/willscott/go-nfs v0.0.0-20211118152618-00ba06574ea0
-	golang.org/x/crypto v0.0.0-20220313003712-b769efc7c000
-	golang.org/x/net v0.0.0-20220225172249-27dd8689420f // indirect
-	golang.org/x/sys v0.0.0-20220310020820-b874c991c1a5
+	golang.org/x/crypto v0.0.0-20220315160706-3147a52a75dd
+	golang.org/x/sys v0.0.0-20220722155257-8c9f86f7a55f
 	golang.org/x/time v0.0.0-20211116232009-f0f3c7e86c11 // indirect
-	google.golang.org/genproto v0.0.0-20220310185008-1973136f34c6 // indirect
-	google.golang.org/grpc v1.45.0 // indirect
 )
