@@ -9,7 +9,7 @@ require (
 	github.com/aws/aws-sdk-go v1.43.17
 	github.com/creack/pty v1.1.17 // indirect
 	github.com/docker/distribution v2.8.2+incompatible // indirect
-	github.com/docker/docker v20.10.24+incompatible
+	github.com/docker/docker v24.0.7+incompatible
 	github.com/docker/go-connections v0.4.0
 	github.com/docker/go-units v0.4.0 // indirect
 	github.com/fatih/color v1.13.0
@@ -36,7 +36,6 @@ require (
 	github.com/pkg/sftp v1.13.4
 	github.com/rogpeppe/go-internal v1.8.1 // indirect
 	github.com/secure-io/sio-go v0.3.1
-	github.com/sirupsen/logrus v1.8.1 // indirect
 	github.com/willscott/go-nfs v0.0.0-20211118152618-00ba06574ea0
 	golang.org/x/crypto v0.0.0-20220315160706-3147a52a75dd
 	golang.org/x/net v0.7.0 // indirect
