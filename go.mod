@@ -38,9 +38,8 @@ require (
 	github.com/secure-io/sio-go v0.3.1
 	github.com/sirupsen/logrus v1.8.1 // indirect
 	github.com/willscott/go-nfs v0.0.0-20211118152618-00ba06574ea0
-	golang.org/x/crypto v0.0.0-20220315160706-3147a52a75dd
-	golang.org/x/net v0.7.0 // indirect
-	golang.org/x/sys v0.5.0
+	golang.org/x/crypto v0.17.0
+	golang.org/x/sys v0.15.0
 	golang.org/x/time v0.0.0-20211116232009-f0f3c7e86c11 // indirect
 	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
