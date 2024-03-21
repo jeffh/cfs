@@ -16,7 +16,8 @@ of things to fix.
 
 While having a file system as the underlying protocol can allow ultimate
 flexibility, it introduces distributed system problems as part of its interface.
-In short, a file system is sharing global mutable state across multiple clients.
+In short, a file system is sharing global mutable state across multiple clients
+(readers and writers).
 
 9P doesn't have a wholelistic solution for these problems, and which surfaces as
 unclear implementation details for each file server:
@@ -38,7 +39,12 @@ where:
  - Requires less state on protocol (which allows better scalability)
 
 Directory management can either be built on-top of a key-value / object store
-and can scale separately.
+and can scale separately. But that is out of the scope of this project. This is
+partly why object stores are so popular - it is a simplification that tries to
+remove as much file/block based complexity.
+
+As probably many people have learned, 9p is not equivalent to linux file system
+behaviors, so bridging between them is not a one-to-one mapping.
 
 # Building
 
