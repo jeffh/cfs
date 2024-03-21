@@ -4,19 +4,19 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"strings"
 	"time"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 	"github.com/google/shlex"
 	"github.com/jeffh/cfs/ninep"
 	"github.com/jeffh/cfs/ninep/kvp"
 )
 
-func imageDir(c *client.Client, name string, img types.ImageSummary) ninep.Node {
+func imageDir(c *client.Client, name string, img image.Summary) ninep.Node {
 	createdAt := time.Unix(img.Created, 0)
 	dir := staticDir(name,
 		staticStringFile("id", createdAt, img.ID),
@@ -53,8 +53,8 @@ func imageDir(c *client.Client, name string, img types.ImageSummary) ninep.Node 
 	return dir
 }
 
-func imageListAs(c *client.Client, fn func(results []ninep.Node, img types.ImageSummary) []ninep.Node) ([]ninep.Node, error) {
-	imgs, err := c.ImageList(context.Background(), types.ImageListOptions{})
+func imageListAs(c *client.Client, fn func(results []ninep.Node, img image.Summary) []ninep.Node) ([]ninep.Node, error) {
+	imgs, err := c.ImageList(context.Background(), image.ListOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -94,13 +94,13 @@ func imagesCtl(c *client.Client) func(ninep.OpenMode, io.Reader, io.Writer) {
 			case "pull", "fetch":
 				if len(args) > 1 {
 					ref := resolveImageRef(args[1])
-					res, err := c.ImagePull(context.Background(), ref, types.ImagePullOptions{})
+					res, err := c.ImagePull(context.Background(), ref, image.PullOptions{})
 					if err != nil {
 						fmt.Printf("error: %s\n", err)
 						fmt.Fprintf(w, "error: %s\n", err)
 						goto finished
 					}
-					io.Copy(ioutil.Discard, res)
+					io.Copy(io.Discard, res)
 					if err != nil {
 						fmt.Printf("error: %s\n", err)
 						fmt.Fprintf(w, "error: %s\n", err)
@@ -128,13 +128,13 @@ func imagesCtl(c *client.Client) func(ninep.OpenMode, io.Reader, io.Writer) {
 			case "push":
 				if len(args) > 1 {
 					ref := resolveImageRef(args[1])
-					res, err := c.ImagePush(context.Background(), ref, types.ImagePushOptions{})
+					res, err := c.ImagePush(context.Background(), ref, image.PushOptions{})
 					if err != nil {
 						fmt.Printf("error: %s\n", err)
 						fmt.Fprintf(w, "error: %s\n", err)
 						goto finished
 					}
-					io.Copy(ioutil.Discard, res)
+					io.Copy(io.Discard, res)
 					if err != nil {
 						fmt.Printf("error: %s\n", err)
 						fmt.Fprintf(w, "error: %s\n", err)
@@ -172,7 +172,7 @@ func imagesCtl(c *client.Client) func(ninep.OpenMode, io.Reader, io.Writer) {
 			case "delete":
 				if len(args) > 1 {
 					imageId := args[1]
-					_, err := c.ImageRemove(context.Background(), imageId, types.ImageRemoveOptions{})
+					_, err := c.ImageRemove(context.Background(), imageId, image.RemoveOptions{})
 					if err != nil {
 						fmt.Printf("error: %s\n", err)
 						fmt.Fprintf(w, "error: %s\n", err)
@@ -303,7 +303,7 @@ func imageBuildCtl(c *client.Client) func(ninep.OpenMode, io.Reader, io.Writer) 
 func imageExportCtl(c *client.Client) func(ninep.OpenMode, io.Reader, io.Writer) {
 	return func(m ninep.OpenMode, r io.Reader, w io.Writer) {
 		wr := w.(*io.PipeWriter)
-		imageIdsByLine, err := ioutil.ReadAll(r)
+		imageIdsByLine, err := io.ReadAll(r)
 		if err != nil {
 			wr.CloseWithError(err)
 			return

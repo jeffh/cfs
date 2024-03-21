@@ -43,7 +43,7 @@ func containerDir(c *client.Client, name string, ct types.Container) ninep.Node 
 		)
 	}
 
-	containerLogs := func(opt types.ContainerLogsOptions) func(m ninep.OpenMode, r io.Reader, w io.Writer) {
+	containerLogs := func(opt container.LogsOptions) func(m ninep.OpenMode, r io.Reader, w io.Writer) {
 		return func(m ninep.OpenMode, r io.Reader, w io.Writer) {
 			wr := w.(*io.PipeWriter)
 			out, err := c.ContainerLogs(context.Background(), ct.ID, opt)
@@ -77,7 +77,7 @@ func containerDir(c *client.Client, name string, ct types.Container) ninep.Node 
 		staticStringFile("status", createdAt, ct.Status),
 		staticStringFile("ports", createdAt, strings.Join(ports, "\n")),
 		staticStringFile("mounts", createdAt, strings.Join(mounts, "\n")),
-		dynamicCtlFile("logs", containerLogs(types.ContainerLogsOptions{
+		dynamicCtlFile("logs", containerLogs(container.LogsOptions{
 			ShowStdout: true,
 			ShowStderr: true,
 			Tail:       "all",
@@ -180,11 +180,11 @@ func containerDir(c *client.Client, name string, ct types.Container) ninep.Node 
 					fmt.Fprintf(w, " exit        - tells the fs to close the ctl file. Useful when you want to wait for a command to finish\n")
 					fmt.Fprintf(w, " help        - returns this help\n")
 				case "start":
-					if okOrErr(wr, c.ContainerStart(context.Background(), containerID, types.ContainerStartOptions{})) {
+					if okOrErr(wr, c.ContainerStart(context.Background(), containerID, container.StartOptions{})) {
 						return
 					}
 				case "stop":
-					if okOrErr(wr, c.ContainerStop(context.Background(), containerID, nil)) {
+					if okOrErr(wr, c.ContainerStop(context.Background(), containerID, container.StopOptions{})) {
 						return
 					}
 				case "kill":
@@ -204,7 +204,7 @@ func containerDir(c *client.Client, name string, ct types.Container) ninep.Node 
 						return
 					}
 				case "restart":
-					if okOrErr(wr, c.ContainerRestart(context.Background(), containerID, nil)) {
+					if okOrErr(wr, c.ContainerRestart(context.Background(), containerID, container.StopOptions{})) {
 						return
 					}
 				}
@@ -225,8 +225,8 @@ func containerDir(c *client.Client, name string, ct types.Container) ninep.Node 
 				}
 			}
 		}),
-		dynamicCtlFile("stdout", containerLogs(types.ContainerLogsOptions{ShowStdout: true, Tail: "all"})),
-		dynamicCtlFile("stderr", containerLogs(types.ContainerLogsOptions{ShowStderr: true, Tail: "all"})),
+		dynamicCtlFile("stdout", containerLogs(container.LogsOptions{ShowStdout: true, Tail: "all"})),
+		dynamicCtlFile("stderr", containerLogs(container.LogsOptions{ShowStderr: true, Tail: "all"})),
 		staticDirWithTime("net", createdAt,
 			staticStringFile("host_mode", createdAt, ct.HostConfig.NetworkMode),
 			dynamicDirWithTime("configs", createdAt, func() ([]ninep.Node, error) {
@@ -251,7 +251,7 @@ func containerDir(c *client.Client, name string, ct types.Container) ninep.Node 
 						staticStringFile("ip_addr", createdAt, fmt.Sprintf("%s/%d", cfg.IPAddress, cfg.IPPrefixLen)),
 						staticStringFile("ipv6_gateway", createdAt, cfg.IPv6Gateway),
 						staticStringFile("global_ipv6_address", createdAt, fmt.Sprintf("%s/%d", cfg.GlobalIPv6Address, cfg.GlobalIPv6PrefixLen)),
-						staticStringFile("mac_address", createdAt, cfg.MacAddress),
+						// staticStringFile("mac_address", createdAt, cfg.MacAddress),
 						// dynamicDirWithTime("driver_options", createdAt, func() ([]ninep.Node, error) {
 						// 	res := make([]ninep.Node, 0, len(cfg.DriverOpts))
 						// 	for key, value := range cfg.DriverOpts {
@@ -271,7 +271,7 @@ func containerById(c *client.Client, r []ninep.Node, cntr types.Container) []nin
 	return append(r, containerDir(c, cntr.ID, cntr))
 }
 
-func containerListAs(c *client.Client, opts types.ContainerListOptions, fn func(*client.Client, []ninep.Node, types.Container) []ninep.Node) ([]ninep.Node, error) {
+func containerListAs(c *client.Client, opts container.ListOptions, fn func(*client.Client, []ninep.Node, types.Container) []ninep.Node) ([]ninep.Node, error) {
 	opts.All = true
 	cntrs, err := c.ContainerList(context.Background(), opts)
 	if err != nil {
@@ -285,12 +285,12 @@ func containerListAs(c *client.Client, opts types.ContainerListOptions, fn func(
 	return children, nil
 }
 
-func containerListByState(c *client.Client, opts types.ContainerListOptions, state string) ([]ninep.Node, error) {
+func containerListByState(c *client.Client, opts container.ListOptions, state string) ([]ninep.Node, error) {
 	opts.Filters.Add("status", state)
 	return containerListAs(c, opts, containerById)
 }
 
-func containersCtl(c *client.Client, opts types.ContainerListOptions) func(ninep.OpenMode, io.Reader, io.Writer) {
+func containersCtl(c *client.Client, opts container.ListOptions) func(ninep.OpenMode, io.Reader, io.Writer) {
 	return func(m ninep.OpenMode, rdr io.Reader, w io.Writer) {
 		r := ninep.LineReader{R: rdr}
 		wr := w.(*io.PipeWriter)
@@ -373,7 +373,7 @@ func containersCtl(c *client.Client, opts types.ContainerListOptions) func(ninep
 				fset.StringVar(&cfg.WorkingDir, "working-dir", "", "Current directory (PWD) in the command will be launched")
 				fset.StringVar(&entryPoint, "entry-point", "", "Entrypoint to run when starting the container")
 				fset.BoolVar(&cfg.NetworkDisabled, "disable-network", false, "Is network disabled")
-				fset.StringVar(&cfg.MacAddress, "mac-addr", "", "Mac Address of the container")
+				// fset.StringVar(&cfg.MacAddress, "mac-addr", "", "Mac Address of the container")
 				fset.StringVar(&onbuild, "onbuild", "", "ONBUILD metadata that were defined on the image Dockerfile, comma separated")
 				fset.StringVar(&cfg.StopSignal, "stop-signal", "", "Signal to stop a container")
 				fset.IntVar(&timeout, "stop-timeout", 0, "Timeout (in seconds) to stop a container")
@@ -452,7 +452,7 @@ func containersCtl(c *client.Client, opts types.ContainerListOptions) func(ninep
 				}
 			case "start":
 				if containerID, ok := findContainerId(args); ok {
-					if okOrErr(wr, c.ContainerStart(context.Background(), containerID, types.ContainerStartOptions{})) {
+					if okOrErr(wr, c.ContainerStart(context.Background(), containerID, container.StartOptions{})) {
 						return
 					}
 				} else {
@@ -460,7 +460,7 @@ func containersCtl(c *client.Client, opts types.ContainerListOptions) func(ninep
 				}
 			case "stop":
 				if containerID, ok := findContainerId(args); ok {
-					if okOrErr(wr, c.ContainerStop(context.Background(), containerID, nil)) {
+					if okOrErr(wr, c.ContainerStop(context.Background(), containerID, container.StopOptions{})) {
 						return
 					}
 				} else {
@@ -496,7 +496,7 @@ func containersCtl(c *client.Client, opts types.ContainerListOptions) func(ninep
 				}
 			case "restart":
 				if containerID, ok := findContainerId(args); ok {
-					if okOrErr(wr, c.ContainerRestart(context.Background(), containerID, nil)) {
+					if okOrErr(wr, c.ContainerRestart(context.Background(), containerID, container.StopOptions{})) {
 						return
 					}
 				} else {

@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 	"github.com/jeffh/cfs/ninep"
 	"github.com/jeffh/cfs/ninep/kvp"
@@ -21,8 +23,7 @@ type Fs struct {
 }
 
 func NewFs() (*Fs, error) {
-	// c, err := client.NewClientWithOpts(client.FromEnv)
-	c, err := client.NewEnvClient()
+	c, err := client.NewClientWithOpts(client.FromEnv)
 
 	const (
 		IMAGES_HELP = `Files in this directory:
@@ -48,7 +49,7 @@ names - list all containers by their names.
 state - list a subset of containers by their current state.`
 	)
 
-	var noCListOpts types.ContainerListOptions
+	var noCListOpts container.ListOptions
 	noCListOpts.Filters = filters.NewArgs()
 
 	fs := &Fs{
@@ -62,12 +63,12 @@ state - list a subset of containers by their current state.`
 					dynamicCtlFile("build", imageBuildCtl(c)),
 					dynamicCtlFile("export", imageExportCtl(c)),
 					dynamicDir("ids", func() ([]ninep.Node, error) {
-						return imageListAs(c, func(r []ninep.Node, img types.ImageSummary) []ninep.Node {
+						return imageListAs(c, func(r []ninep.Node, img image.Summary) []ninep.Node {
 							return append(r, imageDir(c, img.ID, img))
 						})
 					}),
 					dynamicDirTree("labels", func() ([]ninep.Node, error) {
-						return imageListAs(c, func(r []ninep.Node, img types.ImageSummary) []ninep.Node {
+						return imageListAs(c, func(r []ninep.Node, img image.Summary) []ninep.Node {
 							for label := range img.Labels {
 								r = append(r, imageDir(c, label, img))
 							}
@@ -75,7 +76,7 @@ state - list a subset of containers by their current state.`
 						})
 					}),
 					dynamicDirTree("tags", func() ([]ninep.Node, error) {
-						return imageListAs(c, func(r []ninep.Node, img types.ImageSummary) []ninep.Node {
+						return imageListAs(c, func(r []ninep.Node, img image.Summary) []ninep.Node {
 							for _, tag := range img.RepoTags {
 								r = append(r, imageDir(c, tag, img))
 							}
@@ -83,7 +84,7 @@ state - list a subset of containers by their current state.`
 						})
 					}),
 					dynamicDirTree("repos", func() ([]ninep.Node, error) {
-						return imageListAs(c, func(r []ninep.Node, img types.ImageSummary) []ninep.Node {
+						return imageListAs(c, func(r []ninep.Node, img image.Summary) []ninep.Node {
 							for _, digest := range img.RepoDigests {
 								r = append(r, imageDir(c, digest, img))
 							}
@@ -181,20 +182,18 @@ state - list a subset of containers by their current state.`
 						))
 
 						files = append(files, staticStringFile("about", now, kvp.KeyValues(map[string]string{
-							"kernel_version":    info.KernelVersion,
-							"os":                info.OperatingSystem,
-							"os_type":           info.OSType,
-							"arch":              info.Architecture,
-							"index_server":      info.IndexServerAddress,
-							"docker_root_dir":   info.DockerRootDir,
-							"http_proxy":        info.HTTPProxy,
-							"https_proxy":       info.HTTPSProxy,
-							"no_proxy":          info.NoProxy,
-							"name":              info.Name,
-							"server_version":    info.ServerVersion,
-							"cluster_store":     info.ClusterStore,
-							"cluster_advertise": info.ClusterAdvertise,
-							"default_runtime":   info.DefaultRuntime,
+							"kernel_version":  info.KernelVersion,
+							"os":              info.OperatingSystem,
+							"os_type":         info.OSType,
+							"arch":            info.Architecture,
+							"index_server":    info.IndexServerAddress,
+							"docker_root_dir": info.DockerRootDir,
+							"http_proxy":      info.HTTPProxy,
+							"https_proxy":     info.HTTPSProxy,
+							"no_proxy":        info.NoProxy,
+							"name":            info.Name,
+							"server_version":  info.ServerVersion,
+							"default_runtime": info.DefaultRuntime,
 						})))
 						return files, nil
 					}),
