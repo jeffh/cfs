@@ -62,6 +62,7 @@ file server.
  - **memfs** is a file server that serves from memory
  - **procfs** is a file server that serves local process information
  - **sftpfs** is a file server that serves a sftp connection's set of files
+ - **rssfs** is a file server taht serves contents of an rss feed
 
 ## Clients
 
