@@ -5,20 +5,15 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"net"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/jeffh/cfs/cli"
-	ebilly "github.com/jeffh/cfs/exportfs/billy"
 	efuse "github.com/jeffh/cfs/exportfs/fuse"
 	"github.com/jeffh/cfs/fs/proxy"
 	"github.com/jeffh/cfs/ninep"
-	"github.com/willscott/go-nfs"
-	"github.com/willscott/go-nfs/helpers"
 )
 
 func main() {
@@ -27,7 +22,7 @@ func main() {
 	var nfsAddr string
 
 	flag.StringVar(&mountType, "type", "fuse", "Mount type to use, defaults to 'fuse', but can also be 'nfs'")
-	flag.StringVar(&nfsAddr, "nfs-addr", "127.0.0.1:0", "Address for NFS to listen on")
+	flag.StringVar(&nfsAddr, "nfs-addr", "127.0.0.1:2049", "Address for NFS to listen on")
 	flag.StringVar(&mountpoint, "mount", "/tmp/exportfs", "Directory to mount the 9p file system on")
 
 	flag.Usage = func() {
@@ -80,22 +75,7 @@ func main() {
 				&opts,
 			)
 		case "nfs":
-			listener, err := net.Listen("tcp", nfsAddr)
-			if err != nil {
-				return err
-			}
-			cli.OnInterrupt(func() { listener.Close() })
-			defer listener.Close()
-			fmt.Printf("Listening on %s\n", listener.Addr())
-			const cacheLimit = 0
-			handler := helpers.NewCachingHandler(helpers.NewNullAuthHandler(ebilly.ToBillyFS(mnt)), cacheLimit)
-			srv := nfs.Server{Handler: handler}
-			srv.Context = ctx
-			err = srv.Serve(listener)
-			if strings.Contains(err.Error(), "use of closed network connection") {
-				err = nil
-			}
-			return err
+			return runServer(ctx, nfsAddr, mnt, mountpoint)
 		default:
 			return fmt.Errorf("Unknown mount type: got %#v. Expected 'fuse' or 'nfs'", mountType)
 		}
