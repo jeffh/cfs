@@ -11,7 +11,7 @@ import (
 )
 
 type ClientTransport interface {
-	Connect(d Dialer, addr, usr, mnt string, A Authorizee, L Loggable) error
+	Connect(d Dialer, network, addr, usr, mnt string, A Authorizee, L Loggable) error
 	Disconnect() error
 
 	MaxMessageSize() uint32
@@ -42,11 +42,14 @@ func (t *SerialClientTransport) MaxMessageSize() uint32 {
 	return t.maxMsgSize
 }
 
-func (t *SerialClientTransport) Connect(d Dialer, addr, usr, mnt string, A Authorizee, L Loggable) error {
+func (t *SerialClientTransport) Connect(d Dialer, network, addr, usr, mnt string, A Authorizee, L Loggable) error {
 	t.m.Lock()
 	defer t.m.Unlock()
 	var err error
-	t.rwc, err = d.Dial("tcp", addr)
+	if network == "" {
+		network = "tcp"
+	}
+	t.rwc, err = d.Dial(network, addr)
 	if err != nil {
 		return err
 	}
@@ -100,14 +103,14 @@ var _ ClientTransport = (*ParallelClientTransport)(nil)
 
 func (t *ParallelClientTransport) MaxMessageSize() uint32 { return t.maxMsgSize }
 
-func (t *ParallelClientTransport) Connect(d Dialer, addr, usr, mnt string, A Authorizee, L Loggable) error {
+func (t *ParallelClientTransport) Connect(d Dialer, network, addr, usr, mnt string, A Authorizee, L Loggable) error {
 	t.m.Lock()
 	defer t.m.Unlock()
 
 	t.Loggable = L
 
 	var err error
-	t.rwc, err = d.Dial("tcp", addr)
+	t.rwc, err = d.Dial(network, addr)
 	if err != nil {
 		return err
 	}
@@ -271,6 +274,7 @@ type SerialRetryClientTransport struct {
 	fids map[Fid]fidState // clientFid -> serverFid
 
 	d          Dialer
+	network    string
 	addr       string
 	usr        string
 	mnt        string
@@ -286,7 +290,7 @@ func (t *SerialRetryClientTransport) MaxMessageSize() uint32 {
 	return t.maxMsgSize
 }
 
-func (t *SerialRetryClientTransport) Connect(d Dialer, addr, usr, mnt string, A Authorizee, L Loggable) error {
+func (t *SerialRetryClientTransport) Connect(d Dialer, network, addr, usr, mnt string, A Authorizee, L Loggable) error {
 	t.mut.Lock()
 	t.fids = make(map[Fid]fidState)
 	t.nextServerFid = 0
@@ -295,18 +299,22 @@ func (t *SerialRetryClientTransport) Connect(d Dialer, addr, usr, mnt string, A 
 	t.m.Lock()
 	defer t.m.Unlock()
 	t.d = d
+	if network == "" {
+		network = "tcp"
+	}
+	t.network = network
 	t.addr = addr
 	t.usr = usr
 	t.mnt = mnt
 	t.authorizee = A
 	t.Loggable = L
 
-	return t.unsafeConnect(d, addr, usr, mnt, A, L)
+	return t.unsafeConnect(d, network, addr, usr, mnt, A, L)
 }
 
-func (t *SerialRetryClientTransport) unsafeConnect(d Dialer, addr, usr, mnt string, A Authorizee, L Loggable) error {
+func (t *SerialRetryClientTransport) unsafeConnect(d Dialer, network, addr, usr, mnt string, A Authorizee, L Loggable) error {
 	var err error
-	t.rwc, err = d.Dial("tcp", addr)
+	t.rwc, err = d.Dial(network, addr)
 	if err != nil {
 		return err
 	}
@@ -478,7 +486,7 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 			if err != nil {
 				return nil, err
 			}
-			err = t.unsafeConnect(t.d, t.addr, t.usr, t.mnt, t.authorizee, t.Loggable)
+			err = t.unsafeConnect(t.d, t.network, t.addr, t.usr, t.mnt, t.authorizee, t.Loggable)
 			if err != nil {
 				return nil, err
 			}

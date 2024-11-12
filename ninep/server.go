@@ -204,25 +204,31 @@ func (s *Server) Serve(l net.Listener) error {
 	}
 }
 
-func (s *Server) ListenAndServe(addr string, d Dialer) error {
+func (s *Server) ListenAndServe(network, addr string, d Dialer) error {
 	if d == nil {
 		d = &TCPDialer{}
 	}
 	if addr == "" {
 		addr = ":9pfs"
 	}
-	ln, err := d.Listen("tcp", addr)
+	if network == "" {
+		network = "tcp"
+	}
+	ln, err := d.Listen(network, addr)
 	if err != nil {
 		return err
 	}
 	return s.Serve(ln)
 }
 
-func (s *Server) ListenAndServeTLS(addr string, certFile, keyFile string, d Dialer) error {
+func (s *Server) ListenAndServeTLS(network, addr string, certFile, keyFile string, d Dialer) error {
 	if d == nil {
 		d = &TLSDialer{}
 	}
-	ln, err := d.Listen("tcp", addr)
+	if network == "" {
+		network = "tcp"
+	}
+	ln, err := d.Listen(network, addr)
 	if err != nil {
 		return err
 	}

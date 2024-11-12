@@ -17,7 +17,8 @@ import (
 )
 
 type ServerConfig struct {
-	Addr string
+	Network string
+	Addr    string
 
 	PrintTraceMessages   bool
 	PrintTraceFSMessages bool
@@ -124,12 +125,16 @@ func (c *ServerConfig) Close() {
 }
 
 func (c *ServerConfig) ListenAndServe(srv *ninep.Server) error {
+	network := c.Network
+	if network == "" {
+		network = "tcp"
+	}
 	var d ninep.Dialer = c.Dialer
 	var err error
 	if c.CertFile != "" && c.KeyFile != "" {
-		err = srv.ListenAndServeTLS(c.Addr, c.CertFile, c.KeyFile, d)
+		err = srv.ListenAndServeTLS(network, c.Addr, c.CertFile, c.KeyFile, d)
 	} else {
-		err = srv.ListenAndServe(c.Addr, d)
+		err = srv.ListenAndServe(network, c.Addr, d)
 	}
 	return err
 }

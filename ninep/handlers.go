@@ -622,14 +622,8 @@ func (h *defaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 	case Tremove:
 		fil, ok := session.FileForFid(m.Fid())
 		if ok {
-			var err error
-			if fsd, ok := h.Fs.(DeleteWithModeFileSystem); ok {
-				h.Tracef("srv: Tremove: %v %v // with mode %s", m.Fid(), fil.Name, fil.Mode)
-				err = fsd.DeleteWithMode(ctx, fil.Name, fil.Mode)
-			} else {
-				h.Tracef("srv: Tremove: %v %v // without mode", m.Fid(), fil.Name)
-				err = h.Fs.Delete(ctx, fil.Name)
-			}
+			h.Tracef("srv: Tremove: %v %v // with mode %s", m.Fid(), fil.Name, fil.Mode)
+			err := Delete(ctx, h.Fs, fil.Name, fil.Mode)
 			session.DeleteFid(m.Fid())
 			session.DeleteQid(fil.Name)
 			if err != nil {

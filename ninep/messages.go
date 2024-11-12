@@ -216,6 +216,10 @@ func (m OpenMode) IsWriteable() bool {
 	return m.IsWriteOnly() || m.IsReadWrite()
 }
 
+func (m OpenMode) RequestsMutation() bool {
+	return m.IsWriteable() || m&(OTRUNC|ORCLOSE) != 0
+}
+
 func (m OpenMode) String() string {
 	res := []string{}
 	if m.IsReadOnly() {
@@ -410,7 +414,7 @@ func (r MsgBase) Tag() Tag         { return Tag(bo.Uint16(r[5:7])) }
 
 const msgOffset = 7
 
-/////////////////////////////////////
+// ///////////////////////////////////
 type msgString []byte
 
 const maxStringLen = math.MaxUint16

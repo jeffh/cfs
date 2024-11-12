@@ -3,7 +3,7 @@ package fs
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
+	"io/fs"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -43,11 +43,16 @@ func (d Dir) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (ni
 // ListDir lists all files and directories in a given subdirectory
 func (d Dir) ListDir(ctx context.Context, path string) (ninep.FileInfoIterator, error) {
 	fullPath := filepath.Join(string(d), path)
-	infos, err := ioutil.ReadDir(fullPath)
+	direntries, err := os.ReadDir(fullPath)
 	if err != nil {
 		return nil, err
 	}
-	for i, info := range infos {
+	infos := make([]os.FileInfo, 0, len(direntries))
+	for _, entry := range direntries {
+		info, err := entry.Info()
+		if err != nil {
+			return nil, err
+		}
 		uid, gid, muid, err := ninep.FileUsers(info)
 		if err != nil {
 			return nil, err
@@ -58,14 +63,13 @@ func (d Dir) ListDir(ctx context.Context, path string) (ninep.FileInfoIterator, 
 		}
 
 		info = ninep.FileInfoWithUsers(info, uid, gid, muid)
-
-		infos[i] = info
+		infos = append(infos, info)
 	}
 	return ninep.FileInfoSliceIterator(infos), nil
 }
 
 // Stat returns information about a given file or directory
-func (d Dir) Stat(ctx context.Context, path string) (os.FileInfo, error) {
+func (d Dir) Stat(ctx context.Context, path string) (fs.FileInfo, error) {
 	fullPath := filepath.Join(string(d), path)
 	info, err := os.Stat(fullPath)
 	if err == nil {

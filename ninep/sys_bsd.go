@@ -1,9 +1,10 @@
+//go:build darwin || freebsd || netbsd || openbsd
 // +build darwin freebsd netbsd openbsd
 
 package ninep
 
 import (
-	"os"
+	"io/fs"
 	"os/user"
 	"strconv"
 	"syscall"
@@ -18,7 +19,7 @@ func GetBlockSize() (int64, error) {
 	return int64(s.Bsize), nil
 }
 
-func Atime(info os.FileInfo) (t time.Time, ok bool) {
+func Atime(info fs.FileInfo) (t time.Time, ok bool) {
 	var statT *syscall.Stat_t
 	statT, ok = info.Sys().(*syscall.Stat_t)
 	if ok {
@@ -27,7 +28,7 @@ func Atime(info os.FileInfo) (t time.Time, ok bool) {
 	return
 }
 
-func FileId(info os.FileInfo) (inode uint64, ok bool) {
+func FileId(info fs.FileInfo) (inode uint64, ok bool) {
 	var statT *syscall.Stat_t
 	statT, ok = info.Sys().(*syscall.Stat_t)
 	if ok {
@@ -36,7 +37,7 @@ func FileId(info os.FileInfo) (inode uint64, ok bool) {
 	return
 }
 
-func FileUsers(info os.FileInfo) (uid, gid, muid string, err error) {
+func FileUsers(info fs.FileInfo) (uid, gid, muid string, err error) {
 	statT, ok := info.Sys().(*syscall.Stat_t)
 	if ok {
 		var usr *user.User

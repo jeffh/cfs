@@ -3,6 +3,7 @@ package ninep
 import (
 	"context"
 	"io"
+	"io/fs"
 	"os"
 	"sync"
 	"time"
@@ -25,16 +26,16 @@ type AuthFileHandle interface {
 	Authorized(usr, mnt string) bool
 }
 
-// Return os.FileInfo from FileSystem can implement this if they want to
+// Return fs.FileInfo from FileSystem can implement this if they want to
 // utilize modes only available in 9P protocol
 type FileInfoMode9P interface{ Mode9P() Mode }
 
-// Return os.FileInfo from FileSystem can implement this if they want more
+// Return fs.FileInfo from FileSystem can implement this if they want more
 // precisely control the Qid version, which should change every time the
 // version number changes.
 type FileInfoVersion interface{ Version() uint32 }
 
-// Instead of a os.FileInfo from a FileSystem implement. This can be returned if that FS wants more
+// Instead of a fs.FileInfo from a FileSystem implement. This can be returned if that FS wants more
 // precise control the Qid path, which should change every time the there's a
 // different file in the file system. Two files with the same exact filepath
 // can have different paths if:
@@ -56,7 +57,7 @@ type FileInfoGid interface{ Gid() string }
 type FileInfoMuid interface{ Muid() string }
 
 // TODO: support this feature
-// return os.FileInfo from FileSystem can implement this if they want more
+// return fs.FileInfo from FileSystem can implement this if they want more
 // precisely control the Qid path, which represents the same internal file
 // in the file system (aka - rm foo.txt; touch foo.txt operate on two different
 // paths)
@@ -83,17 +84,17 @@ type StatIterator interface {
 	NextStat() (Stat, error)
 }
 
-// Interface to iterate over os.FileInfos from a listing of a directory
+// Interface to iterate over fs.FileInfos from a listing of a directory
 type FileInfoIterator interface {
-	// returns io.EOF with os.FileInfo = nil on end
-	NextFileInfo() (os.FileInfo, error)
+	// returns io.EOF with fs.FileInfo = nil on end
+	NextFileInfo() (fs.FileInfo, error)
 	// resets the reading of the file infos
 	Reset() error
 	// must be called to free iterator resources
 	Close() error
 }
 
-func MapFileInfoIterator(itr FileInfoIterator, f func(os.FileInfo) os.FileInfo) MappableFileInfoIterator {
+func MapFileInfoIterator(itr FileInfoIterator, f func(fs.FileInfo) fs.FileInfo) MappableFileInfoIterator {
 	if itr == nil {
 		return nil
 	}
@@ -105,39 +106,39 @@ func MapFileInfoIterator(itr FileInfoIterator, f func(os.FileInfo) os.FileInfo) 
 
 type MappableFileInfoIterator interface {
 	FileInfoIterator
-	Map(f func(os.FileInfo) os.FileInfo) MappableFileInfoIterator
+	Map(f func(fs.FileInfo) fs.FileInfo) MappableFileInfoIterator
 }
 
 type mapFileInfoIterator struct {
 	FileInfoIterator
-	apply func(os.FileInfo) os.FileInfo
+	apply func(fs.FileInfo) fs.FileInfo
 }
 
-func (itr *mapFileInfoIterator) NextFileInfo() (os.FileInfo, error) {
+func (itr *mapFileInfoIterator) NextFileInfo() (fs.FileInfo, error) {
 	fi, err := itr.FileInfoIterator.NextFileInfo()
 	if fi != nil {
 		fi = itr.apply(fi)
 	}
 	return fi, err
 }
-func (itr *mapFileInfoIterator) Map(f func(os.FileInfo) os.FileInfo) MappableFileInfoIterator {
-	return &mapFileInfoIterator{itr.FileInfoIterator, func(fi os.FileInfo) os.FileInfo { return f(itr.apply(fi)) }}
+func (itr *mapFileInfoIterator) Map(f func(fs.FileInfo) fs.FileInfo) MappableFileInfoIterator {
+	return &mapFileInfoIterator{itr.FileInfoIterator, func(fi fs.FileInfo) fs.FileInfo { return f(itr.apply(fi)) }}
 }
 
 type fileInfoSliceIterator struct {
-	infos []os.FileInfo
+	infos []fs.FileInfo
 	index int
 }
 
 var _ FileInfoIterator = (*fileInfoSliceIterator)(nil)
 
-func FileInfoSliceIterator(fi []os.FileInfo) FileInfoIterator {
+func FileInfoSliceIterator(fi []fs.FileInfo) FileInfoIterator {
 	return &fileInfoSliceIterator{fi, 0}
 }
 
 func (itr *fileInfoSliceIterator) Close() error { return nil }
 func (itr *fileInfoSliceIterator) Reset() error { itr.index = 0; return nil }
-func (itr *fileInfoSliceIterator) NextFileInfo() (os.FileInfo, error) {
+func (itr *fileInfoSliceIterator) NextFileInfo() (fs.FileInfo, error) {
 	idx := itr.index
 	if idx >= len(itr.infos) {
 		return nil, io.EOF
@@ -145,13 +146,13 @@ func (itr *fileInfoSliceIterator) NextFileInfo() (os.FileInfo, error) {
 	itr.index++
 	return itr.infos[idx], nil
 }
-func (itr *fileInfoSliceIterator) Map(f func(os.FileInfo) os.FileInfo) MappableFileInfoIterator {
+func (itr *fileInfoSliceIterator) Map(f func(fs.FileInfo) fs.FileInfo) MappableFileInfoIterator {
 	return &mapFileInfoIterator{itr, f}
 }
 
-// Consumes an iterator to produce a slice of os.FileInfos
+// Consumes an iterator to produce a slice of fs.FileInfos
 // max < 0 means to fetch all items
-func FileInfoSliceFromIterator(itr FileInfoIterator, max int) ([]os.FileInfo, error) {
+func FileInfoSliceFromIterator(itr FileInfoIterator, max int) ([]fs.FileInfo, error) {
 	if itr == nil {
 		return nil, ErrMissingIterator
 	}
@@ -160,7 +161,7 @@ func FileInfoSliceFromIterator(itr FileInfoIterator, max int) ([]os.FileInfo, er
 		return it.infos, nil
 	}
 
-	items := make([]os.FileInfo, 0, 16)
+	items := make([]fs.FileInfo, 0, 16)
 	for max < 0 || len(items) < max {
 		fi, err := itr.NextFileInfo()
 		if fi != nil {
@@ -185,8 +186,8 @@ func FileInfoSliceFromIterator(itr FileInfoIterator, max int) ([]os.FileInfo, er
 //
 // Context may optionally contain the following keys:
 //
-//  - "session"    *Session - The server's session, if available
-//  - "rawMessage" Message  - The message the server received, if available
+//   - "session"    *Session - The server's session, if available
+//   - "rawMessage" Message  - The message the server received, if available
 //
 // These keys are only populated if the FileSystem is running under a tcp
 // server context.
@@ -200,7 +201,7 @@ type FileSystem interface {
 	// Lists directories and files in a given path. Does not include '.' or '..'
 	ListDir(ctx context.Context, path string) (FileInfoIterator, error)
 	// Lists stats about a given file or directory.
-	Stat(ctx context.Context, path string) (os.FileInfo, error)
+	Stat(ctx context.Context, path string) (fs.FileInfo, error)
 	// Writes stats about a given file or directory. Implementations perform an all-or-nothing write.
 	// Callers must use NoTouch values to indicate the underlying
 	// implementation should not overwrite values.
@@ -227,6 +228,14 @@ type DeleteWithModeFileSystem interface {
 	DeleteWithMode(ctx context.Context, path string, m Mode) error
 }
 
+// Delete is a wrapper to delete a file
+func Delete(ctx context.Context, fs FileSystem, path string, m Mode) error {
+	if del, ok := fs.(DeleteWithModeFileSystem); ok {
+		return del.DeleteWithMode(ctx, path, m)
+	}
+	return fs.Delete(ctx, path)
+}
+
 // A file system that wants to optimize Twalk operations
 type WalkableFileSystem interface {
 	FileSystem
@@ -237,19 +246,19 @@ type WalkableFileSystem interface {
 	//
 	// Note: simply returning less FileInfos than parts indicates that the cd
 	// failed to traversed to a certain depth.
-	Walk(ctx context.Context, parts []string) ([]os.FileInfo, error)
+	Walk(ctx context.Context, parts []string) ([]fs.FileInfo, error)
 }
 
 ////////////////////////////////////////////////
 
 // file info helper wrappers
 type fileInfoWithName struct {
-	fi   os.FileInfo
+	fi   fs.FileInfo
 	name string
 }
 
-// Wraps an os.FileInfo to provide a different Name() return value
-func FileInfoWithName(fi os.FileInfo, name string) os.FileInfo {
+// Wraps an fs.FileInfo to provide a different Name() return value
+func FileInfoWithName(fi fs.FileInfo, name string) fs.FileInfo {
 	return &fileInfoWithName{fi, name}
 }
 
@@ -262,21 +271,21 @@ func (f *fileInfoWithName) Sys() interface{}   { return f.fi.Sys() }
 
 // file info unix to plan9 wrappers
 type fileInfoWithUsers struct {
-	fi             os.FileInfo
+	fi             fs.FileInfo
 	uid, gid, muid string
 }
 
-// An os.FileInfo with Plan9 uid & gid support
+// An fs.FileInfo with Plan9 uid & gid support
 type FileInfoUsers interface {
-	os.FileInfo
+	fs.FileInfo
 	FileInfoUid
 	FileInfoGid
 	FileInfoMuid
 }
 
-// Returns a FileInfoUser based off of an os.FileInfo, which the plan9 specific
+// Returns a FileInfoUser based off of an fs.FileInfo, which the plan9 specific
 // values provided.
-func FileInfoWithUsers(fi os.FileInfo, uid, gid, muid string) FileInfoUsers {
+func FileInfoWithUsers(fi fs.FileInfo, uid, gid, muid string) FileInfoUsers {
 	return &fileInfoWithUsers{fi, uid, gid, muid}
 }
 
@@ -291,14 +300,14 @@ func (f *fileInfoWithUsers) Gid() string        { return f.gid }
 func (f *fileInfoWithUsers) Muid() string       { return f.muid }
 
 type fileInfoWithSize struct {
-	os.FileInfo
+	fs.FileInfo
 	newSize int64
 }
 
 func (f *fileInfoWithSize) Size() int64 { return f.newSize }
 
-// Wraps an os.FileInfo with an override of the file size
-func FileInfoWithSize(fi os.FileInfo, size int64) os.FileInfo {
+// Wraps an fs.FileInfo with an override of the file size
+func FileInfoWithSize(fi fs.FileInfo, size int64) fs.FileInfo {
 	return &fileInfoWithSize{
 		FileInfo: fi,
 		newSize:  size,
@@ -338,7 +347,7 @@ func Writer(h FileHandle) io.Writer { return &handleReaderWriter{h, 0} }
 
 /////////////////////////////////////////////////
 
-// Implements a basic, in-memory struct that conforms to os.FileInfo
+// Implements a basic, in-memory struct that conforms to fs.FileInfo
 type SimpleFileInfo struct {
 	FIName    string
 	FISize    int64
@@ -356,9 +365,9 @@ func (f *SimpleFileInfo) Sys() interface{}   { return f.FISys }
 
 ////////////////////////////////////////////////
 
-// Simple file implements os.FileInfo and FileHandle operations
+// Simple file implements fs.FileInfo and FileHandle operations
 type SimpleFile struct {
-	os.FileInfo
+	fs.FileInfo
 	OpenFn func(mode OpenMode) (FileHandle, error)
 }
 
@@ -397,8 +406,8 @@ func NewSimpleFile(name string, mode os.FileMode, modTime time.Time, open func(m
 	}
 }
 
-func (f *SimpleFile) WriteInfo(in os.FileInfo) error { return ErrUnsupported }
-func (f *SimpleFile) Info() (os.FileInfo, error)     { return f, nil }
+func (f *SimpleFile) WriteInfo(in fs.FileInfo) error { return ErrUnsupported }
+func (f *SimpleFile) Info() (fs.FileInfo, error)     { return f, nil }
 func (f *SimpleFile) Open(m OpenMode) (FileHandle, error) {
 	if f.OpenFn == nil {
 		return nil, ErrUnsupported

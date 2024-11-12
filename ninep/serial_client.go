@@ -17,6 +17,7 @@ type BasicClient struct {
 
 	Authorizee  Authorizee
 	User, Mount string
+	Network     string
 
 	d Dialer
 
@@ -76,7 +77,14 @@ func (c *BasicClient) ConnectTLS(addr string, tlsCfg *tls.Config) error {
 }
 
 func (c *BasicClient) connect(addr string) error {
-	return c.transport().Connect(c.dialer(), addr, c.User, c.Mount, c.Authorizee, c.Loggable)
+	return c.transport().Connect(c.dialer(), c.getNetwork(), addr, c.User, c.Mount, c.Authorizee, c.Loggable)
+}
+
+func (c *BasicClient) getNetwork() string {
+	if c.Network == "" {
+		return "tcp"
+	}
+	return c.Network
 }
 
 func (c *BasicClient) Connect(addr string) error {
