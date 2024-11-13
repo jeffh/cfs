@@ -725,6 +725,10 @@ func Walk(root Node, path string, walkLast bool) (Node, string, error) {
 		currNode = node
 	}
 
+	if currNode == nil {
+		return nil, lastPart, os.ErrNotExist
+	}
+
 	return currNode, lastPart, nil
 }
 

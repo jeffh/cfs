@@ -1,3 +1,4 @@
+//go:build linux
 // +build linux
 
 package procfs
@@ -350,7 +351,7 @@ func pidsList(pq PidQuery) ([]Pid, error) {
 		return nil, ErrUnsupported
 	}
 
-	infos, err := ioutil.ReadDir("/proc/")
+	infos, err := os.ReadDir("/proc/")
 	if err != nil {
 		return nil, err
 	}

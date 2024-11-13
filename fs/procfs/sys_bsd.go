@@ -1,3 +1,4 @@
+//go:build bsd || darwin
 // +build bsd darwin
 
 package procfs

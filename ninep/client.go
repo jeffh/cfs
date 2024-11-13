@@ -292,8 +292,8 @@ func (fp *FileProxy) eachStat(yield func(Stat, error) bool) {
 			outSt = st
 		}
 
+		var n int
 		if outSt == nil {
-			var n int
 			n, err = fp.ReadAt(buf, int64(offset))
 			if n > 0 {
 				rst = buf[:n]
@@ -310,10 +310,11 @@ func (fp *FileProxy) eachStat(yield func(Stat, error) bool) {
 
 		// EOF indicates the end
 		if errors.Is(err, io.EOF) {
-			yield(outSt, nil)
 			return
-		} else if !yield(outSt, err) {
-			return
+		} else {
+			if !yield(outSt, err) {
+				return
+			}
 		}
 	}
 }
