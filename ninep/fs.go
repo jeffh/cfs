@@ -251,6 +251,26 @@ type WalkableFileSystem interface {
 
 ////////////////////////////////////////////////
 
+// MakeFileInfo creates an in-memory fs.FileInfo object
+func MakeFileInfo(name string, size int64, mode fs.FileMode, mod time.Time, backing any) fs.FileInfo {
+	return &memoryFileInfo{name, size, mode, mod, backing}
+}
+
+type memoryFileInfo struct {
+	name string
+	size int64
+	mode os.FileMode
+	mod  time.Time
+	sys  any
+}
+
+func (f *memoryFileInfo) Name() string       { return f.name }
+func (f *memoryFileInfo) Size() int64        { return f.size }
+func (f *memoryFileInfo) Mode() os.FileMode  { return f.mode }
+func (f *memoryFileInfo) ModTime() time.Time { return f.mod }
+func (f *memoryFileInfo) IsDir() bool        { return f.mode&os.ModeDir != 0 }
+func (f *memoryFileInfo) Sys() interface{}   { return f.sys }
+
 // file info helper wrappers
 type fileInfoWithName struct {
 	fi   fs.FileInfo
@@ -529,3 +549,54 @@ func (h *ProtectedFileHandle) WriteAt(p []byte, off int64) (n int, err error) {
 
 func (h *ProtectedFileHandle) Sync() error  { return h.H.Sync() }
 func (h *ProtectedFileHandle) Close() error { return h.H.Close() }
+
+///////////////////////////////////////////////////
+
+// MemoryFileHandle is a file handle that stores data in memory.
+type MemoryFileHandle struct {
+	data    []byte
+	onWrite func([]byte, int64, int) error
+	onFlush func([]byte) error
+}
+
+func NewMemoryFileHandle(data []byte, onWrite func([]byte, int64, int) error, onFlush func([]byte) error) FileHandle {
+	return &MemoryFileHandle{data, onWrite, onFlush}
+}
+
+func (h *MemoryFileHandle) ReadAt(p []byte, off int64) (n int, err error) {
+	if off >= int64(len(h.data)) {
+		return 0, io.EOF
+	}
+	n = copy(p, h.data[off:])
+	return
+}
+
+func (h *MemoryFileHandle) WriteAt(p []byte, off int64) (n int, err error) {
+	if off > int64(len(h.data)) {
+		return 0, io.ErrShortWrite
+	}
+	if int(off) > len(h.data) {
+		h.data = append(h.data, make([]byte, int(off)-len(h.data))...)
+	}
+	n = copy(h.data[off:], p)
+	if h.onWrite != nil {
+		err = h.onWrite(h.data, off, n)
+	}
+	return
+}
+
+func (h *MemoryFileHandle) Sync() error {
+	if h.onFlush != nil {
+		return h.onFlush(h.data)
+	}
+	return nil
+}
+
+func (h *MemoryFileHandle) Close() error {
+	err := h.Sync()
+	if err != nil {
+		return err
+	}
+	h.data = nil
+	return nil
+}

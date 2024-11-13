@@ -1,0 +1,161 @@
+package fs
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"io/fs"
+	"os"
+	"strings"
+	"time"
+
+	ninep "github.com/jeffh/cfs/ninep"
+)
+
+type lineFileHandle struct {
+	info  fs.FileInfo
+	mode  ninep.OpenMode
+	buf   *bytes.Buffer
+	flush func(*bytes.Buffer) error
+}
+
+////////////////////////////////////////////////
+
+// Env implements a basic file system to the process environment variables.
+func Env() ninep.FileSystem {
+	return envFs{}
+}
+
+type envFs struct{}
+
+func (d envFs) key(path string) string {
+	return strings.TrimPrefix(path, "/")
+}
+
+// MakeDir creates a local directory as subdirectory of the root directory of Dir
+func (d envFs) MakeDir(ctx context.Context, path string, mode ninep.Mode) error {
+	return ninep.ErrWriteNotAllowed
+}
+
+// CreateFile creates a new file as a descendent of the root directory of envFs
+func (d envFs) CreateFile(ctx context.Context, path string, flag ninep.OpenMode, mode ninep.Mode) (ninep.FileHandle, error) {
+	key := d.key(path)
+	var contents string
+	if flag&ninep.OTRUNC == 0 {
+		contents = os.Getenv(key)
+	}
+	onFlush := func(p []byte) error {
+		os.Setenv(key, string(p))
+		return nil
+	}
+	return ninep.NewMemoryFileHandle([]byte(contents), nil, onFlush), nil
+}
+
+// OpenFile opens an existing file that is a descendent of the root directory of envFs for reading/writing
+func (d envFs) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (ninep.FileHandle, error) {
+	var contents string
+	key := d.key(path)
+	if flag&ninep.OTRUNC == 0 {
+		contents = os.Getenv(key)
+	}
+	onFlush := func(p []byte) error {
+		os.Setenv(key, string(p))
+		return nil
+	}
+	return ninep.NewMemoryFileHandle([]byte(contents), nil, onFlush), nil
+}
+
+// ListDir lists all files and directories in a given subdirectory
+func (d envFs) ListDir(ctx context.Context, path string) (ninep.FileInfoIterator, error) {
+	if path != "/" {
+		return nil, fs.ErrNotExist
+	}
+	vars := os.Environ()
+	now := time.Now()
+	infos := make([]fs.FileInfo, 0, len(vars)+1)
+	for _, v := range vars {
+		pair := strings.SplitN(v, "=", 2)
+		info := ninep.MakeFileInfo(
+			pair[0],
+			int64(len(pair[1])),
+			0o666,
+			now,
+			nil,
+		)
+		infos = append(infos, info)
+	}
+	return ninep.FileInfoSliceIterator(infos), nil
+}
+
+// Stat returns information about a given file or directory
+func (d envFs) Stat(ctx context.Context, path string) (fs.FileInfo, error) {
+	if path == "/" {
+		return ninep.MakeFileInfo(
+			".",
+			0,
+			0o777|fs.ModeDir,
+			time.Now(),
+			nil,
+		), nil
+	}
+	key := d.key(path)
+	value, found := os.LookupEnv(key)
+	if found {
+		fi := ninep.MakeFileInfo(
+			key,
+			int64(len(value)),
+			0o666,
+			time.Now(),
+			nil,
+		)
+		return fi, nil
+	} else {
+		return nil, fs.ErrNotExist
+	}
+}
+
+// WriteStat updates file or directory metadata.
+func (d envFs) WriteStat(ctx context.Context, path string, s ninep.Stat) error {
+	if path == "/" {
+		return ninep.ErrWriteNotAllowed
+	}
+	key := d.key(path)
+	value, found := os.LookupEnv(key)
+	if !found {
+		return fs.ErrNotExist
+	}
+
+	if !s.NameNoTouch() && path != s.Name() {
+		os.Unsetenv(key)
+		newKey := d.key(s.Name())
+		os.Setenv(newKey, value)
+		key = newKey
+	}
+
+	// this should be last since it's really hard to undo this
+	if !s.LengthNoTouch() {
+		if s.Length() < uint64(len(value)) {
+			value = value[:s.Length()]
+		}
+		os.Setenv(key, value)
+	}
+	return nil
+}
+
+// Delete a file or directory. Deleting the root directory will be an error.
+func (d envFs) Delete(ctx context.Context, path string) error {
+	if path == "/" {
+		return fmt.Errorf("Cannot delete root envFs")
+	}
+	key := d.key(path)
+	_, found := os.LookupEnv(key)
+	if found {
+		os.Unsetenv(key)
+		return nil
+	}
+	return fs.ErrNotExist
+}
+
+func (d envFs) Traverse(ctx context.Context, path string) (ninep.TraversableFile, error) {
+	return ninep.BasicTraverse(ctx, d, path)
+}
