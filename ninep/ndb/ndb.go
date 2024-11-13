@@ -129,11 +129,14 @@ func (n *Ndb) readFiles(skip int) (int, error) {
 	return count, nil
 }
 
+// Changed reopens database files if they have been modified since last read.
+// Returns true if the database has been changed.
 func (n *Ndb) Changed() bool {
 	changed, _ := n.readFiles(0)
 	return changed > 0
 }
 
+// SearchSlice returns a slice of records matching the given attribute and value.
 func (n *Ndb) SearchSlice(attr, val string) []Record {
 	var results []Record
 	for rec := range n.Search(attr, val) {
@@ -144,6 +147,7 @@ func (n *Ndb) SearchSlice(attr, val string) []Record {
 	return results
 }
 
+// Search returns an iterator that yields records matching the given attribute and value.
 func (n *Ndb) Search(attr, val string) iter.Seq[Record] {
 	var results Record
 	return func(yield func(Record) bool) {
@@ -215,9 +219,11 @@ func hasAttr(recBytes []byte, attr, value string) bool {
 		}
 		first, _ := utf8.DecodeRune(recBytes[valueStart:])
 		if first == '"' {
-			length := bytes.IndexAny(recBytes[valueStart:], "\"")
+			length := bytes.IndexAny(recBytes[valueStart+1:], "\"")
 			if length == -1 {
 				length = len(recBytes) - valueStart
+			} else {
+				length += 2 // 1 for starting quote, and 1 for ending quote
 			}
 			off += idx + valueStart + length
 
@@ -286,22 +292,24 @@ func parseTuple(p []byte) (Tuple, int, error) {
 	valueStart := equals + 1
 	firstValue, _ := utf8.DecodeRune(p[valueStart:])
 	if firstValue == '"' {
-		length := bytes.IndexAny(p[valueStart:], "\"")
+		length := bytes.IndexAny(p[valueStart+1:], "\"")
 		if length == -1 {
 			length = len(p) - valueStart
+		} else {
+			length += 2 // 1 for starting quote, and 1 for ending quote
 		}
 
 		actualValue, err := strconv.Unquote(string(p[valueStart : valueStart+length]))
 		if err != nil {
-			return Tuple{}, 0, err
+			return Tuple{}, valueStart + length, err
 		}
-		return Tuple{attr, actualValue}, valueStart + length + 1, nil
+		return Tuple{attr, actualValue}, valueStart + length, nil
 	} else {
 		length := bytes.IndexAny(p[valueStart:], " \t\r\n")
 		if length == -1 {
 			length = len(p) - valueStart
 		}
 
-		return Tuple{attr, string(p[valueStart : valueStart+length])}, valueStart + length + 1, nil
+		return Tuple{attr, string(p[valueStart : valueStart+length])}, valueStart + length, nil
 	}
 }

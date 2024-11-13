@@ -48,6 +48,7 @@ givenName=Jane familyName=Doe`,
 	   familyName=Doe
 givenName=Jane familyName=Doe`,
 			"noValue.ndb": `givenName=John familyName=Doe person`,
+			"quoted.mdb":  `name="John Doe" person`,
 		},
 	}
 	t.Run("test.ndb", func(t *testing.T) {
@@ -99,6 +100,17 @@ givenName=Jane familyName=Doe`,
 		}
 		if records[0].Get("familyName") != "Doe" {
 			t.Fatalf("expected familyName to be Doe, got %#v", records[0].Get("familyName"))
+		}
+	})
+
+	t.Run("quoted.mdb", func(t *testing.T) {
+		db := mustOpenOne(t, m, "quoted.mdb")
+		records := db.SearchSlice("name", "John Doe")
+		if len(records) != 1 {
+			t.Fatalf("expected 1 record, got %d", len(records))
+		}
+		if records[0].Get("name") != "John Doe" {
+			t.Fatalf("expected name to be John Doe, got %s", records[0].Get("name"))
 		}
 	})
 }
