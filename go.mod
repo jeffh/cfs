@@ -17,7 +17,7 @@ require (
 	github.com/mmcdole/gofeed v1.1.3
 	github.com/pkg/sftp v1.13.4
 	github.com/secure-io/sio-go v0.3.1
-	github.com/willscott/go-nfs v0.0.2
+	github.com/smallfz/libnfs-go v0.0.6
 	golang.org/x/crypto v0.25.0
 	golang.org/x/sys v0.27.0
 )
@@ -34,8 +34,6 @@ require (
 	github.com/go-logr/logr v1.4.1 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
-	github.com/google/uuid v1.5.0 // indirect
-	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/kr/fs v0.1.0 // indirect
@@ -50,9 +48,6 @@ require (
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.0.3-0.20211202183452-c5a74bcca799 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
-	github.com/rasky/go-xdr v0.0.0-20170124162913-1a41d1a06c93 // indirect
-	github.com/smallfz/libnfs-go v0.0.6 // indirect
-	github.com/willscott/go-nfs-client v0.0.0-20240104095149-b44639837b00 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.49.0 // indirect
 	go.opentelemetry.io/otel v1.24.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.24.0 // indirect
