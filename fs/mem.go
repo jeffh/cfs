@@ -107,8 +107,8 @@ func (n *memNode) FindChild(name string) *memNode {
 func (n *memNode) RemoveChild(name string) bool {
 	n.m.Lock()
 	defer n.m.Unlock()
-	for i, child := range n.children {
-		if child.name == name {
+	for i := range n.children {
+		if n.children[i].name == name {
 			copy(n.children[i:], n.children[i+1:])
 			n.children[len(n.children)-1] = memNode{}
 			n.children = n.children[:len(n.children)-1]
