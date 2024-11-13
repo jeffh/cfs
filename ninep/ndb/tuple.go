@@ -66,7 +66,20 @@ func (r Record) String() string {
 		}
 		sb.WriteString(t.Attr)
 		sb.WriteString("=")
-		sb.WriteString(strconv.Quote(t.Val))
+		if needsQuote(t.Val) {
+			sb.WriteString(strconv.Quote(t.Val))
+		} else {
+			sb.WriteString(t.Val)
+		}
 	}
 	return sb.String()
+}
+
+func needsQuote(s string) bool {
+	for _, r := range s {
+		if r == ' ' || r == '\t' || r == '\n' || r == '\r' || r == '=' || r > 128 {
+			return true
+		}
+	}
+	return false
 }
