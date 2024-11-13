@@ -72,7 +72,6 @@ givenName=Jane familyName=Doe`,
 	})
 
 	t.Run("noValue.ndb", func(t *testing.T) {
-		println("===========================")
 		db := mustOpenOne(t, m, "noValue.ndb")
 		records := db.SearchSlice("person", "")
 		if len(records) != 1 {
