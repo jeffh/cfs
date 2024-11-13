@@ -5,7 +5,20 @@ import (
 	"io/fs"
 	"strings"
 	"testing"
+	"time"
 )
+
+type simpleFileInfo struct {
+	name    string
+	modTime time.Time
+}
+
+func (s simpleFileInfo) Name() string       { return s.name }
+func (s simpleFileInfo) Size() int64        { return 0 }
+func (s simpleFileInfo) Mode() fs.FileMode  { return 0 }
+func (s simpleFileInfo) ModTime() time.Time { return s.modTime }
+func (s simpleFileInfo) IsDir() bool        { return false }
+func (s simpleFileInfo) Sys() interface{}   { return nil }
 
 type memSys struct {
 	tree map[string]string
@@ -14,6 +27,13 @@ type memSys struct {
 func (m *memSys) Open(path string) (io.ReadCloser, error) {
 	if s, ok := m.tree[path]; ok {
 		return io.NopCloser(strings.NewReader(s)), nil
+	}
+	return nil, fs.ErrNotExist
+}
+
+func (m *memSys) Stat(path string) (fs.FileInfo, error) {
+	if _, ok := m.tree[path]; ok {
+		return simpleFileInfo{name: path, modTime: time.Now()}, nil
 	}
 	return nil, fs.ErrNotExist
 }

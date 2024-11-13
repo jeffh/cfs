@@ -5,22 +5,26 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"io/fs"
 	"iter"
 	"os"
 	"slices"
 	"strconv"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
 
 type Ndb struct {
 	data  [][]byte
+	mods  []time.Time
 	files []string
 	sys   System
 }
 
 type System interface {
 	Open(path string) (io.ReadCloser, error)
+	Stat(path string) (fs.FileInfo, error)
 }
 
 type osSys struct{}
@@ -29,23 +33,36 @@ func (osSys) Open(path string) (io.ReadCloser, error) {
 	return os.Open(path)
 }
 
+func (osSys) Stat(path string) (fs.FileInfo, error) {
+	return os.Stat(path)
+}
+
 func Open(sys System, filepath string) (*Ndb, error) {
 	if sys == nil {
 		sys = osSys{}
 	}
-	db := &Ndb{files: []string{filepath}, sys: sys}
+	db := &Ndb{
+		files: []string{filepath},
+		data:  make([][]byte, 1),
+		mods:  []time.Time{{}},
+		sys:   sys,
+	}
+	count := 0
 	for {
-		n, err := db.readFiles()
+		n, err := db.readFiles(count)
 		if err != nil {
 			return nil, err
 		}
 		if n == 0 {
 			break
 		}
+		count += n
 		for record := range db.Search("database", "") {
 			for _, file := range record.GetAll("file") {
 				if !slices.Contains(db.files, file) {
 					db.files = append(db.files, file)
+					db.data = append(db.data, []byte{})
+					db.mods = append(db.mods, time.Time{})
 				}
 			}
 		}
@@ -57,42 +74,64 @@ func OpenOne(sys System, filepath string) (*Ndb, error) {
 	if sys == nil {
 		sys = osSys{}
 	}
-	db := &Ndb{files: []string{filepath}, sys: sys}
-	if _, err := db.readFiles(); err != nil {
+	db := &Ndb{
+		files: []string{filepath},
+		data:  make([][]byte, 1),
+		mods:  []time.Time{{}},
+		sys:   sys,
+	}
+	if _, err := db.readFiles(0); err != nil {
 		return nil, err
 	}
 	return db, nil
 }
 
-func (n *Ndb) readFile(fileToRead string) ([]byte, error) {
+func (n *Ndb) readFile(fileToRead string, lastSeen time.Time) ([]byte, time.Time, error) {
+	fi, err := n.sys.Stat(fileToRead)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	modTime := fi.ModTime()
+	if !modTime.After(lastSeen) {
+		return nil, lastSeen, nil
+	}
+
 	f, err := n.sys.Open(fileToRead)
 	if err != nil {
-		return nil, err
+		return nil, modTime, err
 	}
 	buf, err := io.ReadAll(f)
 	f.Close()
 	if err != nil {
-		return nil, err
+		return nil, modTime, err
 	}
 	// TODO: validate syntax
-	return buf, nil
+	return buf, modTime, nil
 }
 
-func (n *Ndb) readFiles() (int, error) {
-	if len(n.files) == len(n.data) {
-		return 0, nil
-	}
+func (n *Ndb) readFiles(skip int) (int, error) {
 	count := 0
-	for _, fileToRead := range n.files[len(n.data):] {
-		buf, err := n.readFile(fileToRead)
+	for i, fileToRead := range n.files[skip:] {
+		idx := i + skip
+		lastSeen := n.mods[idx]
+		buf, ts, err := n.readFile(fileToRead, lastSeen)
 		if err != nil {
 			return count, err
 		}
-		n.data = append(n.data, buf)
+		if buf == nil {
+			continue
+		}
+		n.data[i] = buf
+		n.mods[i] = ts
 		count++
 		// TODO: validate syntax
 	}
 	return count, nil
+}
+
+func (n *Ndb) Changed() bool {
+	changed, _ := n.readFiles(0)
+	return changed > 0
 }
 
 func (n *Ndb) SearchSlice(attr, val string) []Record {
