@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"iter"
 	"os"
 	"strings"
 	"time"
@@ -55,7 +57,7 @@ type File interface {
 
 type Dir interface {
 	Node
-	List() (NodeIterator, error)
+	List() iter.Seq2[Node, error]
 	CreateFile(name string, flag OpenMode, mode Mode) (FileHandle, error)
 	CreateDir(name string, mode Mode) error
 	Delete(name string) error
@@ -141,18 +143,25 @@ func (f *SimpleFileSystem) OpenFile(ctx context.Context, path string, flag OpenM
 
 	return file.Open(flag)
 }
-func (f *SimpleFileSystem) ListDir(ctx context.Context, path string) (FileInfoIterator, error) {
-	node, _, err := f.walk(path, true)
-	if err != nil {
-		return nil, err
-	}
+func (f *SimpleFileSystem) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, error] {
+	return func(yield func(fs.FileInfo, error) bool) {
+		node, _, err := f.walk(path, true)
+		if err != nil {
+			yield(nil, err)
+			return
+		}
 
-	it, err := node.(Dir).List()
-	if err != nil {
-		return nil, err
+		for node, err := range node.(Dir).List() {
+			if err != nil {
+				yield(nil, err)
+				return
+			}
+			info, err := node.Info()
+			if !yield(info, err) {
+				return
+			}
+		}
 	}
-
-	return &fileInfoNodeIterator{it}, nil
 }
 func (f *SimpleFileSystem) Stat(ctx context.Context, path string) (os.FileInfo, error) {
 	node, _, err := f.walk(path, true)
@@ -255,60 +264,21 @@ func (itr *nodeFilterIterator) NextNode() (Node, error) {
 
 /////////////////////////////////////////////
 
-type nodeSliceIterator struct {
-	nodes []Node
-	index int
+func MakeNodeSliceErrorIterator(err error) iter.Seq2[Node, error] {
+	return func(yield func(Node, error) bool) {
+		yield(nil, err)
+	}
 }
 
-func MakeNodeSliceIterator(fi []Node) NodeIterator {
-	return &nodeSliceIterator{fi, 0}
-}
-
-func (itr *nodeSliceIterator) Close() error { return nil }
-func (itr *nodeSliceIterator) Reset() error { itr.index = 0; return nil }
-func (itr *nodeSliceIterator) NextNode() (Node, error) {
-	for {
-		idx := itr.index
-		if idx >= len(itr.nodes) {
-			return nil, io.EOF
+func MakeNodeSliceIterator(fi []Node) iter.Seq2[Node, error] {
+	return func(yield func(Node, error) bool) {
+		for _, n := range fi {
+			if !yield(n, nil) {
+				return
+			}
 		}
-		itr.index++
-		node := itr.nodes[idx]
-		if node == nil {
-			continue
-		}
-		return node, nil
 	}
 }
-
-/////////////////////////////////////////////
-
-func NodeToFileInfoIterator(it NodeIterator) FileInfoIterator {
-	return &fileInfoNodeIterator{it}
-}
-func PassNodeToFileInfoIterator(it NodeIterator, err error) (FileInfoIterator, error) {
-	if it == nil {
-		return nil, err
-	}
-	return &fileInfoNodeIterator{it}, err
-}
-
-type fileInfoNodeIterator struct {
-	it NodeIterator
-}
-
-var _ FileInfoIterator = (*fileInfoNodeIterator)(nil)
-
-func (i *fileInfoNodeIterator) NextFileInfo() (os.FileInfo, error) {
-	node, err := i.it.NextNode()
-	if err != nil {
-		return nil, err
-	}
-	return node.Info()
-}
-
-func (i *fileInfoNodeIterator) Reset() error { return i.it.Reset() }
-func (i *fileInfoNodeIterator) Close() error { return i.it.Close() }
 
 /////////////////////////////////////////////
 
@@ -321,8 +291,8 @@ type StaticReadOnlyDir struct {
 func (d *StaticReadOnlyDir) Info() (os.FileInfo, error)     { return d, nil }
 func (d *StaticReadOnlyDir) WriteInfo(in os.FileInfo) error { return ErrUnsupported }
 func (d *StaticReadOnlyDir) Delete(name string) error       { return ErrUnsupported }
-func (d *StaticReadOnlyDir) List() (NodeIterator, error) {
-	return MakeNodeSliceIterator(d.Children), nil
+func (d *StaticReadOnlyDir) List() iter.Seq2[Node, error] {
+	return MakeNodeSliceIterator(d.Children)
 }
 func (d *StaticReadOnlyDir) CreateFile(name string, flag OpenMode, mode Mode) (FileHandle, error) {
 	return nil, ErrUnsupported
@@ -356,13 +326,13 @@ func StaticRootDir(children ...Node) *StaticReadOnlyDir {
 // Creates a dynamic, readonly directory that can't be modified, uses iterator instead of a slisce
 type DynamicReadOnlyDirItr struct {
 	SimpleFileInfo
-	GetChildren func() (NodeIterator, error)
+	GetChildren func() iter.Seq2[Node, error]
 }
 
 func (d *DynamicReadOnlyDirItr) Info() (os.FileInfo, error)     { return d, nil }
 func (d *DynamicReadOnlyDirItr) WriteInfo(in os.FileInfo) error { return ErrUnsupported }
 func (d *DynamicReadOnlyDirItr) Delete(name string) error       { return ErrUnsupported }
-func (d *DynamicReadOnlyDirItr) List() (NodeIterator, error) {
+func (d *DynamicReadOnlyDirItr) List() iter.Seq2[Node, error] {
 	return d.GetChildren()
 }
 func (d *DynamicReadOnlyDirItr) CreateFile(name string, flag OpenMode, mode Mode) (FileHandle, error) {
@@ -383,12 +353,12 @@ type DynamicReadOnlyDir struct {
 func (d *DynamicReadOnlyDir) Info() (os.FileInfo, error)     { return d, nil }
 func (d *DynamicReadOnlyDir) WriteInfo(in os.FileInfo) error { return ErrUnsupported }
 func (d *DynamicReadOnlyDir) Delete(name string) error       { return ErrUnsupported }
-func (d *DynamicReadOnlyDir) List() (NodeIterator, error) {
+func (d *DynamicReadOnlyDir) List() iter.Seq2[Node, error] {
 	nodes, err := d.GetChildren()
 	if err != nil {
-		return nil, err
+		return MakeNodeSliceErrorIterator(err)
 	}
-	return MakeNodeSliceIterator(nodes), nil
+	return MakeNodeSliceIterator(nodes)
 }
 func (d *DynamicReadOnlyDir) CreateFile(name string, flag OpenMode, mode Mode) (FileHandle, error) {
 	return nil, ErrUnsupported
@@ -421,12 +391,12 @@ type DynamicReadOnlyDirTree struct {
 func (d *DynamicReadOnlyDirTree) Info() (os.FileInfo, error)     { return d, nil }
 func (d *DynamicReadOnlyDirTree) WriteInfo(in os.FileInfo) error { return ErrUnsupported }
 func (d *DynamicReadOnlyDirTree) Delete(name string) error       { return ErrUnsupported }
-func (d *DynamicReadOnlyDirTree) List() (NodeIterator, error) {
+func (d *DynamicReadOnlyDirTree) List() iter.Seq2[Node, error] {
 	nodes, err := d.GetFlatTree()
 	if err != nil {
-		return nil, err
+		return MakeNodeSliceErrorIterator(err)
 	}
-	return MakeNodeSliceIterator(nodes), nil
+	return MakeNodeSliceIterator(nodes)
 }
 func (d *DynamicReadOnlyDirTree) Walk(subpath []string) (Node, error) {
 	path := strings.Join(subpath, "/")
@@ -661,12 +631,7 @@ func FindChild(root Node, name string) (Node, os.FileInfo, error) {
 			return nil, nil, ErrListingOnNonDir
 		}
 
-		itr, err = rootDir.List()
-		if err != nil {
-			return nil, nil, err
-		}
-		for {
-			node, err := itr.NextNode()
+		for node, err := range rootDir.List() {
 			if node != nil {
 				info, infoErr = node.Info()
 				if infoErr != nil {
@@ -681,15 +646,10 @@ func FindChild(root Node, name string) (Node, os.FileInfo, error) {
 				}
 			}
 
-			if err == io.EOF {
-				itr.Close()
-				return nil, info, os.ErrNotExist
-			} else if err != nil {
-				itr.Close()
+			if err != nil {
 				return nil, info, err
 			}
 		}
-		itr.Close()
 		return foundNode, info, err
 	} else {
 		return nil, nil, os.ErrNotExist

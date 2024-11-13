@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"iter"
 	"os"
 	"path"
 	"runtime"
@@ -145,27 +146,31 @@ func main() {
 			runtime.Goexit()
 		}
 
-		it, err := srcNode.ListDir()
+		next, stop := iter.Pull2(srcNode.ListDir())
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error opening dir on source fs: %s/%s: %s\n", srcMntCfg.Addr, srcMnt.Prefix, err)
 			exitCode = 2
 			runtime.Goexit()
 		}
-		defer it.Close()
+		defer stop()
 
 		type stackNode struct {
-			it  ninep.FileInfoIterator
-			src ninep.TraversableFile
-			dst ninep.TraversableFile
+			next func() (fs.FileInfo, error, bool)
+			src  ninep.TraversableFile
+			dst  ninep.TraversableFile
 		}
 
 		stack := []stackNode{
-			stackNode{it, srcNode, dstNode},
+			stackNode{next, srcNode, dstNode},
 		}
 
 		for len(stack) > 0 {
 			last := stack[len(stack)-1]
-			fi, err := it.NextFileInfo()
+			fi, err, more := next()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error read path at prefix: %s: %s\n", srcMnt.Prefix, err)
+				continue
+			}
 			name := fi.Name()
 			src, er := last.src.Traverse(ctx, name)
 			if er != nil {
@@ -181,7 +186,7 @@ func main() {
 				// }
 			}
 
-			if err == io.EOF {
+			if !more {
 				stack = stack[:len(stack)-1]
 			}
 		}

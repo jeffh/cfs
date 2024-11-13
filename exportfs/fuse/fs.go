@@ -209,27 +209,21 @@ func (n *Dir) Link(ctx context.Context, target fs.InodeEmbedder, name string, ou
 func (n *Dir) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	path := n.config.path(n.path)
 	n.tracef("[%v]Dir.ReadDirAll()\n", path)
-	itr, err := n.fs.ListDir(ctx, path)
-	if err != nil {
-		return nil, mapErr(err, 0)
-	}
-	defer itr.Close()
-	infos, err := ninep.FileInfoSliceFromIterator(itr, -1)
-	if err != nil {
-		return nil, mapErr(err, 0)
-	}
-
-	entries := make([]fuse.DirEntry, len(infos))
-	for i, info := range infos {
-		// dt := fillMode(info)
+	entries := make([]fuse.DirEntry, 0, 16)
+	i := 0
+	for info, err := range n.fs.ListDir(ctx, path) {
+		if err != nil {
+			return nil, mapErr(err, 0)
+		}
 		dt := uint32(info.Mode())
 		stat := info.Sys().(ninep.Stat)
-		entries[i] = fuse.DirEntry{
+		entries = append(entries, fuse.DirEntry{
 			Ino:  stat.Qid().Path(),
 			Mode: dt,
 			Name: stat.Name(),
-		}
+		})
 		n.tracef("[%v]Dir.ReadDirAll() => [%d, %#v] -> %#v | %s | %v\n", path, i, stat.Name(), entries[i], stat.Mode().String(), dt)
+		i++
 	}
 	return fs.NewListDirStream(entries), 0
 }
@@ -266,7 +260,7 @@ func (n *Dir) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.
 	} else {
 		inode = n.NewInode(ctx, &File{fs: n.fs, path: path, config: n.config, timeout: n.timeout}, stable)
 	}
-	fmt.Printf(" -> inode: %#v -> isDir=%#v\n", *inode, info.IsDir())
+	fmt.Printf(" -> inode: %#v -> isDir=%#v\n", inode, info.IsDir())
 	return inode, 0
 }
 

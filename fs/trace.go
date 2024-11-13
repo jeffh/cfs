@@ -2,9 +2,9 @@ package fs
 
 import (
 	"context"
-	"fmt"
+	"io/fs"
+	"iter"
 	"os"
-	"strings"
 
 	ninep "github.com/jeffh/cfs/ninep"
 )
@@ -121,30 +121,21 @@ func (f traceFileSystem) OpenFile(ctx context.Context, path string, flag ninep.O
 	return h, err
 }
 
-func (f traceFileSystem) ListDir(ctx context.Context, path string) (ninep.FileInfoIterator, error) {
-	itr, err := f.Fs.ListDir(ctx, path)
-	var v []os.FileInfo
-	if itr != nil {
-		v, _ = ninep.FileInfoSliceFromIterator(itr, 21)
-		itr.Reset()
-	}
-	if len(v) > 20 {
-		sb := []string{}
-		for _, j := range v[:20] {
-			sb = append(sb, fmt.Sprintf("FileInfo[%#v]", j.Name()))
+func (f traceFileSystem) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, error] {
+	return func(yield func(fs.FileInfo, error) bool) {
+		i := 0
+		for info, err := range f.Fs.ListDir(ctx, path) {
+			if err != nil {
+				f.Errorf("FS.ListDir(%v)[%d] => (_, %s)", path, i, err)
+			} else {
+				f.Tracef("FS.ListDir(%v)[%d] => (%#v, %s)", path, i, info.Name(), err)
+			}
+			if !yield(info, err) {
+				return
+			}
+			i++
 		}
-		f.Tracef("FS.ListDir(%v) => (%#v..., %s)", path, strings.Join(sb, ", "), err)
-	} else {
-		sb := []string{}
-		for _, j := range v {
-			sb = append(sb, fmt.Sprintf("FileInfo[%#v]", j.Name()))
-		}
-		f.Tracef("FS.ListDir(%v) => (%#v, %s)", path, strings.Join(sb, ", "), err)
 	}
-	if err != nil {
-		f.Errorf("FS.ListDir(%v) => (_, %s)", path, err)
-	}
-	return itr, err
 }
 
 func (f traceFileSystem) Stat(ctx context.Context, path string) (os.FileInfo, error) {

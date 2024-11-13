@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"iter"
 	"math"
 	"os"
 	"path/filepath"
@@ -14,7 +16,8 @@ import (
 type directoryHandle struct {
 	offset int64
 	index  int
-	it     FileInfoIterator
+	next   func() (fs.FileInfo, error, bool)
+	stop   func()
 	buffer []Stat
 	rem    []Stat
 	eof    bool
@@ -34,24 +37,18 @@ func (h *directoryHandle) ReadAt(p []byte, offset int64) (int, error) {
 		h.index = 0
 		h.eof = false
 		h.rem = nil
-		if h.it != nil {
-			err := h.it.Reset()
-			if err != nil {
-				return 0, err
-			}
+		if h.stop != nil {
+			h.stop()
+			h.next, h.stop = iter.Pull2(h.fs.ListDir(h.ctx, h.path))
 		}
 	}
 	if h.offset != offset {
 		return 0, ErrSeekNotAllowed
 	}
-	if h.it == nil {
-		it, err := h.fs.ListDir(h.ctx, h.path)
-		if err != nil {
-			return 0, err
-		}
+	if h.next == nil {
+		h.next, h.stop = iter.Pull2(h.fs.ListDir(h.ctx, h.path))
 		h.buffer = make([]Stat, 32)
 		h.rem = h.buffer[:0]
-		h.it = it
 	}
 	if len(h.rem) == 0 {
 		if h.eof {
@@ -67,14 +64,14 @@ func (h *directoryHandle) ReadAt(p []byte, offset int64) (int, error) {
 
 		h.rem = h.buffer[:0]
 		for i, c := 0, cap(h.buffer); i < c; i++ {
-			info, err := h.it.NextFileInfo()
+			info, err, more := h.next()
 			if info != nil {
 				subpath := filepath.Join(h.path, info.Name())
 				q := h.session.PutQidInfo(subpath, info)
 				st := fileInfoToStat(q, info)
 				h.rem = append(h.rem, st)
 			}
-			if err == io.EOF {
+			if !more {
 				h.eof = true
 				if len(h.rem) == 0 {
 					return 0, io.EOF
@@ -116,12 +113,13 @@ func (h *directoryHandle) Close() error {
 		}
 	}
 	// reset
-	if h.it != nil {
-		h.it.Close()
+	if h.stop != nil {
+		h.stop()
 	}
 	h.offset = 0
 	h.index = 0
-	h.it = nil
+	h.next = nil
+	h.stop = nil
 	h.rem = nil
 	h.buffer = nil
 	return nil

@@ -7,7 +7,9 @@ import (
 	"crypto/rsa"
 	"errors"
 	"fmt"
+	"io/fs"
 	"io/ioutil"
+	"iter"
 	"os"
 	"path/filepath"
 
@@ -18,14 +20,14 @@ import (
 )
 
 // Basic encrypted file system overlay:
-// - DataMount is where all the encrypted data is stored. File names are NOT
-//   encrypted.
-// - KeysMount is where all the encrypted keys are stored. File names are NOT
-//   encrypted. Used to decrypted DataMount.
-// - DecryptMount is where all the "in-memory" opened files reside. Should be
-//   primarily something in memory or a secure location as opened files
-//   are decrypted to this location to support read-at locations
-// - PrivKey is the private key used to decrypt the KeysMount.
+//   - DataMount is where all the encrypted data is stored. File names are NOT
+//     encrypted.
+//   - KeysMount is where all the encrypted keys are stored. File names are NOT
+//     encrypted. Used to decrypted DataMount.
+//   - DecryptMount is where all the "in-memory" opened files reside. Should be
+//     primarily something in memory or a secure location as opened files
+//     are decrypted to this location to support read-at locations
+//   - PrivKey is the private key used to decrypt the KeysMount.
 //
 // PrivKey must be securely stored, but KeysMount and DataMount can be in
 // untrusted locations.
@@ -234,10 +236,10 @@ func (f *EncryptedFileSystem) OpenFile(ctx context.Context, path string, flag ni
 	if err != nil {
 		return nil, err
 	}
-	return &ninep.ProtectedFileHandle{commitHandle, flag}, nil
+	return &ninep.ProtectedFileHandle{H: commitHandle, Flag: flag}, nil
 }
 
-func (f *EncryptedFileSystem) ListDir(ctx context.Context, path string) (ninep.FileInfoIterator, error) {
+func (f *EncryptedFileSystem) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, error] {
 	return f.DataMount.FS.ListDir(ctx, filepath.Join(f.DataMount.Prefix, path))
 }
 

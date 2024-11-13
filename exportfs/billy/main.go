@@ -90,10 +90,7 @@ func (fs *bfs) ReadDir(path string) ([]os.FileInfo, error) {
 	if trace {
 		fmt.Printf("billy.FileSystem.ReadDir(%#v)\n", path)
 	}
-	it, err := fs.FS.ListDir(context.Background(), filepath.Join(fs.Prefix, path))
-	if err != nil {
-		return nil, err
-	}
+	it := fs.FS.ListDir(context.Background(), filepath.Join(fs.Prefix, path))
 	return ninep.FileInfoSliceFromIterator(it, -1)
 }
 func (fs *bfs) MkdirAll(filename string, perm os.FileMode) error {

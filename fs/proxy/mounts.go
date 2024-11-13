@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
+	"iter"
 	"os"
 	"path/filepath"
 	"strings"
@@ -95,15 +97,15 @@ func (fsm *FileSystemMount) CreateFile(ctx context.Context, path string, flag ni
 func (fsm *FileSystemMount) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (ninep.FileHandle, error) {
 	return fsm.FS.OpenFile(ctx, fsm.Join(path), flag)
 }
-func (fsm *FileSystemMount) ListDir(ctx context.Context, path string) (ninep.FileInfoIterator, error) {
-	it, err := fsm.FS.ListDir(ctx, fsm.Join(path))
+func (fsm *FileSystemMount) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, error] {
+	it := fsm.FS.ListDir(ctx, fsm.Join(path))
 	return ninep.MapFileInfoIterator(it, func(fi os.FileInfo) os.FileInfo {
 		name := fi.Name()
 		if strings.HasPrefix(fsm.Prefix, name) {
 			name = "/" + name[len(fsm.Prefix):]
 		}
 		return ninep.FileInfoWithName(fi, name)
-	}), err
+	})
 }
 func (fsm *FileSystemMount) Stat(ctx context.Context, path string) (os.FileInfo, error) {
 	st, err := fsm.FS.Stat(ctx, fsm.Join(path))

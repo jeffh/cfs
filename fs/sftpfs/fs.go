@@ -4,6 +4,8 @@ package sftpfs
 import (
 	"context"
 	"fmt"
+	"io/fs"
+	"iter"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -86,13 +88,13 @@ func (fs *sftpFs) OpenFile(ctx context.Context, path string, flag ninep.OpenMode
 	return &File{h: h}, nil
 }
 
-func (fs *sftpFs) ListDir(ctx context.Context, path string) (ninep.FileInfoIterator, error) {
+func (fs *sftpFs) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, error] {
 	fullPath := filepath.Join(fs.prefix, path)
 	infos, err := fs.conn.ReadDir(fullPath)
 	if err != nil {
-		return nil, err
+		return ninep.FileInfoErrorIterator(err)
 	}
-	return ninep.FileInfoSliceIterator(infos), nil
+	return ninep.FileInfoSliceIterator(infos)
 }
 
 func (fs *sftpFs) Stat(ctx context.Context, path string) (os.FileInfo, error) {

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"iter"
 	"net"
 	"os"
 	"path/filepath"
@@ -262,27 +264,89 @@ func (f *FileProxy) Delete() error {
 	return err
 }
 
-// List files in a directory
-func (f *FileProxy) ListDirStat() (StatIterator, error) {
-	itr := &fileSystemProxyIterator{fp: f}
-
-	qid, _, err := f.fs.c.Open(f.fid, OREAD)
-	if err == nil {
-		if !qid.Type().IsDir() {
-			itr.Close()
-			return nil, ErrListingOnNonDir
-		} else {
-			return itr, nil
+func (fp *FileProxy) eachStat(yield func(Stat, error) bool) {
+	buf := make([]byte, fp.fs.c.MaxMessageSize())
+	var rst []byte
+	var offset int
+	readStat := func(fs *FileSystemProxy, b []byte) (Stat, []byte, error) {
+		st := Stat(b)
+		size := st.Size()
+		if int(size) > len(b) {
+			fs.c.Errorf("Invalid format while reading dir: (wanted: %d bytes, had: %d bytes)", size, len(b))
+			return nil, b, ErrBadFormat
 		}
-	} else {
-		itr.Close()
-		return nil, err
+		st = Stat(b[:size+2])
+		return st, b[2+size:], nil
+	}
+
+	for {
+		var err error
+		var outSt Stat
+		if len(rst) > 0 {
+			var st Stat
+			st, rst, err = readStat(fp.fs, rst)
+			if err != nil {
+				yield(nil, err)
+				return
+			}
+			outSt = st
+		}
+
+		if outSt == nil {
+			var n int
+			n, err = fp.ReadAt(buf, int64(offset))
+			if n > 0 {
+				rst = buf[:n]
+				var st Stat
+				st, rst, err = readStat(fp.fs, rst)
+				if err != nil {
+					yield(nil, err)
+					return
+				}
+				outSt = st
+				offset += n
+			}
+		}
+
+		// EOF indicates the end
+		if errors.Is(err, io.EOF) {
+			yield(outSt, nil)
+			return
+		} else if !yield(outSt, err) {
+			return
+		}
+	}
+}
+
+// List files in a directory
+func (f *FileProxy) ListDirStat() iter.Seq2[Stat, error] {
+	return func(yield func(Stat, error) bool) {
+		qid, _, err := f.fs.c.Open(f.fid, OREAD)
+		if err == nil {
+			if !qid.Type().IsDir() {
+				yield(nil, ErrListingOnNonDir)
+				return
+				// } else {
+				// 	return itr, nil
+			}
+		} else {
+			yield(nil, err)
+			return
+		}
+
+		f.eachStat(yield)
 	}
 }
 
 // Lists files in a directory
-func (f *FileProxy) ListDir() (FileInfoIterator, error) {
-	return f.ListDirStat()
+func (f *FileProxy) ListDir() iter.Seq2[fs.FileInfo, error] {
+	return func(yield func(fs.FileInfo, error) bool) {
+		for stat, err := range f.ListDirStat() {
+			if !yield(stat.FileInfo(), err) {
+				break
+			}
+		}
+	}
 }
 
 ///////////////////////
@@ -430,107 +494,35 @@ func (fs *FileSystemProxy) OpenFile(ctx context.Context, path string, flag OpenM
 	return h, err
 }
 
-type fileSystemProxyIterator struct {
-	fp     *FileProxy
-	rst    []byte
-	buf    []byte
-	offset int
+func (fsp *FileSystemProxy) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, error] {
+	return statToFileInfo(fsp.ListDirStat(path))
 }
 
-var _ FileInfoIterator = (*fileSystemProxyIterator)(nil)
-var _ StatIterator = (*fileSystemProxyIterator)(nil)
-
-func (it *fileSystemProxyIterator) Reset() error {
-	it.rst = nil
-	it.buf = make([]byte, it.fp.fs.c.MaxMessageSize())
-	it.offset = 0
-	return nil
-}
-
-// Note: Stat must be copied if you wish to keep it beyond the next NextStat() call
-func (it *fileSystemProxyIterator) NextStat() (Stat, error) {
-	if it.buf == nil {
-		if err := it.Reset(); err != nil {
-			return nil, err
-		}
-	}
-	readStat := func(fs *FileSystemProxy, b []byte) (Stat, []byte, error) {
-		st := Stat(b)
-		size := st.Size()
-		if int(size) > len(b) {
-			fs.c.Errorf("Invalid format while reading dir: (wanted: %d bytes, had: %d bytes)", size, len(b))
-			return nil, b, ErrBadFormat
-		}
-		st = Stat(b[:size+2])
-		return st, b[2+size:], nil
-	}
-
-	var outSt Stat
-	var err error
-
-	if len(it.rst) > 0 {
-		var st Stat
-		st, it.rst, err = readStat(it.fp.fs, it.rst)
+func (fs *FileSystemProxy) ListDirStat(path string) iter.Seq2[Stat, error] {
+	return func(yield func(Stat, error) bool) {
+		fid := fs.allocFid()
+		fs.c.Tracef("ListDir(%#v) %s", path, fid)
+		q, err := fs.walk(fid, path)
 		if err != nil {
-			return nil, err
+			fs.releaseFid(fid)
+			yield(nil, err)
+			return
 		}
-		outSt = st
-	}
 
-	if outSt == nil {
-		var n int
-		n, err = it.fp.ReadAt(it.buf, int64(it.offset))
-		if n > 0 {
-			it.rst = it.buf[:n]
-			var st Stat
-			st, it.rst, err = readStat(it.fp.fs, it.rst)
-			if err != nil {
-				return nil, err
+		qid, _, err := fs.c.Open(fid, OREAD)
+		if err == nil {
+			if !qid.Type().IsDir() {
+				yield(nil, ErrListingOnNonDir)
+				return
+				// } else {
+				// 	return itr, nil
 			}
-			outSt = st
-			it.offset += n
-		}
-	}
-
-	return outSt, err
-}
-
-// Note: FileInfo is safe to use after calling NextFileInfo() again
-func (it *fileSystemProxyIterator) NextFileInfo() (os.FileInfo, error) {
-	st, err := it.NextStat()
-	if st != nil {
-		return st.Clone().FileInfo(), err
-	}
-	return nil, err
-}
-func (it *fileSystemProxyIterator) Close() error { return it.fp.Close() }
-
-func (fs *FileSystemProxy) ListDir(ctx context.Context, path string) (FileInfoIterator, error) {
-	return fs.ListDirStat(path)
-}
-
-func (fs *FileSystemProxy) ListDirStat(path string) (StatIterator, error) {
-	fid := fs.allocFid()
-	fs.c.Tracef("ListDir(%#v) %s", path, fid)
-	q, err := fs.walk(fid, path)
-	if err != nil {
-		fs.releaseFid(fid)
-		return nil, err
-	}
-
-	itr := &fileSystemProxyIterator{fp: &FileProxy{fs, fid, q, nil}}
-
-	qid, _, err := fs.c.Open(fid, OREAD)
-	if err == nil {
-		if !qid.Type().IsDir() {
-			itr.Close()
-			return nil, ErrListingOnNonDir
 		} else {
-			return itr, nil
+			yield(nil, err)
+			return
 		}
-	} else {
-		itr.Close()
-		return nil, err
+		fp := FileProxy{fs, fid, q, nil}
+		fp.eachStat(yield)
 	}
 }
 func (fs *FileSystemProxy) Stat(ctx context.Context, path string) (os.FileInfo, error) {
@@ -609,7 +601,7 @@ type TraversableFile interface {
 	Writer(start int64) io.Writer
 	Delete() error
 
-	ListDir() (FileInfoIterator, error)
+	ListDir() iter.Seq2[fs.FileInfo, error]
 }
 
 // An inefficient, but flexible implementation of TraversableFile
@@ -805,7 +797,7 @@ func (t *BasicTraversableFile) Delete() error {
 // Lists files and directories under this current directory
 //
 // Calling this from a non-directory has undefined behavior
-func (t *BasicTraversableFile) ListDir() (FileInfoIterator, error) {
+func (t *BasicTraversableFile) ListDir() iter.Seq2[fs.FileInfo, error] {
 	ctx := context.Background()
 	return t.FS.ListDir(ctx, t.Path)
 }

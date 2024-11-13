@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"iter"
 	"os"
 	"sync"
 	"time"
@@ -282,19 +283,20 @@ func (m *Mem) stat(n *memNode) *memFileInfo {
 	}
 }
 
-func (m *Mem) ListDir(ctx context.Context, path string) (ninep.FileInfoIterator, error) {
+func (m *Mem) ListDir(ctx context.Context, path string) iter.Seq2[os.FileInfo, error] {
 	parts := ninep.PathSplit(path)
 	n, err := m.traverse(parts)
 	if err != nil {
-		return nil, err
+		return ninep.FileInfoErrorIterator(err)
 	}
 
-	infos := make([]os.FileInfo, len(n.children))
-	for i := range n.children {
-		infos[i] = m.stat(n.children[i])
+	return func(yield func(os.FileInfo, error) bool) {
+		for i := range n.children {
+			if !yield(m.stat(n.children[i]), nil) {
+				return
+			}
+		}
 	}
-
-	return ninep.FileInfoSliceIterator(infos), nil
 }
 
 func (m *Mem) Stat(ctx context.Context, path string) (os.FileInfo, error) {

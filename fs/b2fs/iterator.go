@@ -3,7 +3,7 @@ package b2fs
 import (
 	"context"
 	"io"
-	"os"
+	"io/fs"
 	"strings"
 
 	"github.com/jeffh/b2client/b2"
@@ -30,7 +30,7 @@ func (it *keysIterator) getLimit() int {
 	return it.limit
 }
 
-func (it *keysIterator) NextFileInfo() (os.FileInfo, error) {
+func (it *keysIterator) NextFileInfo() (fs.FileInfo, error) {
 	for {
 		if len(it.rem) == 0 && !it.completed {
 			key := it.I.key

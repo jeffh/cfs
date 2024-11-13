@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"iter"
 	"os"
 	"strings"
 	"time"
@@ -40,11 +41,11 @@ func (b *buckets) Delete(name string) error {
 	})
 	return err
 }
-func (b *buckets) List() (ninep.NodeIterator, error) {
+func (b *buckets) List() iter.Seq2[ninep.Node, error] {
 	resp, err := b.s3c.Client.ListBuckets(&s3.ListBucketsInput{})
 	fmt.Printf("[S3.buckets.List] ListBuckets()\n")
 	if err != nil {
-		return nil, err
+		return ninep.MakeNodeSliceErrorIterator(mapAwsErrToNinep(err))
 	}
 	var uid string
 	if owner := resp.Owner; owner != nil {
@@ -65,7 +66,7 @@ func (b *buckets) List() (ninep.NodeIterator, error) {
 			})
 		}
 	}
-	return ninep.MakeNodeSliceIterator(nodes), nil
+	return ninep.MakeNodeSliceIterator(nodes)
 }
 
 func (b *buckets) Walk(subpath []string) ([]ninep.Node, error) {
@@ -405,13 +406,13 @@ func (b *bucketNode) Info() (os.FileInfo, error) {
 	return info, nil
 }
 
-func (b *bucketNode) List() (ninep.NodeIterator, error) {
+func (b *bucketNode) List() iter.Seq2[ninep.Node, error] {
 	nodes := []ninep.Node{
 		objectsForBucket(b.s3c, "objects", b.bucketName, opData),
 		bucketAclFile(b.s3c, b.bucketName),
 		bucketCorsFile(b.s3c, b.bucketName),
 	}
-	return ninep.MakeNodeSliceIterator(nodes), nil
+	return ninep.MakeNodeSliceIterator(nodes)
 }
 
 func (b *bucketNode) CreateFile(name string, flag ninep.OpenMode, mode ninep.Mode) (ninep.FileHandle, error) {

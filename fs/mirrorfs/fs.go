@@ -2,6 +2,8 @@ package mirrorfs
 
 import (
 	"context"
+	"io/fs"
+	"iter"
 	"os"
 	"path/filepath"
 
@@ -103,8 +105,8 @@ func (mfs *mirrorFS) CreateFile(ctx context.Context, path string, flag ninep.Ope
 func (mfs *mirrorFS) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (ninep.FileHandle, error) {
 	return nil, ninep.ErrNotImplemented
 }
-func (mfs *mirrorFS) ListDir(ctx context.Context, path string) (ninep.FileInfoIterator, error) {
-	return nil, ninep.ErrNotImplemented
+func (mfs *mirrorFS) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, error] {
+	return ninep.FileInfoErrorIterator(ninep.ErrNotImplemented)
 	// uitr := makeUnionIterator(path, mfs.fsms)
 	// if !uitr.hasDir() {
 	// 	return nil, os.ErrNotExist
@@ -155,7 +157,6 @@ func (mfs *mirrorFS) Delete(ctx context.Context, path string) error {
 //
 // Connecting to each of the file systems performs the a WAL consistency check
 // before returning.
-//
 func New(walfs proxy.FileSystemMount, fses []proxy.FileSystemMount) ninep.FileSystem {
 	return &mirrorFS{walfs, fses}
 }

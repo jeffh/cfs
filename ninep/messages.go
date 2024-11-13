@@ -847,6 +847,7 @@ func (s StatFileInfo) Mode() os.FileMode  { return s.Stat.Mode().ToOsMode() }
 func (s StatFileInfo) ModTime() time.Time { return time.Unix(int64(s.Stat.Mtime()), 0) }
 func (s StatFileInfo) IsDir() bool        { return s.Stat.Mode()&M_DIR != 0 }
 func (s StatFileInfo) Sys() interface{}   { return s.Stat }
+func (s StatFileInfo) AsStat() Stat       { return s.Stat }
 
 func FileInfosFromStats(infos []Stat) []os.FileInfo {
 	sfi := make([]os.FileInfo, len(infos))

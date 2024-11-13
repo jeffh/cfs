@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"iter"
 	"log"
 	"os"
 	"path/filepath"
@@ -241,10 +243,10 @@ func (fs *FS) Delete(ctx context.Context, path string) error {
 	}
 }
 
-func (fs *FS) ListDir(ctx context.Context, path string) (ninep.FileInfoIterator, error) {
+func (sys *FS) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, error] {
 	intent, err := parseIntent(false, path)
 	if err != nil {
-		return nil, err
+		return ninep.FileInfoErrorIterator(err)
 	}
 
 	switch intent.op {
@@ -257,34 +259,50 @@ func (fs *FS) ListDir(ctx context.Context, path string) (ninep.FileInfoIterator,
 				&staticDirInfo{"private", now},
 				&staticDirInfo{"snapshot", now},
 			}
-			return ninep.FileInfoSliceIterator(infos), nil
+			return ninep.FileInfoSliceIterator(infos)
 		} else if intent.bucketName == "" {
-			buckets, err := fs.getBucketInfos(ctx, intent.bucketType)
+			buckets, err := sys.getBucketInfos(ctx, intent.bucketType)
 			if err != nil {
-				return nil, err
+				return ninep.FileInfoErrorIterator(err)
 			}
 
-			return ninep.FileInfoSliceIterator(buckets), nil
+			return ninep.FileInfoSliceIterator(buckets)
 		} else {
 			now := time.Now()
 			infos := []os.FileInfo{
 				&staticDirInfo{string(bucketOpObjectData), now},
 				// &staticDirInfo{string(bucketOpObjectMetadata), now},
 			}
-			return ninep.FileInfoSliceIterator(infos), nil
+			return ninep.FileInfoSliceIterator(infos)
 		}
 	case bucketOpObjectData:
-		bucketID, err := fs.getBucketID(ctx, intent.bucketType, intent.bucketName)
+		bucketID, err := sys.getBucketID(ctx, intent.bucketType, intent.bucketName)
 		if err != nil {
-			return nil, err
+			return ninep.FileInfoErrorIterator(err)
 		}
 		prefixOffset := len(intent.key)
 		if prefixOffset > 0 {
 			prefixOffset++
 		}
-		return &keysIterator{C: &fs.C, I: intent, Ctx: ctx, bucketID: bucketID, prefixOffset: prefixOffset}, nil
+		return func(yield func(fs.FileInfo, error) bool) {
+			iter := &keysIterator{C: &sys.C, I: intent, Ctx: ctx, bucketID: bucketID, prefixOffset: prefixOffset}
+			defer iter.Close()
+			for {
+				fi, err := iter.NextFileInfo()
+				if err != nil {
+					if errors.Is(err, io.EOF) {
+						return
+					}
+					yield(nil, err)
+					return
+				}
+				if !yield(fi, nil) {
+					return
+				}
+			}
+		}
 	default:
-		return nil, ninep.ErrUnsupported
+		return ninep.FileInfoErrorIterator(ninep.ErrUnsupported)
 	}
 }
 

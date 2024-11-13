@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"io/fs"
+	"iter"
 
 	ninep "github.com/jeffh/cfs/ninep"
 )
@@ -72,20 +73,19 @@ func (r readOnlyFS) OpenFile(ctx context.Context, path string, flag ninep.OpenMo
 	return &fsFileHandle{handle: h}, nil
 }
 
-func (r readOnlyFS) ListDir(ctx context.Context, path string) (ninep.FileInfoIterator, error) {
+func (r readOnlyFS) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, error] {
 	entries, err := fs.ReadDir(r.Underlying, path)
 	if err != nil {
-		return nil, err
+		return ninep.FileInfoErrorIterator(err)
 	}
-	infos := make([]fs.FileInfo, 0, len(entries))
-	for _, entry := range entries {
-		info, err := entry.Info()
-		if err != nil {
-			return nil, err
+	return func(yield func(fs.FileInfo, error) bool) {
+		for _, entry := range entries {
+			info, err := entry.Info()
+			if !yield(info, err) {
+				return
+			}
 		}
-		infos = append(infos, info)
 	}
-	return ninep.FileInfoSliceIterator(infos), nil
 }
 
 func (r readOnlyFS) Stat(ctx context.Context, path string) (fs.FileInfo, error) {

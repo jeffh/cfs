@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"iter"
 	"os"
 	"strings"
 	"time"
@@ -66,25 +67,27 @@ func (d envFs) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (
 }
 
 // ListDir lists all files and directories in a given subdirectory
-func (d envFs) ListDir(ctx context.Context, path string) (ninep.FileInfoIterator, error) {
+func (d envFs) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, error] {
 	if path != "/" {
-		return nil, fs.ErrNotExist
+		return ninep.FileInfoErrorIterator(fs.ErrNotExist)
 	}
-	vars := os.Environ()
-	now := time.Now()
-	infos := make([]fs.FileInfo, 0, len(vars)+1)
-	for _, v := range vars {
-		pair := strings.SplitN(v, "=", 2)
-		info := ninep.MakeFileInfo(
-			pair[0],
-			int64(len(pair[1])),
-			0o666,
-			now,
-			nil,
-		)
-		infos = append(infos, info)
+	return func(yield func(fs.FileInfo, error) bool) {
+		vars := os.Environ()
+		now := time.Now()
+		for _, v := range vars {
+			pair := strings.SplitN(v, "=", 2)
+			info := ninep.MakeFileInfo(
+				pair[0],
+				int64(len(pair[1])),
+				0o666,
+				now,
+				nil,
+			)
+			if !yield(info, nil) {
+				return
+			}
+		}
 	}
-	return ninep.FileInfoSliceIterator(infos), nil
 }
 
 // Stat returns information about a given file or directory

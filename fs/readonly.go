@@ -3,6 +3,7 @@ package fs
 import (
 	"context"
 	"io/fs"
+	"iter"
 
 	ninep "github.com/jeffh/cfs/ninep"
 )
@@ -34,7 +35,7 @@ func (r readOnly9FS) OpenFile(ctx context.Context, path string, flag ninep.OpenM
 	return r.Underlying.OpenFile(ctx, path, flag)
 }
 
-func (r readOnly9FS) ListDir(ctx context.Context, path string) (ninep.FileInfoIterator, error) {
+func (r readOnly9FS) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, error] {
 	return r.Underlying.ListDir(ctx, path)
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"io/fs"
+	"iter"
 	"sync"
 	"time"
 )
@@ -75,104 +76,78 @@ type Authorizee interface {
 
 ///////////////////////////////////////////////////////////////
 
-// Interface to iterate over Stats from a listing of a directory
-type StatIterator interface {
-	FileInfoIterator
-	// callers must copy stat if they want to retain it beyond the next call to
-	// NextStat() or Close()
-	NextStat() (Stat, error)
+// Statable is an interface that can return a Stat object.
+// fs.FileInfo types may optionally implement this interface.
+type Statable interface {
+	AsStat() Stat
 }
 
-// Interface to iterate over fs.FileInfos from a listing of a directory
-type FileInfoIterator interface {
-	// returns io.EOF with fs.FileInfo = nil on end
-	NextFileInfo() (fs.FileInfo, error)
-	// resets the reading of the file infos
-	Reset() error
-	// must be called to free iterator resources
-	Close() error
-}
-
-func MapFileInfoIterator(itr FileInfoIterator, f func(fs.FileInfo) fs.FileInfo) MappableFileInfoIterator {
-	if itr == nil {
-		return nil
+func statToFileInfo(it iter.Seq2[Stat, error]) iter.Seq2[fs.FileInfo, error] {
+	return func(yield func(fs.FileInfo, error) bool) {
+		for s, err := range it {
+			if err != nil {
+				if !yield(nil, err) {
+					return
+				}
+			} else if !yield(s.FileInfo(), err) {
+				return
+			}
+		}
 	}
-	if it, ok := itr.(MappableFileInfoIterator); ok {
-		return it.Map(f)
+}
+
+func MapFileInfoIterator(itr iter.Seq2[fs.FileInfo, error], f func(fs.FileInfo) fs.FileInfo) iter.Seq2[fs.FileInfo, error] {
+	return func(yield func(fs.FileInfo, error) bool) {
+		for fi, err := range itr {
+			if fi != nil {
+				fi = f(fi)
+			}
+			if !yield(fi, err) {
+				return
+			}
+		}
 	}
-	return &mapFileInfoIterator{itr, f}
 }
 
-type MappableFileInfoIterator interface {
-	FileInfoIterator
-	Map(f func(fs.FileInfo) fs.FileInfo) MappableFileInfoIterator
-}
-
-type mapFileInfoIterator struct {
-	FileInfoIterator
-	apply func(fs.FileInfo) fs.FileInfo
-}
-
-func (itr *mapFileInfoIterator) NextFileInfo() (fs.FileInfo, error) {
-	fi, err := itr.FileInfoIterator.NextFileInfo()
-	if fi != nil {
-		fi = itr.apply(fi)
+func FileInfoErrorIterator(err error) iter.Seq2[fs.FileInfo, error] {
+	return func(yield func(fs.FileInfo, error) bool) {
+		yield(nil, err)
 	}
-	return fi, err
-}
-func (itr *mapFileInfoIterator) Map(f func(fs.FileInfo) fs.FileInfo) MappableFileInfoIterator {
-	return &mapFileInfoIterator{itr.FileInfoIterator, func(fi fs.FileInfo) fs.FileInfo { return f(itr.apply(fi)) }}
 }
 
-type fileInfoSliceIterator struct {
-	infos []fs.FileInfo
-	index int
-}
-
-var _ FileInfoIterator = (*fileInfoSliceIterator)(nil)
-
-func FileInfoSliceIterator(fi []fs.FileInfo) FileInfoIterator {
-	return &fileInfoSliceIterator{fi, 0}
-}
-
-func (itr *fileInfoSliceIterator) Close() error { return nil }
-func (itr *fileInfoSliceIterator) Reset() error { itr.index = 0; return nil }
-func (itr *fileInfoSliceIterator) NextFileInfo() (fs.FileInfo, error) {
-	idx := itr.index
-	if idx >= len(itr.infos) {
-		return nil, io.EOF
+func FileInfoSliceIterator(fi []fs.FileInfo) iter.Seq2[fs.FileInfo, error] {
+	return func(yield func(fs.FileInfo, error) bool) {
+		for _, f := range fi {
+			if !yield(f, nil) {
+				return
+			}
+		}
 	}
-	itr.index++
-	return itr.infos[idx], nil
-}
-func (itr *fileInfoSliceIterator) Map(f func(fs.FileInfo) fs.FileInfo) MappableFileInfoIterator {
-	return &mapFileInfoIterator{itr, f}
 }
 
 // Consumes an iterator to produce a slice of fs.FileInfos
 // max < 0 means to fetch all items
-func FileInfoSliceFromIterator(itr FileInfoIterator, max int) ([]fs.FileInfo, error) {
-	if itr == nil {
-		return nil, ErrMissingIterator
-	}
-
-	if it, ok := itr.(*fileInfoSliceIterator); ok {
-		return it.infos, nil
-	}
-
-	items := make([]fs.FileInfo, 0, 16)
-	for max < 0 || len(items) < max {
-		fi, err := itr.NextFileInfo()
-		if fi != nil {
-			items = append(items, fi)
+func TakeErr[X any](itr iter.Seq2[X, error], n int) ([]X, error) {
+	out := make([]X, 0, n)
+	cnt := 0
+	for x, err := range itr {
+		if err != nil {
+			return out, err
 		}
-		if err == io.EOF {
-			return items, nil
-		} else if err != nil {
-			return items, err
+		out = append(out, x)
+		cnt++
+		if n >= 0 && cnt >= n {
+			break
 		}
 	}
-	return items, nil
+	return out, nil
+}
+
+// TODO: inline to Take
+// Consumes an iterator to produce a slice of fs.FileInfos
+// max < 0 means to fetch all items
+func FileInfoSliceFromIterator(itr iter.Seq2[fs.FileInfo, error], max int) ([]fs.FileInfo, error) {
+	return TakeErr(itr, max)
 }
 
 ///////////////////////////////////////////////////////////////
@@ -198,7 +173,8 @@ type FileSystem interface {
 	// Opens an existing file for reading/writing
 	OpenFile(ctx context.Context, path string, flag OpenMode) (FileHandle, error)
 	// Lists directories and files in a given path. Does not include '.' or '..'
-	ListDir(ctx context.Context, path string) (FileInfoIterator, error)
+	// fs.FileInfo may optionally implement Statable
+	ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, error]
 	// Lists stats about a given file or directory.
 	Stat(ctx context.Context, path string) (fs.FileInfo, error)
 	// Writes stats about a given file or directory. Implementations perform an all-or-nothing write.
@@ -643,21 +619,13 @@ func (f *ioFS) Stat(name string) (fs.FileInfo, error) {
 }
 
 func (f *ioFS) ReadDir(name string) ([]fs.DirEntry, error) {
-	itr, err := f.FileSystem.ListDir(context.Background(), name)
-	if err != nil {
-		return nil, err
-	}
-	defer itr.Close()
 	var result []fs.DirEntry
-	for {
-		info, err := itr.NextFileInfo()
-		if err == io.EOF {
-			break
-		}
+	for info, err := range f.FileSystem.ListDir(context.Background(), name) {
 		if err != nil {
 			return nil, err
+		} else {
+			result = append(result, fs.FileInfoToDirEntry(info))
 		}
-		result = append(result, fs.FileInfoToDirEntry(info))
 	}
 	return result, nil
 }

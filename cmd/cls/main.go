@@ -88,11 +88,6 @@ func main() {
 	}
 
 	cli.MainClient(func(cfg *cli.ClientConfig, mnt proxy.FileSystemMount) error {
-		infos, err := mnt.FS.ListDir(context.Background(), mnt.Prefix)
-		if err != nil {
-			return err
-		}
-		defer infos.Close()
 
 		if list {
 			var w io.Writer
@@ -113,17 +108,14 @@ func main() {
 					printInfo(w, info, "..")
 				}
 			}
-			for {
-				info, err := infos.NextFileInfo()
+			for info, err := range mnt.FS.ListDir(context.Background(), mnt.Prefix) {
+				if err != nil {
+					return err
+				}
 				if info != nil {
 					if all || !strings.HasPrefix(info.Name(), ".") {
 						printInfo(w, info, "")
 					}
-				}
-				if err == io.EOF {
-					break
-				} else if err != nil {
-					return err
 				}
 			}
 		} else {
@@ -131,8 +123,10 @@ func main() {
 				fmt.Println(dirColor("."))
 				fmt.Println(dirColor(".."))
 			}
-			for {
-				info, err := infos.NextFileInfo()
+			for info, err := range mnt.FS.ListDir(context.Background(), mnt.Prefix) {
+				if err != nil {
+					return err
+				}
 				if info != nil {
 					n := info.Name()
 					if all || !strings.HasPrefix(n, ".") {
@@ -143,11 +137,6 @@ func main() {
 						}
 						fmt.Println(n)
 					}
-				}
-				if err == io.EOF {
-					break
-				} else if err != nil {
-					return err
 				}
 			}
 		}

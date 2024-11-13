@@ -4,7 +4,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -27,15 +26,11 @@ func isAny(info os.FileInfo) bool  { return true }
 func traverse(ctx context.Context, fs ninep.TraversableFileSystem, path string) chan error {
 	result := make(chan error, 1)
 	work := func() {
-		infos, err := fs.ListDir(context.Background(), path)
-		if err != nil {
-			result <- err
-			return
-		}
-		defer infos.Close()
-
-		for {
-			info, err := infos.NextFileInfo()
+		for info, err := range fs.ListDir(context.Background(), path) {
+			if err != nil {
+				result <- err
+				return
+			}
 			if info != nil {
 				name := info.Name()
 				fullpath := filepath.Join(path, name)
@@ -50,12 +45,6 @@ func traverse(ctx context.Context, fs ninep.TraversableFileSystem, path string) 
 						}
 					}
 				}
-			}
-			if err == io.EOF {
-				break
-			} else if err != nil {
-				result <- err
-				return
 			}
 		}
 		close(result)

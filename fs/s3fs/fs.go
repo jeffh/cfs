@@ -6,6 +6,7 @@ package s3fs
 
 import (
 	"io"
+	"iter"
 	"os"
 	"time"
 
@@ -93,7 +94,7 @@ func dynamicDir(name string, resolve func() ([]ninep.Node, error)) *ninep.Dynami
 	}
 }
 
-func dynamicDirItr(name string, resolve func() (ninep.NodeIterator, error)) *ninep.DynamicReadOnlyDirItr {
+func dynamicDirItr(name string, resolve func() iter.Seq2[ninep.Node, error]) *ninep.DynamicReadOnlyDirItr {
 	return &ninep.DynamicReadOnlyDirItr{
 		SimpleFileInfo: ninep.SimpleFileInfo{
 			FIName: name,

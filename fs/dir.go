@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"iter"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -41,21 +42,21 @@ func (d Dir) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (ni
 }
 
 // ListDir lists all files and directories in a given subdirectory
-func (d Dir) ListDir(ctx context.Context, path string) (ninep.FileInfoIterator, error) {
+func (d Dir) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, error] {
 	fullPath := filepath.Join(string(d), path)
 	direntries, err := os.ReadDir(fullPath)
 	if err != nil {
-		return nil, err
+		return ninep.FileInfoErrorIterator(err)
 	}
 	infos := make([]os.FileInfo, 0, len(direntries))
 	for _, entry := range direntries {
 		info, err := entry.Info()
 		if err != nil {
-			return nil, err
+			return ninep.FileInfoErrorIterator(err)
 		}
 		uid, gid, muid, err := ninep.FileUsers(info)
 		if err != nil {
-			return nil, err
+			return ninep.FileInfoErrorIterator(err)
 		}
 
 		if fullPath == string(d) && (info.Name() == "" || info.Name() == ".") {
@@ -65,7 +66,7 @@ func (d Dir) ListDir(ctx context.Context, path string) (ninep.FileInfoIterator, 
 		info = ninep.FileInfoWithUsers(info, uid, gid, muid)
 		infos = append(infos, info)
 	}
-	return ninep.FileInfoSliceIterator(infos), nil
+	return ninep.FileInfoSliceIterator(infos)
 }
 
 // Stat returns information about a given file or directory

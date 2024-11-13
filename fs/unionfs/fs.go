@@ -2,6 +2,8 @@ package unionfs
 
 import (
 	"context"
+	"io/fs"
+	"iter"
 	"os"
 	"path/filepath"
 
@@ -82,12 +84,20 @@ func (ufs *unionFS) OpenFile(ctx context.Context, path string, flag ninep.OpenMo
 	}
 	return &fanoutHandle{fsms, hs, path}, nil
 }
-func (ufs *unionFS) ListDir(ctx context.Context, path string) (ninep.FileInfoIterator, error) {
-	uitr := makeUnionIterator(ctx, path, ufs.fsms)
-	if !uitr.hasDir() {
-		return nil, os.ErrNotExist
+func (ufs *unionFS) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, error] {
+	hasDir := func(ctx context.Context, path string, ufs *unionFS) bool {
+		for _, fsms := range ufs.fsms {
+			_, err := fsms.FS.Stat(ctx, filepath.Join(fsms.Prefix, path))
+			if err == nil {
+				return true
+			}
+		}
+		return false
 	}
-	return uitr, nil
+	if !hasDir(ctx, path, ufs) {
+		return ninep.FileInfoErrorIterator(os.ErrNotExist)
+	}
+	return makeUnionIterator(ctx, path, ufs.fsms)
 }
 func (ufs *unionFS) Stat(ctx context.Context, path string) (os.FileInfo, error) {
 	for _, fsm := range ufs.fsms {
@@ -136,17 +146,17 @@ func (ufs *unionFS) Delete(ctx context.Context, path string) error {
 //
 // For example, given [fs1, fs2]:
 //
-//    where fs1:
-//      - /bin/a
-//      - /bin/b
-//      - /bin/dir/a
-//      - /bin/dir/b
+//	where fs1:
+//	  - /bin/a
+//	  - /bin/b
+//	  - /bin/dir/a
+//	  - /bin/dir/b
 //
-//    and where fs2:
-//      - /bin/b
-//      - /bin/c
-//      - /bin/dir/b
-//      - /bin/dir/c
+//	and where fs2:
+//	  - /bin/b
+//	  - /bin/c
+//	  - /bin/dir/b
+//	  - /bin/dir/c
 //
 // Then the union file system will provide:
 //   - /bin/a # from fs1
@@ -157,7 +167,6 @@ func (ufs *unionFS) Delete(ctx context.Context, path string) error {
 //   - /bin/dir/c # from fs2
 //
 // All writes occur on the first file system (fs1) in the slice.
-//
 func New(fses []proxy.FileSystemMount) ninep.FileSystem {
 	return &unionFS{fses, []proxy.FileSystemMount{fses[0]}}
 }
