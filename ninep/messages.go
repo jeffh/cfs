@@ -18,6 +18,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"io/fs"
 	"math"
 	"os"
 	"strings"
@@ -956,11 +957,11 @@ func (r Rerror) EnameBytes() []byte { return r.ename().Bytes() }
 func (r Rerror) Ename() string      { return r.ename().String() }
 
 var mappedErrors []error = []error{
-	os.ErrInvalid,
-	os.ErrPermission,
-	os.ErrExist,
-	os.ErrNotExist,
-	os.ErrClosed,
+	fs.ErrInvalid,
+	fs.ErrPermission,
+	fs.ErrExist,
+	fs.ErrNotExist,
+	fs.ErrClosed,
 	os.ErrNoDeadline,
 	io.EOF,
 	io.ErrClosedPipe,

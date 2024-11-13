@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"runtime"
@@ -85,7 +86,7 @@ func main() {
 	srcNode, err := srcMnt.FS.Traverse(ctx, srcMnt.Prefix)
 	{
 
-		if errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, fs.ErrNotExist) {
 			fmt.Fprintf(os.Stderr, "Path does not exist on source fs: %s %s\n", srcMntCfg.Addr, srcMnt.Prefix)
 			exitCode = 2
 			runtime.Goexit()
@@ -109,7 +110,7 @@ func main() {
 	dstIsParent := false
 	{
 		path := dstMnt.Prefix
-		if errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, fs.ErrNotExist) {
 			path = ninep.Dirname(path)
 			dstNode, err = dstMnt.FS.Traverse(ctx, path)
 			dstIsParent = true
@@ -175,7 +176,7 @@ func main() {
 			if src.Type().IsDir() {
 			} else {
 				// dst, err := last.dst.Traverse(name)
-				// if errors.Is(err, os.ErrNotExist) {
+				// if errors.Is(err, fs.ErrNotExist) {
 				// 	dst, err := last.dst.Traverse(ninep.Dirname(name))
 				// }
 			}

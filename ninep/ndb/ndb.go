@@ -3,43 +3,41 @@ package ndb
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"io"
-	"io/fs"
 	"iter"
-	"os"
 	"slices"
 	"strconv"
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	nfs "github.com/jeffh/cfs/fs"
+	"github.com/jeffh/cfs/ninep"
 )
 
 type Ndb struct {
 	data  [][]byte
 	mods  []time.Time
 	files []string
-	sys   System
+	sys   ninep.FileSystem
 }
 
-type System interface {
-	Open(path string) (io.ReadCloser, error)
-	Stat(path string) (fs.FileInfo, error)
-}
-
-type osSys struct{}
-
-func (osSys) Open(path string) (io.ReadCloser, error) {
-	return os.Open(path)
-}
-
-func (osSys) Stat(path string) (fs.FileInfo, error) {
-	return os.Stat(path)
-}
-
-func Open(sys System, filepath string) (*Ndb, error) {
+// Open opens a new Ndb database from the given file path. It will recursively resolve any
+// reference databases in the filepath.
+//
+// Referenced databases can be done with a database attribute followed by file
+// attributes in one entry:
+//
+// ```
+// database file="other.ndb" file="another.ndb" file="more.ndb"
+// ```
+//
+// Search resolves follows the ordering of files as they are specified.
+func Open(sys ninep.FileSystem, filepath string) (*Ndb, error) {
 	if sys == nil {
-		sys = osSys{}
+		sys = nfs.Dir("/")
 	}
 	db := &Ndb{
 		files: []string{filepath},
@@ -70,9 +68,11 @@ func Open(sys System, filepath string) (*Ndb, error) {
 	return db, nil
 }
 
-func OpenOne(sys System, filepath string) (*Ndb, error) {
+// OpenOne opens a single file and returns a database. It will not recursively
+// open other database references.
+func OpenOne(sys ninep.FileSystem, filepath string) (*Ndb, error) {
 	if sys == nil {
-		sys = osSys{}
+		sys = nfs.Dir("/")
 	}
 	db := &Ndb{
 		files: []string{filepath},
@@ -87,7 +87,8 @@ func OpenOne(sys System, filepath string) (*Ndb, error) {
 }
 
 func (n *Ndb) readFile(fileToRead string, lastSeen time.Time) ([]byte, time.Time, error) {
-	fi, err := n.sys.Stat(fileToRead)
+	ctx := context.Background()
+	fi, err := n.sys.Stat(ctx, fileToRead)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
@@ -96,11 +97,11 @@ func (n *Ndb) readFile(fileToRead string, lastSeen time.Time) ([]byte, time.Time
 		return nil, lastSeen, nil
 	}
 
-	f, err := n.sys.Open(fileToRead)
+	f, err := n.sys.OpenFile(ctx, fileToRead, ninep.OREAD)
 	if err != nil {
 		return nil, modTime, err
 	}
-	buf, err := io.ReadAll(f)
+	buf, err := io.ReadAll(ninep.Reader(f))
 	f.Close()
 	if err != nil {
 		return nil, modTime, err
@@ -136,19 +137,47 @@ func (n *Ndb) Changed() bool {
 	return changed > 0
 }
 
+// All returns an iterator that yields all records in the database.
+// This isn't particularly efficient to use in production, but may be useful when
+// debugging issues.
+//
+// Use Search to find records matching a specific attribute and value instead.
+func (n *Ndb) All() iter.Seq[Record] {
+	return n.byPredicate(func(rec []byte) bool { return true })
+}
+
+// AllSlice returns a slice of all records in the database. This isn't
+// efficient to use in production, but may be useful when debugging.
+//
+// Use SearchSlice to find records matching a specific attribute and value instead.
+func (n *Ndb) AllSlice() []Record { return toSlice(n.All()) }
+
 // SearchSlice returns a slice of records matching the given attribute and value.
-func (n *Ndb) SearchSlice(attr, val string) []Record {
-	var results []Record
-	for rec := range n.Search(attr, val) {
-		newRecord := make(Record, len(rec))
-		copy(newRecord, rec)
-		results = append(results, newRecord)
-	}
-	return results
+func (n *Ndb) SearchSlice(attr, val string) []Record { return toSlice(n.Search(attr, val)) }
+
+// First returns the first record that matches the given attribute and value.
+func (n *Ndb) First(attr, val string) Record {
+	return first(n.Search(attr, val))
 }
 
 // Search returns an iterator that yields records matching the given attribute and value.
+//
+// Example:
+//
+//	for rec := range db.Search("person", "") {
+//	   rec.Get("name")
+//	}
+//
+// This will yield all records with the attribute "person" like:
+//
+//	person name="John Doe"
 func (n *Ndb) Search(attr, val string) iter.Seq[Record] {
+	return n.byPredicate(func(rec []byte) bool {
+		return hasAttr(rec, attr, val)
+	})
+}
+
+func (n *Ndb) byPredicate(allow func(rec []byte) bool) iter.Seq[Record] {
 	var results Record
 	return func(yield func(Record) bool) {
 		recBytes := []byte{}
@@ -168,7 +197,7 @@ func (n *Ndb) Search(attr, val string) iter.Seq[Record] {
 
 				if !unicode.IsSpace(first) {
 					if len(recBytes) > 0 {
-						if hasAttr(recBytes, attr, val) {
+						if allow(recBytes) {
 							err := parseRecord(recBytes, &results)
 							if err != nil {
 								// fmt.Printf("parseRecord error: %v\n", err)
@@ -190,7 +219,7 @@ func (n *Ndb) Search(attr, val string) iter.Seq[Record] {
 				}
 			}
 			if len(recBytes) > 0 {
-				if hasAttr(recBytes, attr, val) {
+				if allow(recBytes) {
 					err := parseRecord(recBytes, &results)
 					if err == nil {
 						yield(results)
@@ -278,38 +307,53 @@ func parseRecord(recBytes []byte, results *Record) error {
 }
 
 func parseTuple(p []byte) (Tuple, int, error) {
-	equals := bytes.IndexByte(p, '=')
-	if equals == -1 {
-		// look for next whitespace
-		ws := bytes.IndexAny(p, " \t\r\n")
-		if ws == -1 {
-			return Tuple{string(p), ""}, len(p), nil
-		} else {
-			return Tuple{string(p[:ws]), ""}, ws + 1, nil
-		}
+	end := bytes.IndexAny(p, "= \t\r\n")
+	if end == -1 {
+		return Tuple{string(p), ""}, len(p), nil
 	}
-	attr := string(p[:equals])
-	valueStart := equals + 1
-	firstValue, _ := utf8.DecodeRune(p[valueStart:])
-	if firstValue == '"' {
-		length := bytes.IndexAny(p[valueStart+1:], "\"")
-		if length == -1 {
-			length = len(p) - valueStart
-		} else {
-			length += 2 // 1 for starting quote, and 1 for ending quote
-		}
-
-		actualValue, err := strconv.Unquote(string(p[valueStart : valueStart+length]))
-		if err != nil {
-			return Tuple{}, valueStart + length, err
-		}
-		return Tuple{attr, actualValue}, valueStart + length, nil
+	attr := string(p[:end])
+	if p[end] != '=' {
+		return Tuple{attr, ""}, end, nil
 	} else {
-		length := bytes.IndexAny(p[valueStart:], " \t\r\n")
-		if length == -1 {
-			length = len(p) - valueStart
-		}
+		valueStart := end + 1
+		firstValue, _ := utf8.DecodeRune(p[valueStart:])
+		if firstValue == '"' {
+			length := bytes.IndexAny(p[valueStart+1:], "\"")
+			if length == -1 {
+				length = len(p) - valueStart
+			} else {
+				length += 2 // 1 for starting quote, and 1 for ending quote
+			}
 
-		return Tuple{attr, string(p[valueStart : valueStart+length])}, valueStart + length, nil
+			actualValue, err := strconv.Unquote(string(p[valueStart : valueStart+length]))
+			if err != nil {
+				return Tuple{}, valueStart + length, err
+			}
+			return Tuple{attr, actualValue}, valueStart + length, nil
+		} else {
+			length := bytes.IndexAny(p[valueStart:], " \t\r\n")
+			if length == -1 {
+				length = len(p) - valueStart
+			}
+
+			return Tuple{attr, string(p[valueStart : valueStart+length])}, valueStart + length, nil
+		}
 	}
+}
+
+func toSlice(it iter.Seq[Record]) []Record {
+	var results []Record
+	for rec := range it {
+		newRecord := make(Record, len(rec))
+		copy(newRecord, rec)
+		results = append(results, newRecord)
+	}
+	return results
+}
+
+func first(it iter.Seq[Record]) Record {
+	for rec := range it {
+		return rec
+	}
+	return nil
 }

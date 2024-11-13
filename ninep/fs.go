@@ -4,7 +4,6 @@ import (
 	"context"
 	"io"
 	"io/fs"
-	"os"
 	"sync"
 	"time"
 )
@@ -206,7 +205,7 @@ type FileSystem interface {
 	// Callers must use NoTouch values to indicate the underlying
 	// implementation should not overwrite values.
 	//
-	// Implementers must return os.ErrNotExist for files that do not exist
+	// Implementers must return fs.ErrNotExist for files that do not exist
 	//
 	// The following stat values are off-limits and must be NoTouch values, according to spec:
 	// - Uid (some implementations may break spec and support this value)
@@ -259,16 +258,16 @@ func MakeFileInfo(name string, size int64, mode fs.FileMode, mod time.Time, back
 type memoryFileInfo struct {
 	name string
 	size int64
-	mode os.FileMode
+	mode fs.FileMode
 	mod  time.Time
 	sys  any
 }
 
 func (f *memoryFileInfo) Name() string       { return f.name }
 func (f *memoryFileInfo) Size() int64        { return f.size }
-func (f *memoryFileInfo) Mode() os.FileMode  { return f.mode }
+func (f *memoryFileInfo) Mode() fs.FileMode  { return f.mode }
 func (f *memoryFileInfo) ModTime() time.Time { return f.mod }
-func (f *memoryFileInfo) IsDir() bool        { return f.mode&os.ModeDir != 0 }
+func (f *memoryFileInfo) IsDir() bool        { return f.mode&fs.ModeDir != 0 }
 func (f *memoryFileInfo) Sys() interface{}   { return f.sys }
 
 // file info helper wrappers
@@ -284,7 +283,7 @@ func FileInfoWithName(fi fs.FileInfo, name string) fs.FileInfo {
 
 func (f *fileInfoWithName) Name() string       { return f.name }
 func (f *fileInfoWithName) Size() int64        { return f.fi.Size() }
-func (f *fileInfoWithName) Mode() os.FileMode  { return f.fi.Mode() }
+func (f *fileInfoWithName) Mode() fs.FileMode  { return f.fi.Mode() }
 func (f *fileInfoWithName) ModTime() time.Time { return f.fi.ModTime() }
 func (f *fileInfoWithName) IsDir() bool        { return f.fi.IsDir() }
 func (f *fileInfoWithName) Sys() interface{}   { return f.fi.Sys() }
@@ -311,7 +310,7 @@ func FileInfoWithUsers(fi fs.FileInfo, uid, gid, muid string) FileInfoUsers {
 
 func (f *fileInfoWithUsers) Name() string       { return f.fi.Name() }
 func (f *fileInfoWithUsers) Size() int64        { return f.fi.Size() }
-func (f *fileInfoWithUsers) Mode() os.FileMode  { return f.fi.Mode() }
+func (f *fileInfoWithUsers) Mode() fs.FileMode  { return f.fi.Mode() }
 func (f *fileInfoWithUsers) ModTime() time.Time { return f.fi.ModTime() }
 func (f *fileInfoWithUsers) IsDir() bool        { return f.fi.IsDir() }
 func (f *fileInfoWithUsers) Sys() interface{}   { return f.fi.Sys() }
@@ -371,16 +370,16 @@ func Writer(h FileHandle) io.Writer { return &handleReaderWriter{h, 0} }
 type SimpleFileInfo struct {
 	FIName    string
 	FISize    int64
-	FIMode    os.FileMode
+	FIMode    fs.FileMode
 	FIModTime time.Time
 	FISys     interface{}
 }
 
 func (f *SimpleFileInfo) Name() string       { return f.FIName }
 func (f *SimpleFileInfo) Size() int64        { return f.FISize }
-func (f *SimpleFileInfo) Mode() os.FileMode  { return f.FIMode }
+func (f *SimpleFileInfo) Mode() fs.FileMode  { return f.FIMode }
 func (f *SimpleFileInfo) ModTime() time.Time { return f.FIModTime }
-func (f *SimpleFileInfo) IsDir() bool        { return f.FIMode&os.ModeDir != 0 }
+func (f *SimpleFileInfo) IsDir() bool        { return f.FIMode&fs.ModeDir != 0 }
 func (f *SimpleFileInfo) Sys() interface{}   { return f.FISys }
 
 ////////////////////////////////////////////////
@@ -391,7 +390,7 @@ type SimpleFile struct {
 	OpenFn func(mode OpenMode) (FileHandle, error)
 }
 
-func NewReadOnlySimpleFile(name string, mode os.FileMode, modTime time.Time, contents []byte) *SimpleFile {
+func NewReadOnlySimpleFile(name string, mode fs.FileMode, modTime time.Time, contents []byte) *SimpleFile {
 	return &SimpleFile{
 		&SimpleFileInfo{
 			FIName:    name,
@@ -410,7 +409,7 @@ func NewReadOnlySimpleFile(name string, mode os.FileMode, modTime time.Time, con
 	}
 }
 
-func NewSimpleFile(name string, mode os.FileMode, modTime time.Time, open func(m OpenMode) (FileHandle, error)) *SimpleFile {
+func NewSimpleFile(name string, mode fs.FileMode, modTime time.Time, open func(m OpenMode) (FileHandle, error)) *SimpleFile {
 	if mode == 0 {
 		mode = 0444
 	}
@@ -599,4 +598,66 @@ func (h *MemoryFileHandle) Close() error {
 	}
 	h.data = nil
 	return nil
+}
+
+///////////////////////////////////////////////////
+
+// ToFS converts a ninep FileSystem to a fs.FS
+func ToFS(f FileSystem) fs.FS { return &ioFS{f} }
+
+type ioFS struct{ FileSystem }
+type iofsFile struct {
+	h      FileHandle
+	info   func() (fs.FileInfo, error)
+	offset int64
+}
+
+func (f *iofsFile) Stat() (fs.FileInfo, error) { return f.info() }
+
+func (f *iofsFile) Read(p []byte) (int, error) {
+	n, err := f.h.ReadAt(p, f.offset)
+	f.offset += int64(n)
+	return n, err
+}
+
+func (f *iofsFile) Close() error { return f.h.Close() }
+
+var _ fs.ReadDirFS = (*ioFS)(nil)
+var _ fs.StatFS = (*ioFS)(nil)
+
+func (f *ioFS) Open(name string) (fs.File, error) {
+	h, err := f.FileSystem.OpenFile(context.Background(), name, OREAD)
+	if err != nil {
+		return nil, err
+	}
+	return &iofsFile{
+		h: h,
+		info: func() (fs.FileInfo, error) {
+			return f.FileSystem.Stat(context.Background(), name)
+		},
+	}, nil
+}
+
+func (f *ioFS) Stat(name string) (fs.FileInfo, error) {
+	return f.FileSystem.Stat(context.Background(), name)
+}
+
+func (f *ioFS) ReadDir(name string) ([]fs.DirEntry, error) {
+	itr, err := f.FileSystem.ListDir(context.Background(), name)
+	if err != nil {
+		return nil, err
+	}
+	defer itr.Close()
+	var result []fs.DirEntry
+	for {
+		info, err := itr.NextFileInfo()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, fs.FileInfoToDirEntry(info))
+	}
+	return result, nil
 }

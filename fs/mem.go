@@ -43,6 +43,30 @@ type Mem struct {
 var _ ninep.FileSystem = (*Mem)(nil)
 var _ ninep.Traversable = (*Mem)(nil)
 
+// NewMemFS creates a new in-memory file system with a given set of files.
+func NewMemFSWithFiles(files map[string]string) *Mem {
+	m := &Mem{}
+	err := Populate(m, files)
+	if err != nil {
+		panic(err)
+	}
+	return m
+}
+
+func Populate(fs ninep.FileSystem, files map[string]string) error {
+	for name, contents := range files {
+		fh, err := fs.CreateFile(context.Background(), name, ninep.OWRITE, 0666)
+		if err != nil {
+			return err
+		}
+		_, err = fh.WriteAt([]byte(contents), 0)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 type memFileHandle struct {
 	n *memNode
 }
@@ -83,7 +107,7 @@ type memNode struct {
 	flag   ninep.OpenMode
 
 	m        sync.RWMutex
-	children []memNode
+	children []*memNode
 
 	mut      sync.RWMutex
 	contents []byte
@@ -98,7 +122,7 @@ func (n *memNode) FindChild(name string) *memNode {
 	defer n.m.RUnlock()
 	for i, child := range n.children {
 		if child.name == name {
-			return &n.children[i]
+			return n.children[i]
 		}
 	}
 	return nil
@@ -110,7 +134,7 @@ func (n *memNode) RemoveChild(name string) bool {
 	for i := range n.children {
 		if n.children[i].name == name {
 			copy(n.children[i:], n.children[i+1:])
-			n.children[len(n.children)-1] = memNode{}
+			n.children[len(n.children)-1] = &memNode{}
 			n.children = n.children[:len(n.children)-1]
 			return true
 		}
@@ -183,7 +207,7 @@ func (m *Mem) MakeDir(ctx context.Context, path string, mode ninep.Mode) error {
 		return err
 	}
 
-	nc := memNode{name: parts[last], modTime: time.Now(), mode: mode}
+	nc := &memNode{name: parts[last], modTime: time.Now(), mode: mode}
 	n.m.Lock()
 	n.children = append(n.children, nc)
 	n.m.Unlock()
@@ -206,7 +230,7 @@ func (m *Mem) CreateFile(ctx context.Context, path string, flag ninep.OpenMode, 
 			return nil, fmt.Errorf("Topen: Cannot create file where dir exists: %s", n.name)
 		}
 	} else {
-		nc := memNode{
+		nc := &memNode{
 			name:   parts[len(parts)-1],
 			isFile: true, modTime: time.Now(),
 			flag: flag,
@@ -214,7 +238,7 @@ func (m *Mem) CreateFile(ctx context.Context, path string, flag ninep.OpenMode, 
 		}
 		parent.m.Lock()
 		parent.children = append(parent.children, nc)
-		n = &parent.children[len(parent.children)-1]
+		n = parent.children[len(parent.children)-1]
 		parent.m.Unlock()
 	}
 	// TODO: support modes
@@ -267,7 +291,7 @@ func (m *Mem) ListDir(ctx context.Context, path string) (ninep.FileInfoIterator,
 
 	infos := make([]os.FileInfo, len(n.children))
 	for i := range n.children {
-		infos[i] = m.stat(&n.children[i])
+		infos[i] = m.stat(n.children[i])
 	}
 
 	return ninep.FileInfoSliceIterator(infos), nil

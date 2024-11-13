@@ -1,46 +1,36 @@
 package ndb
 
 import (
-	"io"
+	"context"
 	"io/fs"
-	"strings"
 	"testing"
 	"time"
+
+	nfs "github.com/jeffh/cfs/fs"
+	"github.com/jeffh/cfs/ninep"
 )
-
-type simpleFileInfo struct {
-	name    string
-	modTime time.Time
-}
-
-func (s simpleFileInfo) Name() string       { return s.name }
-func (s simpleFileInfo) Size() int64        { return 0 }
-func (s simpleFileInfo) Mode() fs.FileMode  { return 0 }
-func (s simpleFileInfo) ModTime() time.Time { return s.modTime }
-func (s simpleFileInfo) IsDir() bool        { return false }
-func (s simpleFileInfo) Sys() interface{}   { return nil }
 
 type memSys struct {
 	tree map[string]string
 }
 
-func (m *memSys) Open(path string) (io.ReadCloser, error) {
+func (m *memSys) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (ninep.FileHandle, error) {
 	if s, ok := m.tree[path]; ok {
-		return io.NopCloser(strings.NewReader(s)), nil
+		return &ninep.ReadOnlyMemoryFileHandle{Contents: []byte(s)}, nil
 	}
 	return nil, fs.ErrNotExist
 }
 
-func (m *memSys) Stat(path string) (fs.FileInfo, error) {
+func (m *memSys) Stat(ctx context.Context, path string) (fs.FileInfo, error) {
 	if _, ok := m.tree[path]; ok {
-		return simpleFileInfo{name: path, modTime: time.Now()}, nil
+		return &ninep.SimpleFileInfo{FIName: path, FIModTime: time.Now()}, nil
 	}
 	return nil, fs.ErrNotExist
 }
 
 func TestSimpleParse(t *testing.T) {
-	m := &memSys{
-		tree: map[string]string{
+	m := nfs.NewMemFSWithFiles(
+		map[string]string{
 			"test.ndb": `givenName=John familyName=Doe # a comment`,
 			"multiple.ndb": `givenName=John familyName=Doe
 givenName=Jane familyName=Doe`,
@@ -48,9 +38,9 @@ givenName=Jane familyName=Doe`,
 	   familyName=Doe
 givenName=Jane familyName=Doe`,
 			"noValue.ndb": `givenName=John familyName=Doe person`,
-			"quoted.mdb":  `name="John Doe" person`,
+			"quoted.mdb":  `person name="John Doe"`,
 		},
-	}
+	)
 	t.Run("test.ndb", func(t *testing.T) {
 		db := mustOpenOne(t, m, "test.ndb")
 		records := db.SearchSlice("givenName", "John")
@@ -110,22 +100,20 @@ givenName=Jane familyName=Doe`,
 			t.Fatalf("expected 1 record, got %d", len(records))
 		}
 		if records[0].Get("name") != "John Doe" {
-			t.Fatalf("expected name to be John Doe, got %s", records[0].Get("name"))
+			t.Fatalf("expected name to be John Doe, got %s (%#v)", records[0].Get("name"), records[0])
 		}
 	})
 }
 
 func TestDatabaseParse(t *testing.T) {
-	m := &memSys{
-		tree: map[string]string{
-			"start.ndb": `database=
+	m := nfs.NewMemFSWithFiles(map[string]string{
+		"start.ndb": `database=
 	file=doe.ndb
 	file=appleseed.ndb`,
-			"doe.ndb": `givenName=John familyName=Doe
+		"doe.ndb": `givenName=John familyName=Doe
 givenName=Jane familyName=Doe`,
-			"appleseed.ndb": `givenName=John familyName=Appleseed`,
-		},
-	}
+		"appleseed.ndb": `givenName=John familyName=Appleseed`,
+	})
 	db := mustOpen(t, m, "start.ndb")
 	records := db.SearchSlice("givenName", "John")
 	if len(records) != 2 {
@@ -138,13 +126,13 @@ givenName=Jane familyName=Doe`,
 		t.Fatalf("expected givenName to be John, got %s", records[0].Get("givenName"))
 	}
 }
-func mustOpen(t *testing.T, sys System, path string) *Ndb {
+func mustOpen(t *testing.T, sys ninep.FileSystem, path string) *Ndb {
 	t.Helper()
 	db, err := Open(sys, path)
 	must(t, err)
 	return db
 }
-func mustOpenOne(t *testing.T, sys System, path string) *Ndb {
+func mustOpenOne(t *testing.T, sys ninep.FileSystem, path string) *Ndb {
 	t.Helper()
 	db, err := OpenOne(sys, path)
 	must(t, err)

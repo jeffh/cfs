@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"runtime"
 
@@ -48,7 +49,7 @@ func main() {
 		if dstMntCfg.Prefix == srcMnt.Prefix {
 			// move in the same server
 			err := srcMnt.FS.WriteStat(ctx, srcMnt.Prefix, ninep.SyncStatWithName(dstMntCfg.Prefix))
-			if errors.Is(err, os.ErrNotExist) {
+			if errors.Is(err, fs.ErrNotExist) {
 				return fmt.Errorf("Path does not exist: %s", srcMnt.String())
 			}
 			return err
