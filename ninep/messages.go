@@ -80,7 +80,7 @@ const (
 var DEFAULT_MAX_MESSAGE_SIZE uint32
 
 func init() {
-	s := uint32(os.Getpagesize() * 2)
+	s := uint32(os.Getpagesize() * 4)
 	if s > math.MaxUint32 {
 		s = math.MaxUint32
 	}
