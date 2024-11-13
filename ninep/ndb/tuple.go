@@ -2,6 +2,7 @@ package ndb
 
 import (
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -11,6 +12,74 @@ type Tuple struct {
 }
 
 type Record []Tuple
+
+// MapToRecord converts a map of strings to a Record. The keys of the map are the attributes and the values are the values.
+// Ordering is by sorted keys.
+func MapToRecord(m map[string]string) Record {
+	r := make(Record, 0, len(m))
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		r = append(r, Tuple{k, m[k]})
+	}
+	return r
+}
+
+// MapSliceToRecord converts a map of strings to a Record. The keys of the map are the attributes and the values are the values.
+// Ordering is by sorted keys.
+func MapSliceToRecord(m map[string][]string) Record {
+	r := make(Record, 0, len(m))
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		vs := m[k]
+		for _, v := range vs {
+			r = append(r, Tuple{k, v})
+		}
+	}
+	return r
+}
+
+// SliceToRecord creates a Record from a list of attribute-value pairs. The number of arguments must be even.
+func SliceToRecord(s []string) Record {
+	if len(s)%2 == 1 {
+		panic("SliceToRecord() requires an even number of arguments")
+	}
+	r := make(Record, len(s)/2)
+	j := 0
+	for i := 0; i < len(s); i += 2 {
+		r[j] = Tuple{s[i], s[i+1]}
+		j++
+	}
+	return r
+}
+
+// MakeRecord creates a Record from a list of attribute-value pairs. The number of arguments must be even.
+func MakeRecord(avPairs ...string) Record {
+	if len(avPairs)%2 == 1 {
+		panic("MakeRecord() requires an even number of arguments")
+	}
+	r := make(Record, len(avPairs)/2)
+	j := 0
+	for i := 0; i < len(avPairs); i += 2 {
+		r[j] = Tuple{avPairs[i], avPairs[i+1]}
+		j++
+	}
+	return r
+}
+
+// ParseRecord parses a single record from a string. The string should be a line containing all the attributes and values.
+func ParseRecord(line string) (Record, error) {
+	var results Record
+	err := parseRecord([]byte(line), &results)
+	return results, err
+}
 
 func (r Record) Keys() []string {
 	keys := make([]string, 0, len(r))
