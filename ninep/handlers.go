@@ -39,14 +39,16 @@ func (h *directoryHandle) ReadAt(p []byte, offset int64) (int, error) {
 		h.rem = nil
 		if h.stop != nil {
 			h.stop()
-			h.next, h.stop = iter.Pull2(h.fs.ListDir(h.ctx, h.path))
+			it := h.fs.ListDir(h.ctx, h.path)
+			h.next, h.stop = iter.Pull2(it)
 		}
 	}
 	if h.offset != offset {
 		return 0, ErrSeekNotAllowed
 	}
 	if h.next == nil {
-		h.next, h.stop = iter.Pull2(h.fs.ListDir(h.ctx, h.path))
+		it := h.fs.ListDir(h.ctx, h.path)
+		h.next, h.stop = iter.Pull2(it)
 		h.buffer = make([]Stat, 32)
 		h.rem = h.buffer[:0]
 	}
@@ -64,21 +66,23 @@ func (h *directoryHandle) ReadAt(p []byte, offset int64) (int, error) {
 
 		h.rem = h.buffer[:0]
 		for i, c := 0, cap(h.buffer); i < c; i++ {
-			info, err, more := h.next()
-			if info != nil {
-				subpath := filepath.Join(h.path, info.Name())
-				q := h.session.PutQidInfo(subpath, info)
-				st := fileInfoToStat(q, info)
-				h.rem = append(h.rem, st)
-			}
-			if !more {
+			info, err, ok := h.next()
+			if ok {
+				if info != nil {
+					subpath := filepath.Join(h.path, info.Name())
+					q := h.session.PutQidInfo(subpath, info)
+					st := fileInfoToStat(q, info)
+					h.rem = append(h.rem, st)
+				}
+				if err != nil {
+					return 0, err
+				}
+			} else {
 				h.eof = true
 				if len(h.rem) == 0 {
 					return 0, io.EOF
 				}
 				break
-			} else if err != nil {
-				return 0, err
 			}
 		}
 	}

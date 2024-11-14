@@ -212,6 +212,9 @@ func pidInfo(p Pid) (ProcInfo, error) {
 	if err != nil {
 		return pi, err
 	}
+	if len(r) == 0 {
+		return pi, syscall.ENOENT
+	}
 	k := (*C.struct_kinfo_proc)(unsafe.Pointer(&r[0]))
 
 	status := STATUS_UNKNOWN

@@ -179,10 +179,11 @@ func procList() func() ([]ninep.Node, error) {
 }
 
 func NewFs() ninep.FileSystem {
-	fs := &ninep.SimpleFileSystem{
-		Root: ninep.DynamicRootDir(procList()),
-	}
-	return fs
+	return &fsys{}
+	// fs := &ninep.SimpleFileSystem{
+	// 	Root: ninep.DynamicRootDir(procList()),
+	// }
+	// return fs
 }
 
 func staticDir(name string, children ...ninep.Node) *ninep.StaticReadOnlyDir {

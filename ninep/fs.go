@@ -281,6 +281,9 @@ type FileInfoUsers interface {
 // Returns a FileInfoUser based off of an fs.FileInfo, which the plan9 specific
 // values provided.
 func FileInfoWithUsers(fi fs.FileInfo, uid, gid, muid string) FileInfoUsers {
+	if fi == nil {
+		panic("nil fs.FileInfo")
+	}
 	return &fileInfoWithUsers{fi, uid, gid, muid}
 }
 
