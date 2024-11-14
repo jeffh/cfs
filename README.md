@@ -56,6 +56,7 @@ file server.
 
  - **b2fs** is a file server for Backblaze's b2 service
  - **dirfs** is a file server that serves a local file directory
+ - **envfs** is a file server that serves the process' environment variables
  - **tmpfs** is a file server that serves a temporary directory
  - **s3fs** is a file server for Amazon's S3 service (or any compatible variant)
  - **dockerfs** is a file server that exposes the docker daemon (aka - docker cli)
