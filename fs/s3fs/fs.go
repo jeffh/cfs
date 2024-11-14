@@ -5,9 +5,14 @@
 package s3fs
 
 import (
+	"context"
 	"io"
+	"io/fs"
 	"iter"
+	"log/slog"
+	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -114,4 +119,49 @@ func staticStringFile(name string, modTime time.Time, contents string) *ninep.Si
 
 func dynamicStringFile(name string, modTime time.Time, content func() ([]byte, error)) *ninep.SimpleFile {
 	return ninep.DynamicReadOnlyFile(name, 0444, modTime, content)
+}
+
+type fsys struct {
+	s3c    *S3Ctx
+	logger slog.Logger
+}
+
+func (f *fsys) parsePath(path string) (op, bucket, bop, key string) {
+	mx := http.NewServeMux()
+	parts := strings.SplitN(path, "/", 3)
+	switch len(parts) {
+	case 0:
+		return "", "", "", ""
+	case 1:
+		return parts[1], "", "", ""
+	case 2:
+		return parts[1], parts[2], "", ""
+	case 3:
+		return parts[1], parts[2], parts[3], ""
+	default:
+		return parts[1], parts[2], parts[3], parts[4]
+	}
+}
+
+func (f *fsys) MakeDir(ctx context.Context, path string, mode ninep.Mode) error {
+	op, bucket, bops, key := f.parsePath(path)
+	switch op {
+	case "buckets":
+		if bucket == "" {
+			return fs.ErrExist
+		} else {
+			if bops
+			if key != "" {
+				// TODO: create object?
+			}
+			// CreateBucket
+			_, err := f.s3c.Client.CreateBucket(&s3.CreateBucketInput{
+				Bucket: aws.String(bucket),
+			})
+			slog.InfoContext(ctx, "[S3] CreateBucket", slog.String("name", bucket), slog.Any("err", err))
+			return mapAwsErrToNinep(err)
+		}
+	default:
+		return ninep.ErrWriteNotAllowed
+	}
 }

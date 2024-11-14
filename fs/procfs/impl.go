@@ -44,6 +44,15 @@ func init() {
 	sort.Strings(sortedKeys)
 }
 
+var mx *ninep.Mux
+
+func init() {
+	mx = ninep.NewMux()
+	mx.Define().Path("/").As("root").
+		Define().Path("/{pid}").As("proc").
+		Define().Path("/{pid}/{op}").As("procOp")
+}
+
 type fsys struct {
 	m        sync.Mutex
 	uidCache map[int]string
@@ -78,25 +87,38 @@ func (f *fsys) CreateFile(ctx context.Context, path string, flag ninep.OpenMode,
 }
 
 func (f *fsys) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (ninep.FileHandle, error) {
-	pid, op := f.parsePath(path)
-	if pid == "" || op == "" {
-		return nil, fs.ErrNotExist
-	}
-	parsedPid, err := strconv.Atoi(pid)
-	if err != nil {
-		return nil, fs.ErrNotExist
-	}
-	control, ok := controls[op]
+	var res ninep.Match
+	ok := mx.Match(path, &res)
 	if !ok {
 		return nil, fs.ErrNotExist
 	}
-	return control.Handle(f, Pid(parsedPid))
+	switch res.Id {
+	case "procOp":
+		pid := res.Vars[0]
+		op := res.Vars[1]
+		parsedPid, err := strconv.Atoi(pid)
+		if err != nil {
+			return nil, fs.ErrNotExist
+		}
+		control, ok := controls[op]
+		if !ok {
+			return nil, fs.ErrNotExist
+		}
+		return control.Handle(f, Pid(parsedPid))
+	default:
+		return nil, fs.ErrNotExist
+	}
 }
 
 func (f *fsys) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, error] {
-	pid, op := f.parsePath(path)
-	switch {
-	case pid == "" && op == "":
+	var res ninep.Match
+	ok := mx.Match(path, &res)
+	if !ok {
+		return ninep.FileInfoErrorIterator(fs.ErrNotExist)
+	}
+
+	switch res.Id {
+	case "root":
 		return func(yield func(fs.FileInfo, error) bool) {
 			now := time.Now()
 			pids, err := pidsList(QUERY_ALL)
@@ -112,7 +134,8 @@ func (f *fsys) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, 
 				}
 			}
 		}
-	case pid != "" && op == "":
+	case "proc":
+		pid := res.Vars[0]
 		parsedPid, err := strconv.Atoi(pid)
 		if err != nil {
 			return ninep.FileInfoErrorIterator(fs.ErrNotExist)
@@ -139,40 +162,37 @@ func (f *fsys) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, 
 				}
 			}
 		}
-	case pid != "" && op != "":
-		fallthrough
-		// parsedPid, err := strconv.Atoi(pid)
-		// if err != nil {
-		// 	return ninep.FileInfoErrorIterator(fs.ErrNotExist)
-		// }
-		// controls, ok := controls[op]
-		// if !ok {
-		// 	return ninep.FileInfoErrorIterator(fs.ErrNotExist)
-		// }
-		// return func(yield func(fs.FileInfo, error) bool) {
-		// }
-	default:
+	case "procOp":
 		return ninep.FileInfoErrorIterator(fs.ErrNotExist)
+	default:
+		panic("unreachable")
 	}
 }
 
 func (f *fsys) Stat(ctx context.Context, path string) (fs.FileInfo, error) {
+	var res ninep.Match
+	ok := mx.Match(path, &res)
+	if !ok {
+		return nil, fs.ErrNotExist
+	}
 	now := time.Now()
-	pid, op := f.parsePath(path)
-	switch {
-	case pid == "" && op == "":
+	switch res.Id {
+	case "root":
 		return &ninep.SimpleFileInfo{
 			FIName:    "/",
 			FIModTime: now,
 			FIMode:    fs.ModeDir | 0555,
 		}, nil
-	case pid != "" && op == "":
+	case "proc":
+		pid := res.Vars[0]
 		parsedPid, err := strconv.Atoi(pid)
 		if err != nil {
 			return nil, fs.ErrNotExist
 		}
 		return f.procDir(Pid(parsedPid), now)
-	case pid != "" && op != "":
+	case "procOp":
+		pid := res.Vars[0]
+		op := res.Vars[1]
 		parsedPid, err := strconv.Atoi(pid)
 		if err != nil {
 			return nil, fs.ErrNotExist
@@ -197,7 +217,7 @@ func (f *fsys) Stat(ctx context.Context, path string) (fs.FileInfo, error) {
 		info = ninep.FileInfoWithUsers(info, user, group, "")
 		return info, nil
 	default:
-		return nil, fs.ErrNotExist
+		panic("unreachable")
 	}
 }
 

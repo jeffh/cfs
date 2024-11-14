@@ -166,16 +166,19 @@ func FileInfoSliceFromIterator(itr iter.Seq2[fs.FileInfo, error], max int) ([]fs
 // These keys are only populated if the FileSystem is running under a tcp
 // server context.
 type FileSystem interface {
-	// Creates a directory. Implementions should recursively make directories whenever possible.
+	// Creates a directory. Implementions should recursively make directories
+	// whenever possible.
 	MakeDir(ctx context.Context, path string, mode Mode) error
 	// Creates a file and opens it for reading/writing
 	CreateFile(ctx context.Context, path string, flag OpenMode, mode Mode) (FileHandle, error)
 	// Opens an existing file for reading/writing
 	OpenFile(ctx context.Context, path string, flag OpenMode) (FileHandle, error)
 	// Lists directories and files in a given path. Does not include '.' or '..'
-	// fs.FileInfo may optionally implement Statable
+	// fs.FileInfo may optionally implement Statable. Iterations are allowed to
+	// return a nil FileInfo if they have an error.
 	ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, error]
-	// Lists stats about a given file or directory.
+	// Lists stats about a given file or directory. Implementations may return
+	// fs.ErrNotExist for directories that do not exist.
 	Stat(ctx context.Context, path string) (fs.FileInfo, error)
 	// Writes stats about a given file or directory. Implementations perform an all-or-nothing write.
 	// Callers must use NoTouch values to indicate the underlying
