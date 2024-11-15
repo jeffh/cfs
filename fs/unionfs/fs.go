@@ -1,172 +1,746 @@
 package unionfs
 
 import (
+	"bufio"
 	"context"
+	"fmt"
 	"io/fs"
 	"iter"
-	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/jeffh/cfs/fs/proxy"
 	"github.com/jeffh/cfs/ninep"
+	"github.com/jeffh/cfs/ninep/kvp"
 )
 
-var skippableErrors []error
-
-func init() {
-	skippableErrors = []error{
-		ninep.ErrWriteNotAllowed,
-		ninep.ErrReadNotAllowed,
-		os.ErrNotExist,
-	}
+// New creates a new union fs with the given initial mounts
+func New(factory func(cfg proxy.FileSystemMountConfig) (proxy.FileSystemMount, error)) UnionFileSystem {
+	return &unionFS{createMount: factory}
 }
 
+type UnionFileSystem interface {
+	ninep.FileSystem
+	Mount(fs proxy.FileSystemMount) (string, error)
+	Unmount(path string) error
+	Bind(oldPath, newPath string) error
+	Unbind(path string) error
+}
+
+var mx = ninep.NewMux().
+	Define().Path("/#m").TrailSlash().As("mounts").
+	Define().Path("/#m/ctl").As("ctl").
+	Define().Path("/#m/{n}").TrailSlash().As("mount").
+	Define().Path("/#m/{n}/{path*}").TrailSlash().As("mountPath").
+	Define().Path("/").As("root").
+	Define().Path("/{path*}").As("path")
+
+// /#m/ctl
+//    echo "mount=localhost:6666/foo" > /#m/ctl
+//    echo "unmount=/#m/1" > /#m/ctl
+//    echo "unbind=/bin" > /#m/ctl
+//    echo "bind=/#m/1/bin to=/bin" > /#m/ctl
+//    echo "mount=localhost:6666/foo to=/" > /#m/ctl
+
 type unionFS struct {
-	fsms  []proxy.FileSystemMount // for reading
-	wfsms []proxy.FileSystemMount // for writing
+	mu       sync.RWMutex
+	mountIds []uint64
+	mounts   []proxy.FileSystemMount // ordered list of all mounts
+	nextId   atomic.Uint64
+
+	mu2              sync.RWMutex
+	sourcePaths      []string
+	destinationPaths [][]string
+
+	createMount func(cfg proxy.FileSystemMountConfig) (proxy.FileSystemMount, error)
 }
 
 var _ ninep.FileSystem = (*unionFS)(nil)
 
-func (ufs *unionFS) MakeDir(ctx context.Context, path string, mode ninep.Mode) error {
-	for i, fsm := range ufs.wfsms {
-		err := fsm.FS.MakeDir(ctx, filepath.Join(fsm.Prefix, path), mode)
-		if err != nil {
-			for j, f := range ufs.wfsms {
-				if j >= i {
-					break
+const (
+	mountPrefix = "#m"
+)
+
+func (ufs *unionFS) nextMountId() uint64 {
+	return ufs.nextId.Add(1)
+}
+
+func (ufs *unionFS) getMountByIndex(indexStr string) (proxy.FileSystemMount, error) {
+	index, err := strconv.ParseUint(indexStr, 10, 64)
+	if err != nil {
+		return proxy.FileSystemMount{}, fs.ErrNotExist
+	}
+	ufs.mu.RLock()
+	defer ufs.mu.RUnlock()
+	idx := slices.Index(ufs.mountIds, index)
+	if idx == -1 {
+		return proxy.FileSystemMount{}, fs.ErrNotExist
+	}
+	return ufs.mounts[idx], nil
+}
+
+func (ufs *unionFS) resolvePath(path string) ([]string, error) {
+	mPrefix := mountPrefix + "/"
+	if strings.HasPrefix(path, mPrefix) {
+		return []string{path}, nil
+	}
+	var output []string
+	ufs.mu2.RLock()
+	defer ufs.mu2.RUnlock()
+	stack := []string{path}
+	for len(stack) > 0 {
+		path = stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		for i, sp := range ufs.sourcePaths {
+			relativePath := strings.TrimPrefix(path, sp)
+			if relativePath != path {
+				for _, dp := range ufs.destinationPaths[i] {
+					fullPath := filepath.Join(dp, relativePath)
+					if strings.HasPrefix(fullPath, mPrefix) {
+						output = append(output, fullPath)
+					} else {
+						stack = append(stack, fullPath)
+					}
 				}
-				// best attempts
-				f.FS.Delete(ctx, filepath.Join(f.Prefix, path))
+				break
 			}
+		}
+	}
+	// if len(output) == 0 {
+	// 	return nil, fs.ErrNotExist
+	// }
+	return output, nil
+}
+
+type mountPath struct {
+	mount proxy.FileSystemMount
+	path  string
+}
+
+func (ufs *unionFS) prepareMounts(paths []string) ([]mountPath, error) {
+	if paths == nil {
+		return nil, nil
+	}
+	mounts := make([]mountPath, 0, len(paths))
+	for _, p := range paths {
+		tmp := strings.TrimPrefix(p, mountPrefix+"/")
+		idx := strings.Index(tmp, "/")
+		var subpath string
+		if idx != -1 {
+			subpath = tmp[idx+1:]
+			tmp = tmp[:idx]
+		}
+
+		mount, err := ufs.getMountByIndex(tmp)
+		if err != nil {
+			return nil, err
+		}
+		mounts = append(mounts, mountPath{mount, subpath})
+	}
+	return mounts, nil
+}
+
+func (ufs *unionFS) MakeDir(ctx context.Context, path string, mode ninep.Mode) error {
+	var res ninep.Match
+	if !mx.Match(path, &res) {
+		return fs.ErrNotExist
+	}
+	switch res.Id {
+	case "mounts":
+		return fs.ErrPermission
+	case "ctl":
+		return fs.ErrPermission
+	case "mount":
+		return fs.ErrPermission
+	case "mountPath":
+		indexStr := res.Vars[0]
+		path := res.Vars[1]
+		mount, err := ufs.getMountByIndex(indexStr)
+		if err != nil {
+			return fs.ErrNotExist
+		}
+		return mount.FS.MakeDir(ctx, path, mode)
+	case "root":
+		path = "/"
+		fallthrough
+	case "path":
+		paths, err := ufs.resolvePath(path)
+		if err != nil {
 			return err
+		}
+		mpaths, err := ufs.prepareMounts(paths)
+		if err != nil {
+			return err
+		}
+		for _, mp := range mpaths {
+			err = mp.mount.FS.MakeDir(ctx, filepath.Join(mp.mount.Prefix, mp.path), mode)
+			if err != nil {
+				continue
+			} else {
+				return nil
+			}
+		}
+		return err
+	default:
+		return fs.ErrNotExist
+	}
+}
+func (ufs *unionFS) CreateFile(ctx context.Context, path string, flag ninep.OpenMode, mode ninep.Mode) (ninep.FileHandle, error) {
+	var res ninep.Match
+	if !mx.Match(path, &res) {
+		return nil, fs.ErrNotExist
+	}
+	switch res.Id {
+	case "mounts":
+		return nil, fs.ErrPermission
+	case "ctl":
+		return nil, fs.ErrPermission
+	case "mount":
+		return nil, fs.ErrPermission
+	case "mountPath":
+		indexStr := res.Vars[0]
+		path := res.Vars[1]
+		mount, err := ufs.getMountByIndex(indexStr)
+		if err != nil {
+			return nil, fs.ErrNotExist
+		}
+		return mount.FS.CreateFile(ctx, path, flag, mode)
+	case "root":
+		path = "/"
+		fallthrough
+	case "path":
+		paths, err := ufs.resolvePath(path)
+		if err != nil {
+			return nil, err
+		}
+		mpaths, err := ufs.prepareMounts(paths)
+		if err != nil {
+			return nil, err
+		}
+		for _, mp := range mpaths {
+			h, err := mp.mount.FS.CreateFile(ctx, filepath.Join(mp.mount.Prefix, mp.path), flag, mode)
+			if err != nil {
+				continue
+			} else {
+				return h, nil
+			}
+		}
+		return nil, fs.ErrNotExist
+	default:
+		return nil, fs.ErrNotExist
+	}
+}
+func (ufs *unionFS) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (ninep.FileHandle, error) {
+	var res ninep.Match
+	if !mx.Match(path, &res) {
+		return nil, fs.ErrNotExist
+	}
+	switch res.Id {
+	case "mounts":
+		return nil, fs.ErrPermission
+	case "ctl":
+		return ufs.CtlHandle(ctx, flag)
+	case "mount":
+		return nil, fs.ErrPermission
+	case "mountPath":
+		indexStr := res.Vars[0]
+		path := res.Vars[1]
+		mount, err := ufs.getMountByIndex(indexStr)
+		if err != nil {
+			return nil, fs.ErrNotExist
+		}
+		return mount.FS.OpenFile(ctx, path, flag)
+	case "root":
+		path = "/"
+		fallthrough
+	case "path":
+		paths, err := ufs.resolvePath(path)
+		if err != nil {
+			return nil, err
+		}
+		mpaths, err := ufs.prepareMounts(paths)
+		if err != nil {
+			return nil, err
+		}
+		for _, mp := range mpaths {
+			h, err := mp.mount.FS.OpenFile(ctx, filepath.Join(mp.mount.Prefix, mp.path), flag)
+			if err != nil {
+				continue
+			} else {
+				return h, nil
+			}
+		}
+		return nil, fs.ErrNotExist
+	default:
+		return nil, fs.ErrNotExist
+	}
+}
+func (ufs *unionFS) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, error] {
+	var res ninep.Match
+	if !mx.Match(path, &res) {
+		return ninep.FileInfoErrorIterator(fs.ErrNotExist)
+	}
+	switch res.Id {
+	case "mounts":
+		ufs.mu.RLock()
+		ids := make([]uint64, len(ufs.mountIds))
+		copy(ids, ufs.mountIds)
+		ufs.mu.RUnlock()
+		return func(yield func(fs.FileInfo, error) bool) {
+			for _, id := range ids {
+				info := ninep.DirFileInfo(strconv.FormatUint(id, 10))
+				if !yield(info, nil) {
+					return
+				}
+			}
+		}
+	case "ctl":
+		return ninep.FileInfoErrorIterator(ninep.ErrListingOnNonDir)
+	case "mount":
+		mnt, err := ufs.getMountByIndex(res.Vars[0])
+		if err != nil {
+			return ninep.FileInfoErrorIterator(err)
+		}
+		return mnt.FS.ListDir(ctx, ".")
+	case "mountPath":
+		indexStr := res.Vars[0]
+		path := res.Vars[1]
+		mount, err := ufs.getMountByIndex(indexStr)
+		if err != nil {
+			return ninep.FileInfoErrorIterator(err)
+		}
+		return mount.FS.ListDir(ctx, path)
+	case "root":
+		return func(yield func(fs.FileInfo, error) bool) {
+			if !yield(ninep.DirFileInfo(mountPrefix), nil) {
+				return
+			}
+			paths, err := ufs.resolvePath(path)
+			if err != nil {
+				return
+			}
+			mpaths, err := ufs.prepareMounts(paths)
+			if err != nil {
+				return
+			}
+			seen := make(map[string]struct{})
+			for _, mp := range mpaths {
+				for h, err := range mp.mount.FS.ListDir(ctx, filepath.Join(mp.mount.Prefix, mp.path)) {
+					if _, ok := seen[h.Name()]; ok {
+						continue
+					}
+					if !yield(h, err) {
+						return
+					}
+					seen[h.Name()] = struct{}{}
+				}
+			}
+		}
+	case "path":
+		return func(yield func(fs.FileInfo, error) bool) {
+			paths, err := ufs.resolvePath(path)
+			if err != nil {
+				yield(nil, err)
+				return
+			}
+			mpaths, err := ufs.prepareMounts(paths)
+			if err != nil {
+				yield(nil, err)
+				return
+			}
+			seen := make(map[string]struct{})
+			for _, mp := range mpaths {
+				for h, err := range mp.mount.FS.ListDir(ctx, filepath.Join(mp.mount.Prefix, mp.path)) {
+					if _, ok := seen[h.Name()]; ok {
+						continue
+					}
+					if !yield(h, err) {
+						return
+					}
+					seen[h.Name()] = struct{}{}
+				}
+			}
+		}
+	default:
+		return ninep.FileInfoErrorIterator(fs.ErrNotExist)
+	}
+}
+func (ufs *unionFS) Stat(ctx context.Context, path string) (fs.FileInfo, error) {
+	var res ninep.Match
+	if !mx.Match(path, &res) {
+		return nil, fs.ErrNotExist
+	}
+	switch res.Id {
+	case "mounts":
+		return ninep.DirFileInfo(mountPrefix), nil
+	case "ctl":
+		return ninep.DevFileInfo("ctl"), nil
+	case "mount":
+		_, err := ufs.getMountByIndex(res.Vars[0])
+		if err != nil {
+			return nil, err
+		}
+		return ninep.DirFileInfo(res.Vars[0]), nil
+	case "mountPath":
+		indexStr := res.Vars[0]
+		path := res.Vars[1]
+		mount, err := ufs.getMountByIndex(indexStr)
+		if err != nil {
+			return nil, err
+		}
+		return mount.FS.Stat(ctx, path)
+	case "root":
+		path = "/"
+		fallthrough
+	case "path":
+		paths, err := ufs.resolvePath(path)
+		if err != nil {
+			if path == "/" {
+				return ninep.DirFileInfo("."), nil
+			}
+			return nil, err
+		}
+		mpaths, err := ufs.prepareMounts(paths)
+		if err != nil {
+			return nil, err
+		}
+		for _, mp := range mpaths {
+			if info, err := mp.mount.FS.Stat(ctx, mp.path); err == nil {
+				return info, nil
+			}
+		}
+		if path == "/" {
+			return ninep.DirFileInfo("."), nil
+		}
+		return nil, fs.ErrNotExist
+	default:
+		return nil, fs.ErrNotExist
+	}
+}
+func (ufs *unionFS) WriteStat(ctx context.Context, path string, s ninep.Stat) error {
+	var res ninep.Match
+	if !mx.Match(path, &res) {
+		return fs.ErrNotExist
+	}
+	switch res.Id {
+	case "mounts":
+		return fs.ErrPermission
+	case "ctl":
+		return fs.ErrPermission
+	case "mount":
+		_, err := ufs.getMountByIndex(res.Vars[0])
+		if err != nil {
+			return err
+		}
+		return fs.ErrPermission
+	case "mountPath":
+		indexStr := res.Vars[0]
+		path := res.Vars[1]
+		mount, err := ufs.getMountByIndex(indexStr)
+		if err != nil {
+			return err
+		}
+		return mount.FS.WriteStat(ctx, path, s)
+	case "root":
+		path = "/"
+		fallthrough
+	case "path":
+		paths, err := ufs.resolvePath(path)
+		if err != nil {
+			return err
+		}
+		mpaths, err := ufs.prepareMounts(paths)
+		if err != nil {
+			return err
+		}
+		for _, mp := range mpaths {
+			if err := mp.mount.FS.WriteStat(ctx, mp.path, s); err == nil {
+				return nil
+			}
+		}
+		return fs.ErrNotExist
+	default:
+		return fs.ErrNotExist
+	}
+}
+func (ufs *unionFS) Delete(ctx context.Context, path string) error {
+	var res ninep.Match
+	if !mx.Match(path, &res) {
+		return fs.ErrNotExist
+	}
+	switch res.Id {
+	case "mounts":
+		return fs.ErrPermission
+	case "ctl":
+		return fs.ErrPermission
+	case "mount":
+		_, err := ufs.getMountByIndex(res.Vars[0])
+		if err != nil {
+			return err
+		}
+		return fs.ErrPermission
+	case "mountPath":
+		indexStr := res.Vars[0]
+		path := res.Vars[1]
+		mount, err := ufs.getMountByIndex(indexStr)
+		if err != nil {
+			return err
+		}
+		return mount.FS.Delete(ctx, path)
+	case "root":
+		path = "/"
+		fallthrough
+	case "path":
+		paths, err := ufs.resolvePath(path)
+		if err != nil {
+			return err
+		}
+		mpaths, err := ufs.prepareMounts(paths)
+		if err != nil {
+			return err
+		}
+		for _, mp := range mpaths {
+			if err := mp.mount.FS.Delete(ctx, mp.path); err == nil {
+				return nil
+			}
+		}
+		return fs.ErrNotExist
+	default:
+		return fs.ErrNotExist
+	}
+}
+
+func (ufs *unionFS) Mount(fsm proxy.FileSystemMount) (string, error) {
+	idx := ufs.nextMountId()
+	ufs.mu.Lock()
+	defer ufs.mu.Unlock()
+	ufs.mounts = append(ufs.mounts, fsm)
+	ufs.mountIds = append(ufs.mountIds, idx)
+	return mountPrefix + "/" + strconv.FormatUint(idx, 10), nil
+}
+func (ufs *unionFS) Unmount(path string) error {
+	target := strings.TrimPrefix(path, mountPrefix+"/")
+	if target == path {
+		return fs.ErrInvalid
+	}
+	target = strings.TrimSuffix(target, "/")
+	idx, err := strconv.ParseUint(target, 10, 64)
+	if err != nil {
+		return fs.ErrNotExist
+	}
+	ufs.mu.Lock()
+	index := slices.Index(ufs.mountIds, idx)
+	if index == -1 {
+		ufs.mu.Unlock()
+		return fs.ErrNotExist
+	}
+	ufs.mounts = slices.Delete(ufs.mounts, index, index+1)
+	ufs.mountIds = slices.Delete(ufs.mountIds, index, index+1)
+	ufs.mu.Unlock()
+
+	ufs.mu2.Lock()
+	defer ufs.mu2.Unlock()
+	for i, sp := range ufs.sourcePaths {
+		if strings.HasPrefix(sp, path) {
+			ufs.sourcePaths = slices.Delete(ufs.sourcePaths, i, i+1)
+			ufs.destinationPaths = slices.Delete(ufs.destinationPaths, i, i+1)
+		}
+		for j, dp := range ufs.destinationPaths[i] {
+			if strings.HasPrefix(dp, path) {
+				ufs.destinationPaths[i] = slices.Delete(ufs.destinationPaths[i], j, j+1)
+			}
 		}
 	}
 	return nil
 }
-func (ufs *unionFS) CreateFile(ctx context.Context, path string, flag ninep.OpenMode, mode ninep.Mode) (ninep.FileHandle, error) {
-	hs := make([]ninep.FileHandle, 0, len(ufs.wfsms))
-	for i, fsm := range ufs.wfsms {
-		h, err := fsm.FS.CreateFile(ctx, filepath.Join(fsm.Prefix, path), flag, mode)
-		if err != nil {
-			for j, f := range ufs.wfsms {
-				if j >= i {
-					break
+func (ufs *unionFS) Bind(srcPath, dstPath string) error {
+	ufs.mu2.Lock()
+	defer ufs.mu2.Unlock()
+	i := slices.Index(ufs.sourcePaths, dstPath)
+	if i == -1 {
+		ufs.sourcePaths = append(ufs.sourcePaths, dstPath)
+		ufs.destinationPaths = append(ufs.destinationPaths, []string{srcPath})
+	} else {
+		ufs.destinationPaths[i] = append(ufs.destinationPaths[i], srcPath)
+	}
+	return nil
+}
+func (ufs *unionFS) Unbind(path string) error {
+	ufs.mu2.Lock()
+	defer ufs.mu2.Unlock()
+	i := slices.Index(ufs.sourcePaths, path)
+	if i == -1 {
+		return fs.ErrNotExist
+	}
+	ufs.sourcePaths = slices.Delete(ufs.sourcePaths, i, i+1)
+	ufs.destinationPaths = slices.Delete(ufs.destinationPaths, i, i+1)
+	return nil
+}
+
+func (ufs *unionFS) Walk(ctx context.Context, parts []string) ([]fs.FileInfo, error) {
+	infos := make([]fs.FileInfo, 0, len(parts))
+	if len(parts) > 1 && parts[len(parts)-1] == "." {
+		parts = parts[:len(parts)-1]
+	}
+	if len(parts) > 0 {
+		infos = append(infos, ninep.DirFileInfo("."))
+	}
+	if len(parts) > 1 && parts[1] == mountPrefix {
+		L := len(parts)
+		if L >= 2 { // mounts dir
+			infos = append(infos, ninep.DirFileInfo("#m"))
+		}
+		var mount proxy.FileSystemMount
+		if L >= 3 { // specific mount or ctl
+			if parts[2] == "ctl" {
+				infos = append(infos, ninep.DevFileInfo("ctl"))
+			} else {
+				var err error
+				mount, err = ufs.getMountByIndex(parts[2])
+				if err != nil {
+					return infos, err
 				}
-				// best attempts
-				f.FS.Delete(ctx, filepath.Join(f.Prefix, path))
+				infos = append(infos, ninep.DirFileInfo(parts[2]))
 			}
+		}
+		if L >= 4 { // specific mount + path
+			if mount.FS == nil {
+				return infos, fs.ErrNotExist
+			}
+			infos = append(infos, ninep.DirFileInfo(parts[3]))
+			addt, err := ninep.Walk(ctx, mount.FS, parts[3:])
+			if len(addt) > 0 {
+				infos = append(infos, addt...)
+			}
+			if err != nil {
+				return infos, err
+			}
+		}
+		return infos, nil
+	} else {
+		paths, err := ufs.resolvePath(strings.Trim(strings.Join(parts, "/"), "."))
+		if err != nil {
 			return nil, err
 		}
-		hs = append(hs, h)
-	}
-	return &fanoutHandle{ufs.wfsms, hs, path}, nil
-}
-func (ufs *unionFS) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (ninep.FileHandle, error) {
-	targetFSMs := ufs.wfsms
-	if flag.IsReadOnly() {
-		targetFSMs = ufs.fsms
-	}
-
-	hs := make([]ninep.FileHandle, 0, len(targetFSMs))
-	fsms := make([]proxy.FileSystemMount, 0, len(targetFSMs))
-
-	for i, fsm := range targetFSMs {
-		h, err := fsm.FS.OpenFile(ctx, filepath.Join(fsm.Prefix, path), flag)
+		mpaths, err := ufs.prepareMounts(paths)
 		if err != nil {
-			continue
+			return nil, err
 		}
-		hs = append(hs, h)
-		fsms = append(fsms, targetFSMs[i])
-	}
-	if len(hs) == 0 {
-		return nil, os.ErrNotExist
-	}
-	return &fanoutHandle{fsms, hs, path}, nil
-}
-func (ufs *unionFS) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, error] {
-	hasDir := func(ctx context.Context, path string, ufs *unionFS) bool {
-		for _, fsms := range ufs.fsms {
-			_, err := fsms.FS.Stat(ctx, filepath.Join(fsms.Prefix, path))
-			if err == nil {
-				return true
+		var best []fs.FileInfo
+		for _, mp := range mpaths {
+			subparts := strings.Split(mp.path, "/")
+			if walkable, ok := mp.mount.FS.(ninep.WalkableFileSystem); ok {
+				if infos, err := walkable.Walk(ctx, subparts); err == nil {
+					best = infos
+					break
+				} else if len(best) < len(infos) {
+					best = infos
+				}
+			} else {
+				if infos, err := ninep.NaiveWalk(ctx, mp.mount.FS, subparts); err == nil {
+					best = infos
+					break
+				} else if len(best) < len(infos) {
+					best = infos
+				}
 			}
 		}
-		return false
+		infos = append(infos, best...)
+		return infos, nil
 	}
-	if !hasDir(ctx, path, ufs) {
-		return ninep.FileInfoErrorIterator(os.ErrNotExist)
-	}
-	return makeUnionIterator(ctx, path, ufs.fsms)
-}
-func (ufs *unionFS) Stat(ctx context.Context, path string) (os.FileInfo, error) {
-	for _, fsm := range ufs.fsms {
-		fi, err := fsm.FS.Stat(ctx, filepath.Join(fsm.Prefix, path))
-		if err == os.ErrNotExist {
-			continue
-		} else if err != nil {
-			return fi, err
-		} else {
-			return fi, nil
-		}
-	}
-	return nil, os.ErrNotExist
-}
-func (ufs *unionFS) WriteStat(ctx context.Context, path string, s ninep.Stat) error {
-	for _, fsm := range ufs.fsms {
-		err := fsm.FS.WriteStat(ctx, filepath.Join(fsm.Prefix, path), s)
-		if err == os.ErrNotExist {
-			continue
-		} else if err != nil {
-			return err
-		} else {
-			return nil
-		}
-	}
-	return os.ErrNotExist
-}
-func (ufs *unionFS) Delete(ctx context.Context, path string) error {
-	for _, fsm := range ufs.fsms {
-		err := fsm.FS.Delete(ctx, filepath.Join(fsm.Prefix, path))
-		if err == os.ErrNotExist {
-			continue
-		} else if err != nil {
-			return err
-		} else {
-			return nil
-		}
-	}
-	return os.ErrNotExist
 }
 
-// New creates a new union fs - where all directories are unioned.
-// File systems are accessed in order until one file system can provide. This means the top-most
-// directories of each file system is joined. File and directories in each
-// top-level directory are shared.
-//
-// For example, given [fs1, fs2]:
-//
-//	where fs1:
-//	  - /bin/a
-//	  - /bin/b
-//	  - /bin/dir/a
-//	  - /bin/dir/b
-//
-//	and where fs2:
-//	  - /bin/b
-//	  - /bin/c
-//	  - /bin/dir/b
-//	  - /bin/dir/c
-//
-// Then the union file system will provide:
-//   - /bin/a # from fs1
-//   - /bin/b # from fs1
-//   - /bin/c # from fs2
-//   - /bin/dir/a # from fs1
-//   - /bin/dir/b # from fs1
-//   - /bin/dir/c # from fs2
-//
-// All writes occur on the first file system (fs1) in the slice.
-func New(fses []proxy.FileSystemMount) ninep.FileSystem {
-	return &unionFS{fses, []proxy.FileSystemMount{fses[0]}}
+func (ufs *unionFS) CtlHandle(ctx context.Context, flag ninep.OpenMode) (ninep.FileHandle, error) {
+	h, r, w := ninep.DeviceHandle(flag)
+	if w != nil {
+		go func() {
+			defer w.Close()
+			ufs.mu.RLock()
+			mounts := make([]string, 0, len(ufs.mounts))
+			for i, m := range ufs.mounts {
+				index := ufs.mountIds[i]
+				mounts = append(mounts, fmt.Sprintf("mount=%q # id=%d", m.Addr+"/"+strings.TrimPrefix(m.Prefix, "/"), index))
+			}
+			ufs.mu.RUnlock()
+
+			ufs.mu2.RLock()
+			srcs := make([]string, len(ufs.sourcePaths))
+			dsts := make([][]string, len(ufs.destinationPaths))
+			copy(srcs, ufs.sourcePaths)
+			for i, dst := range ufs.destinationPaths {
+				dsts[i] = append([]string(nil), dst...)
+			}
+			ufs.mu2.RUnlock()
+			for _, m := range mounts {
+				fmt.Fprintf(w, "%s\n", m)
+			}
+			for i, sp := range srcs {
+				for _, dp := range dsts[i] {
+					fmt.Fprintf(w, "bind=%q to=%q\n", "/"+strings.TrimPrefix(dp, "/"), "/"+strings.TrimPrefix(sp, "/"))
+				}
+			}
+		}()
+	}
+	if r != nil {
+		go func() {
+			defer r.Close()
+			scanner := bufio.NewScanner(r)
+			for scanner.Scan() {
+				line := scanner.Text()
+				kv, err := kvp.ParseKeyValues(line)
+				if err != nil {
+					continue
+				}
+				if path := kv.GetOne("mount"); path != "" {
+					to := kv.GetOne("to")
+					if to == "" {
+						to = "/"
+					}
+					mountConfig, ok := proxy.ParseMount(path)
+					if !ok {
+						continue
+					}
+					mnt, err := ufs.createMount(mountConfig)
+					if err != nil {
+						continue
+					}
+					path, err := ufs.Mount(mnt)
+					if err != nil {
+						continue
+					}
+					err = ufs.Bind(path, to)
+					if err != nil {
+						continue
+					}
+				}
+				if path := kv.GetOne("unmount"); path != "" {
+					err = ufs.Unmount(path)
+					if err != nil {
+						continue
+					}
+				}
+				if path := kv.GetOne("bind"); path != "" {
+					to := kv.GetOne("to")
+					if to == "" {
+						to = "/"
+					}
+					err = ufs.Bind(path, to)
+					if err != nil {
+						continue
+					}
+				}
+				if path := kv.GetOne("unbind"); path != "" {
+					err = ufs.Unbind(path)
+					if err != nil {
+						continue
+					}
+				}
+			}
+		}()
+	}
+	return h, nil
 }

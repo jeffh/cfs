@@ -97,7 +97,7 @@ type SimpleFileSystem struct {
 }
 
 func (f *SimpleFileSystem) walk(path string, walkLast bool) (Node, string, error) {
-	return Walk(f.Root, path, walkLast)
+	return WalkNode(f.Root, path, walkLast)
 }
 
 func (f *SimpleFileSystem) MakeDir(ctx context.Context, path string, mode Mode) error {
@@ -449,7 +449,7 @@ func (d *DynamicReadOnlyDirTree) Walk(subpath []string) (Node, error) {
 				bestMatchName = name
 			}
 		}
-		n, _, err := Walk(bestMatch, path[len(bestMatchName):], true)
+		n, _, err := WalkNode(bestMatch, path[len(bestMatchName):], true)
 		return n, err
 	}
 
@@ -656,8 +656,8 @@ func FindChild(root Node, name string) (Node, os.FileInfo, error) {
 	}
 }
 
-// Walks a given node using the path as guidance. Returns the filename reached.
-func Walk(root Node, path string, walkLast bool) (Node, string, error) {
+// WalkNode a given node using the path as guidance. Returns the filename reached.
+func WalkNode(root Node, path string, walkLast bool) (Node, string, error) {
 	currNode := root
 	parts := PathSplit(path)[1:]
 	if len(parts) == 0 {

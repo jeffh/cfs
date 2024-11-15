@@ -11,7 +11,7 @@ import (
 
 func makeUnionIterator(ctx context.Context, path string, fsms []proxy.FileSystemMount) iter.Seq2[fs.FileInfo, error] {
 	seenPaths := make(map[string]bool)
-	seen := func(fpath string) bool {
+	seen := func(path string) bool {
 		_, ok := seenPaths[path]
 		seenPaths[path] = true
 		return ok

@@ -427,6 +427,9 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 				w.Rerror(err)
 				return
 			}
+			if len(parts) > 1 && parts[len(parts)-1] == "." && len(infos) == len(parts)-1 {
+				infos = append(infos, infos[len(infos)-1])
+			}
 			size = len(infos)
 			for i, name := range parts {
 				if i >= size {

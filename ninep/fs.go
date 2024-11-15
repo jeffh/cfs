@@ -5,6 +5,7 @@ import (
 	"io"
 	"io/fs"
 	"iter"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -232,6 +233,25 @@ type WalkableFileSystem interface {
 	// Note: simply returning less FileInfos than parts indicates that the cd
 	// failed to traverse to the specified depth.
 	Walk(ctx context.Context, parts []string) ([]fs.FileInfo, error)
+}
+
+func Walk(ctx context.Context, f FileSystem, parts []string) ([]fs.FileInfo, error) {
+	if walkable, ok := f.(WalkableFileSystem); ok {
+		return walkable.Walk(ctx, parts)
+	}
+	return NaiveWalk(ctx, f, parts)
+}
+
+func NaiveWalk(ctx context.Context, f FileSystem, parts []string) ([]fs.FileInfo, error) {
+	infos := make([]fs.FileInfo, 0, len(parts))
+	for i := range parts {
+		info, err := f.Stat(ctx, filepath.Join(parts[:i+1]...))
+		if err != nil {
+			return infos, err
+		}
+		infos = append(infos, info)
+	}
+	return infos, nil
 }
 
 ////////////////////////////////////////////////

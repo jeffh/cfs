@@ -122,6 +122,7 @@ func (f traceFileSystem) OpenFile(ctx context.Context, path string, flag ninep.O
 }
 
 func (f traceFileSystem) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, error] {
+	f.Tracef("FS.ListDir(%v)", path)
 	return func(yield func(fs.FileInfo, error) bool) {
 		i := 0
 		for info, err := range f.Fs.ListDir(ctx, path) {
@@ -141,7 +142,7 @@ func (f traceFileSystem) ListDir(ctx context.Context, path string) iter.Seq2[fs.
 func (f traceFileSystem) Stat(ctx context.Context, path string) (os.FileInfo, error) {
 	info, err := f.Fs.Stat(ctx, path)
 	if info != nil {
-		f.Tracef("FS.Stat(%v) => (os.FileInfo{name: %#v, size: %d, isDir: %v...}, %s)", path, info.Name(), info.Size(), info.IsDir(), err)
+		f.Tracef("FS.Stat(%T, %v) => (os.FileInfo{name: %#v, size: %d, isDir: %v...}, %s)", f.Fs, path, info.Name(), info.Size(), info.IsDir(), err)
 	} else {
 		if err != nil {
 			f.Tracef("FS.Stat(%v) => (nil, %s)", path, err)
@@ -200,6 +201,10 @@ func (f *walkableTraceFileSystem) Walk(ctx context.Context, parts []string) ([]o
 	infos, err := f.Wfs.Walk(ctx, parts)
 	if err != nil {
 		f.traceFileSystem.Errorf("FS.Walk(%v) => %s", parts, err)
+	} else {
+		for i, info := range infos {
+			f.traceFileSystem.Tracef("FS.Walk(%v)[%d] => %#v", parts, i, info.Name())
+		}
 	}
 	return infos, err
 }
