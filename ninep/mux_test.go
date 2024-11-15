@@ -11,6 +11,8 @@ func TestMux(t *testing.T) {
 		Define().Path("/dynamic/{id}").As("dynamic").
 		Define().Path("/dynamic/{id}/postfix").As("postfix").
 		Define().Path("/dynamic/{id}/prefix/{name}").As("double").
+		Define().Path("/star/{wildcard*}").As("star").
+		Define().Path("/plus/{wildcard+}").As("plus").
 		Define().Path("/").As("root")
 
 	cases := []struct {
@@ -27,6 +29,10 @@ func TestMux(t *testing.T) {
 		{"/dynamic/asdf/prefix/cake", true, "double", []string{"asdf", "cake"}},
 		{"/", true, "root", []string{}},
 		{"/asdf", false, "", []string{}},
+		{"/star/asdf/bar", true, "star", []string{"asdf/bar"}},
+		{"/star/", true, "star", []string{""}},
+		{"/plus/asdf/bar", true, "plus", []string{"asdf/bar"}},
+		{"/plus/", false, "", []string{}},
 	}
 
 	for _, c := range cases {

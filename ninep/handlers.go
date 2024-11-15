@@ -240,12 +240,14 @@ func (h *defaultHandler) Disconnected(addr string) {
 }
 
 // Invoked by the server to handle a 9p protocol message
-func (h *defaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
+func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Replier) {
 	session := h.st.Lookup(w.RemoteAddr())
 	if session == nil {
 		h.Errorf("No previous session for %s", w.RemoteAddr())
 		return
 	}
+	connCtx = context.WithValue(connCtx, "session", session)
+	connCtx = context.WithValue(connCtx, "rawMessage", m)
 	ctx = context.WithValue(ctx, "session", session)
 	ctx = context.WithValue(ctx, "rawMessage", m)
 	switch m := m.(type) {
@@ -361,11 +363,11 @@ func (h *defaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 				fs:      h.Fs,
 				session: session,
 				path:    fullPath,
-				ctx:     ctx,
+				ctx:     connCtx,
 			}
 			// fil.IncRef()
 		} else {
-			f, err := h.Fs.OpenFile(ctx, fullPath, m.Mode())
+			f, err := h.Fs.OpenFile(connCtx, fullPath, m.Mode())
 			if err != nil || f == nil {
 				h.Tracef("srv: Topen: error opening file %v: %s %v", fullPath, err, m.Fid)
 				w.Rerrorf("cannot open: %s", err)
@@ -694,7 +696,7 @@ func (h *defaultHandler) Handle9P(ctx context.Context, m Message, w Replier) {
 			// fil.IncRef()
 			session.PutFileHandle(q, fil.H)
 		} else {
-			f, err := h.Fs.CreateFile(ctx, fullPath, m.Mode(), m.Perm())
+			f, err := h.Fs.CreateFile(connCtx, fullPath, m.Mode(), m.Perm())
 			if err != nil || f == nil {
 				h.Tracef("srv: Tcreate: error creating file %v %v: %s", fullPath, m.Perm().ToOsMode(), err)
 				w.Rerror(err)

@@ -44,14 +44,10 @@ func init() {
 	sort.Strings(sortedKeys)
 }
 
-var mx *ninep.Mux
-
-func init() {
-	mx = ninep.NewMux()
-	mx.Define().Path("/").As("root").
-		Define().Path("/{pid}").As("proc").
-		Define().Path("/{pid}/{op}").As("procOp")
-}
+var mx = ninep.NewMux().
+	Define().Path("/").As("root").
+	Define().Path("/{pid}").As("proc").
+	Define().Path("/{pid}/{op}").As("procOp")
 
 type fsys struct {
 	m        sync.Mutex
@@ -60,23 +56,6 @@ type fsys struct {
 }
 
 var _ ninep.FileSystem = (*fsys)(nil)
-
-func (f *fsys) parsePath(path string) (pid string, op string) {
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
-	}
-	parts := strings.SplitN(path, "/", 3)
-	switch len(parts) {
-	case 0:
-		return "", ""
-	case 1:
-		return "", ""
-	case 2:
-		return parts[1], ""
-	default:
-		return parts[1], parts[2]
-	}
-}
 
 func (f *fsys) MakeDir(ctx context.Context, path string, mode ninep.Mode) error {
 	return ninep.ErrWriteNotAllowed

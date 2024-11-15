@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -33,7 +34,7 @@ func keysMatch(objKey *string, wantedKey string) bool {
 	return objKey != nil && (*objKey == wantedKey || *objKey == wantedKey+"/")
 }
 
-func objectInfo(nameOffset int, object *s3.Object, fallbackKey string) os.FileInfo {
+func objectInfo(nameOffset int, object *s3.Object, fallbackKey string) fs.FileInfo {
 	var (
 		uid     string
 		name    string
@@ -56,12 +57,7 @@ func objectInfo(nameOffset int, object *s3.Object, fallbackKey string) os.FileIn
 		key = fallbackKey
 	}
 	name = key[nameOffset:]
-	if strings.HasPrefix(name, "/") {
-		name = name[1:]
-	}
-	if strings.HasSuffix(name, "/") {
-		name = name[:len(name)-1]
-	}
+	name = strings.Trim(name, "/")
 	if name == "" {
 		name = "/"
 	}
@@ -74,14 +70,14 @@ func objectInfo(nameOffset int, object *s3.Object, fallbackKey string) os.FileIn
 	// examplekeyname/."
 	isDir := strings.HasSuffix(key, "/")
 
-	var dirMode os.FileMode
+	var dirMode fs.FileMode
 	if isDir {
-		dirMode = os.ModeDir
+		dirMode = fs.ModeDir
 	}
 	return ninep.FileInfoWithUsers(
 		&ninep.SimpleFileInfo{
 			FIName:    name,
-			FIMode:    0777 | dirMode,
+			FIMode:    0o777 | dirMode,
 			FIModTime: modTime,
 			FISize:    size,
 		},

@@ -2,7 +2,7 @@ package s3fs
 
 import (
 	"errors"
-	"os"
+	"io/fs"
 
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/s3"
@@ -23,7 +23,9 @@ func mapAwsErrToNinep(err error) error {
 		case s3.ErrCodeBucketAlreadyExists:
 			return ninep.ErrInvalidAccess
 		case s3.ErrCodeNoSuchKey:
-			return os.ErrNotExist
+			return fs.ErrNotExist
+		case s3.ErrCodeNoSuchBucket:
+			return fs.ErrNotExist
 		default:
 			break
 		}

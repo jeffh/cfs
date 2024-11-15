@@ -13,6 +13,27 @@ import (
 
 type Map map[string][]string
 
+func (kv Map) SortedKeys() []string {
+	cnt := 0
+	emptyKeys := make([]string, 0, len(kv))
+	keys := make([]string, 0, len(kv))
+	for k, vs := range kv {
+		if len(vs) == 1 && vs[0] == "" {
+			emptyKeys = append(emptyKeys, k)
+		} else {
+			keys = append(keys, k)
+		}
+		cnt += len(vs)
+	}
+	sort.Strings(emptyKeys)
+	sort.Strings(keys)
+	pairs := make([]string, 0, cnt)
+
+	pairs = append(pairs, emptyKeys...)
+	pairs = append(pairs, keys...)
+	return pairs
+}
+
 func (kv Map) SortedKeyPairs() [][2]string {
 	cnt := 0
 	emptyKeys := make([]string, 0, len(kv))

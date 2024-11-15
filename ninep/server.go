@@ -42,7 +42,7 @@ type Handler interface {
 	Shutdown()
 	Disconnected(remoteAddr string)
 	Connected(remoteAddr string)
-	Handle9P(ctx context.Context, req Message, w Replier)
+	Handle9P(connCtx context.Context, reqCtx context.Context, req Message, w Replier)
 }
 
 /////////////////////////////////////////////////////////////
@@ -361,11 +361,14 @@ func (s *serverConn) requestStop() {
 
 func (s *serverConn) assocTag(t Tag, c context.CancelFunc) bool {
 	s.mut.Lock()
-	_, found := s.liveTags[t]
+	oldCancel, found := s.liveTags[t]
 	if !found {
 		s.liveTags[t] = c
 	}
 	s.mut.Unlock()
+	if found {
+		oldCancel()
+	}
 	// return !found
 	return true
 }
@@ -414,6 +417,7 @@ func (s *serverConn) serve() {
 	{
 		s.handler.Connected(remoteAddr)
 
+	loop:
 		for s.stop = 0; s.stop == 0; {
 			txn := <-s.txns
 			txn.remoteAddr = remoteAddr
@@ -432,7 +436,7 @@ func (s *serverConn) serve() {
 				txn.writeReply(s.rwc) // we don't care, we're going away
 				txn.reset()
 				s.txns <- txn
-				break
+				break loop
 			default:
 				// NOTE: technically, we never verify that Tags are unique, but
 				// we're going to write that off as a bug in the client. We'll happily,
@@ -454,13 +458,9 @@ func (s *serverConn) serve() {
 func (s *serverConn) dispatch(ctx context.Context, txn *srvTransaction) {
 	req := txn.Request()
 	tag := req.Tag()
+	connCtx := ctx
 	ctx, cancel := context.WithCancel(ctx)
 	ok := s.assocTag(tag, cancel)
-
-	if !ok {
-		defer cancel()
-	}
-
 	shouldStop := false
 
 	// dispatch
@@ -478,7 +478,7 @@ func (s *serverConn) dispatch(ctx context.Context, txn *srvTransaction) {
 
 		default:
 			s.tracef("Receive request tag %d", tag)
-			go s.handler.Handle9P(ctx, m, txn)
+			go s.handler.Handle9P(connCtx, ctx, m, txn)
 			txn.wait()
 			if !txn.handled {
 				txn.Rerrorf("not implemented")

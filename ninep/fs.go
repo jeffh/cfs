@@ -214,7 +214,11 @@ func Delete(ctx context.Context, fs FileSystem, path string, m Mode) error {
 	return fs.Delete(ctx, path)
 }
 
-// A file system that wants to optimize Twalk operations
+// A file system that wants to optimize Twalk operations. Twalk is a protocol operation that allows
+// a client to walk a directory tree in a single operation (think: cd /path/to/dir).
+//
+// Without a custom implementation, the default behavior will recursively call
+// Stat for each directory in the path and then traverse the directory.
 type WalkableFileSystem interface {
 	FileSystem
 	// walk receives a number of directories to traverse (with the last one optionally being a file)
@@ -223,7 +227,7 @@ type WalkableFileSystem interface {
 	// It's expected that all FileInfos returned except for the last to be directories.
 	//
 	// Note: simply returning less FileInfos than parts indicates that the cd
-	// failed to traversed to a certain depth.
+	// failed to traverse to the specified depth.
 	Walk(ctx context.Context, parts []string) ([]fs.FileInfo, error)
 }
 
@@ -266,6 +270,17 @@ func (f *fileInfoWithName) Mode() fs.FileMode  { return f.fi.Mode() }
 func (f *fileInfoWithName) ModTime() time.Time { return f.fi.ModTime() }
 func (f *fileInfoWithName) IsDir() bool        { return f.fi.IsDir() }
 func (f *fileInfoWithName) Sys() interface{}   { return f.fi.Sys() }
+
+type fileInfoWithMode struct {
+	fs.FileInfo
+	mode fs.FileMode
+}
+
+func (f *fileInfoWithMode) Mode() fs.FileMode { return f.mode }
+
+func FileInfoWithMode(fi fs.FileInfo, mode fs.FileMode) fs.FileInfo {
+	return &fileInfoWithMode{fi, mode}
+}
 
 // file info unix to plan9 wrappers
 type fileInfoWithUsers struct {

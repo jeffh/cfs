@@ -43,7 +43,15 @@ func (b *PatternBuilder) Path(tpl string) *PatternBuilder {
 			start = i + 1
 			for j := i + 1; j < len(tpl); j++ {
 				if tpl[j] == '}' {
-					re.WriteString("([^/]+)")
+					name := tpl[i+1 : j]
+					if strings.HasSuffix(name, "*") {
+						// name = name[:len(name)-1]
+						re.WriteString("(.*)")
+					} else if strings.HasSuffix(name, "+") {
+						re.WriteString("(.+)")
+					} else {
+						re.WriteString("([^/]+)")
+					}
 					start = j + 1
 					i = j
 					break
