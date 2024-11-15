@@ -10,8 +10,8 @@ import (
 )
 
 var (
-	ErrUseMkDirToCreateBucket = errors.New("Create a directory to create a bucket")
-	ErrMustOpenForReading     = errors.New("Must open for reading results")
+	ErrUseMkDirToCreateBucket = errors.New("create a directory to create a bucket")
+	ErrMustOpenForReading     = errors.New("must open for reading results")
 )
 
 func mapAwsErrToNinep(err error) error {

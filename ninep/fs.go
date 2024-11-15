@@ -219,6 +219,9 @@ func Delete(ctx context.Context, fs FileSystem, path string, m Mode) error {
 //
 // Without a custom implementation, the default behavior will recursively call
 // Stat for each directory in the path and then traverse the directory.
+//
+// Unlike cd, Walk works with non-directory files, as its a fast way to check if
+// a file exists in a given path.
 type WalkableFileSystem interface {
 	FileSystem
 	// walk receives a number of directories to traverse (with the last one optionally being a file)
@@ -379,6 +382,29 @@ func (f *SimpleFileInfo) ModTime() time.Time { return f.FIModTime }
 func (f *SimpleFileInfo) IsDir() bool        { return f.FIMode&fs.ModeDir != 0 }
 func (f *SimpleFileInfo) Sys() interface{}   { return f.FISys }
 
+// DirFileInfo returns an fs.FileInfo that looks like a directory
+func DirFileInfo(name string) *SimpleFileInfo {
+	return &SimpleFileInfo{
+		FIName: name,
+		FIMode: fs.ModeDir | 0o777,
+	}
+}
+
+// DevFileInfo returns an fs.FileInfo that looks like device file
+func DevFileInfo(name string) *SimpleFileInfo {
+	return &SimpleFileInfo{
+		FIName: name,
+		FIMode: fs.ModeDevice | 0o666,
+	}
+}
+
+func TempFileInfo(name string) *SimpleFileInfo {
+	return &SimpleFileInfo{
+		FIName: name,
+		FIMode: fs.ModeTemporary | 0o666,
+	}
+}
+
 ////////////////////////////////////////////////
 
 // Simple file implements fs.FileInfo and FileHandle operations
@@ -492,6 +518,19 @@ type RWFileHandle struct {
 	W io.Writer
 }
 
+func DeviceHandle(flag OpenMode) (*RWFileHandle, *io.PipeReader, *io.PipeWriter) {
+	h := &RWFileHandle{}
+	var r *io.PipeReader
+	if flag.IsWriteable() {
+		r, h.W = io.Pipe()
+	}
+	var w *io.PipeWriter
+	if flag.IsReadable() {
+		h.R, w = io.Pipe()
+	}
+	return h, r, w
+}
+
 func (h *RWFileHandle) ReadAt(p []byte, off int64) (n int, err error) {
 	if h.R == nil {
 		return 0, io.EOF
@@ -571,8 +610,8 @@ func (h *MemoryFileHandle) WriteAt(p []byte, off int64) (n int, err error) {
 	if off > int64(len(h.data)) {
 		return 0, io.ErrShortWrite
 	}
-	if int(off) > len(h.data) {
-		h.data = append(h.data, make([]byte, int(off)-len(h.data))...)
+	for off+int64(len(p)) > int64(len(h.data)) {
+		h.data = append(h.data, 0)
 	}
 	n = copy(h.data[off:], p)
 	if h.onWrite != nil {

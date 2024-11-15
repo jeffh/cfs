@@ -14,9 +14,11 @@ import (
 	"iter"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -32,13 +34,21 @@ import (
 var mx = ninep.NewMux().
 	Define().Path("/").As("root").
 	Define().Path("/ctl").As("ctl").
-	Define().Path("/buckets").As("buckets").
-	Define().Path("/buckets/{bucket}").As("bucket").
+	Define().Path("/buckets").TrailSlash().As("buckets").
+	Define().Path("/buckets/{bucket}").TrailSlash().As("bucket").
 	Define().Path("/buckets/{bucket}/ctl").As("bucketCtl").
-	Define().Path("/buckets/{bucket}/objects").As("objects").
-	Define().Path("/buckets/{bucket}/objects/{key*}").As("objectByKey").
-	Define().Path("/buckets/{bucket}/metadata").As("metadata").
-	Define().Path("/buckets/{bucket}/metadata/{key*}").As("metadataByKey")
+	Define().Path("/buckets/{bucket}/objects").TrailSlash().As("objects").
+	Define().Path("/buckets/{bucket}/objects/{key*}").Attr("dir", "objects").As("objectByKey").
+	Define().Path("/buckets/{bucket}/metadata").TrailSlash().As("metadata").
+	Define().Path("/buckets/{bucket}/metadata/{key*}").Attr("dir", "metadata").As("metadataByKey").
+	Define().Path("/buckets/{bucket}/sign").TrailSlash().As("sign").
+	Define().Path("/buckets/{bucket}/sign/expires").As("signExpires").
+	Define().Path("/buckets/{bucket}/sign/download_url").TrailSlash().As("signDownload").
+	Define().Path("/buckets/{bucket}/sign/download_url/{key*}").As("signDownloadByKey").
+	Define().Path("/buckets/{bucket}/sign/upload").TrailSlash().As("signUpload").
+	Define().Path("/buckets/{bucket}/sign/upload/key").As("signUploadKey").
+	Define().Path("/buckets/{bucket}/sign/upload/url").As("signUploadUrl").
+	Define().Path("/buckets/{bucket}/acl").As("bucketAcl")
 
 func stringPtrOrNil(s string) *string {
 	if s == "" {
@@ -92,6 +102,10 @@ type fsys struct {
 	logger   *slog.Logger
 	listKeys bool // set to true to list keys in directory hierarchies instead of all keys matching prefix
 
+	mu        sync.Mutex
+	expires   map[string]time.Duration
+	uploadKey map[string]string
+
 	bucketCache *expirable.LRU[string, fs.FileInfo]
 	objCache    *expirable.LRU[string, fs.FileInfo]
 }
@@ -122,9 +136,27 @@ func newFs(s3c *S3Ctx, opts fsysOptions) *fsys {
 		s3c:         s3c,
 		logger:      opts.Logger,
 		listKeys:    opts.ListKeys,
+		expires:     make(map[string]time.Duration),
+		uploadKey:   make(map[string]string),
 		bucketCache: expirable.NewLRU[string, fs.FileInfo](opts.BucketCacheSize, nil, opts.BucketTTL),
 		objCache:    expirable.NewLRU[string, fs.FileInfo](opts.ObjectCacheSize, nil, opts.ObjectTTL),
 	}
+}
+
+func (f *fsys) getUploadKey(bucket string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.uploadKey[bucket]
+}
+
+func (f *fsys) getSigningExpiry(bucket string) time.Duration {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	d, ok := f.expires[bucket]
+	if !ok {
+		return 15 * time.Minute
+	}
+	return d
 }
 
 func (f *fsys) objectCacheKey(bucket, key string) string {
@@ -205,7 +237,7 @@ func (f *fsys) CreateFile(ctx context.Context, path string, flag ninep.OpenMode,
 	}
 	switch res.Id {
 	case "bucket":
-		return nil, fmt.Errorf("use MakeDir to create buckets")
+		return nil, ErrUseMkDirToCreateBucket
 	case "objectByKey":
 		bucket := res.Vars[0]
 		key := res.Vars[1]
@@ -255,7 +287,7 @@ func (f *fsys) CreateFile(ctx context.Context, path string, flag ninep.OpenMode,
 		}
 		return h, nil
 	default:
-		return nil, ninep.ErrWriteNotAllowed
+		return nil, fs.ErrPermission
 	}
 }
 
@@ -267,7 +299,19 @@ func (f *fsys) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (
 	switch res.Id {
 	case "bucketCtl":
 		bucket := res.Vars[0]
+		return f.bucketCtlFile(ctx, bucket, flag)
+	case "bucketAcl":
+		bucket := res.Vars[0]
 		return f.bucketAclFile(ctx, bucket, flag)
+	case "signExpires":
+		bucket := res.Vars[0]
+		return f.signExpiresFile(ctx, bucket, flag)
+	case "signUploadKey":
+		bucket := res.Vars[0]
+		return f.signUploadKeyFile(bucket, flag)
+	case "signUploadUrl":
+		bucket := res.Vars[0]
+		return f.signUploadUrlFile(bucket, flag)
 	case "objectByKey":
 		bucket := res.Vars[0]
 		key := res.Vars[1]
@@ -378,6 +422,25 @@ func (f *fsys) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (
 			h.W = w
 		}
 		return h, nil
+	case "signDownloadByKey":
+		bucket := res.Vars[0]
+		key := res.Vars[1]
+		h, r, w := ninep.DeviceHandle(flag)
+		if r != nil {
+			r.Close()
+		}
+		if w != nil {
+			go func() {
+				url, err := f.signedDownloadURL(bucket, key, f.getSigningExpiry(bucket))
+				if err != nil {
+					w.CloseWithError(err)
+				} else {
+					_, err = io.WriteString(w, url)
+					w.CloseWithError(err)
+				}
+			}()
+		}
+		return h, nil
 	default:
 		return nil, fs.ErrPermission
 	}
@@ -391,17 +454,11 @@ func (f *fsys) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, 
 	switch res.Id {
 	case "root":
 		infos := [...]fs.FileInfo{
-			&ninep.SimpleFileInfo{
-				FIName: "buckets",
-				FIMode: fs.ModeDir | 0777,
-			},
-			&ninep.SimpleFileInfo{
-				FIName: "ctl",
-				FIMode: fs.ModeDevice | 0666,
-			},
+			ninep.DirFileInfo("buckets"),
+			ninep.DevFileInfo("ctl"),
 		}
 		return ninep.FileInfoSliceIterator(infos[:])
-	case "ctl", "bucketCtl":
+	case "ctl", "bucketCtl", "signUploadKey", "signUploadUrl":
 		return ninep.FileInfoErrorIterator(ninep.ErrListingOnNonDir)
 	case "buckets":
 		return f.listBuckets(ctx)
@@ -411,28 +468,37 @@ func (f *fsys) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, 
 			return ninep.FileInfoErrorIterator(err)
 		}
 		infos := [...]fs.FileInfo{
-			&ninep.SimpleFileInfo{
-				FIName: "ctl",
-				FIMode: fs.ModeDevice | 0666,
-			},
-			&ninep.SimpleFileInfo{
-				FIName: "metadata",
-				FIMode: fs.ModeDir | 0o777,
-			},
-			&ninep.SimpleFileInfo{
-				FIName: "objects",
-				FIMode: fs.ModeDir | 0o777,
-			},
+			ninep.DevFileInfo("acl"),
+			ninep.DevFileInfo("ctl"),
+			ninep.DirFileInfo("metadata"),
+			ninep.DirFileInfo("objects"),
+			ninep.DirFileInfo("sign"),
 		}
 		return ninep.FileInfoSliceIterator(infos[:])
-	case "objects", "metadata":
+	case "sign":
+		infos := [...]fs.FileInfo{
+			ninep.DirFileInfo("download_url"),
+			ninep.DirFileInfo("upload"),
+			ninep.TempFileInfo("expires"),
+		}
+		return ninep.FileInfoSliceIterator(infos[:])
+	case "objects":
 		bucket := res.Vars[0]
 		return f.listObjects(ctx, bucket, "", 0)
+	case "metadata", "signDownload":
+		bucket := res.Vars[0]
+		return f.listObjects(ctx, bucket, "", fs.ModeDevice)
+	case "signUpload":
+		infos := [...]fs.FileInfo{
+			ninep.TempFileInfo("key"),
+			ninep.DevFileInfo("url"),
+		}
+		return ninep.FileInfoSliceIterator(infos[:])
 	case "objectByKey":
 		bucket := res.Vars[0]
 		prefix := res.Vars[1]
 		return f.listObjects(ctx, bucket, prefix, 0)
-	case "metadataByKey":
+	case "metadataByKey", "signDownloadByKey":
 		bucket := res.Vars[0]
 		prefix := res.Vars[1]
 		return f.listObjects(ctx, bucket, prefix, fs.ModeDevice)
@@ -448,51 +514,33 @@ func (f *fsys) Stat(ctx context.Context, path string) (fs.FileInfo, error) {
 	}
 	switch res.Id {
 	case "root":
-		return &ninep.SimpleFileInfo{
-			FIName: "/",
-			FIMode: fs.ModeDir | 0o777,
-		}, nil
+		return ninep.DirFileInfo("."), nil
 	case "ctl":
-		return &ninep.SimpleFileInfo{
-			FIName: "ctl",
-			FIMode: fs.ModeDevice | 0o666,
-		}, nil
+		return ninep.DevFileInfo("ctl"), nil
 	case "buckets":
-		return &ninep.SimpleFileInfo{
-			FIName: "buckets",
-			FIMode: fs.ModeDir | 0o777,
-		}, nil
+		return ninep.DirFileInfo("buckets"), nil
 	case "bucket":
 		bucket := res.Vars[0]
 		return f.getBucketInfo(ctx, bucket)
-	case "bucketCtl":
+	case "signExpires", "signUploadKey":
 		bucket := res.Vars[0]
 		if _, err := f.getBucketInfo(ctx, bucket); err != nil {
 			return nil, err
 		}
-		return &ninep.SimpleFileInfo{
-			FIName: "ctl",
-			FIMode: fs.ModeDevice | 0o666,
-		}, nil
-	case "objects":
+		return ninep.TempFileInfo(filepath.Base(path)), nil
+	case "bucketCtl", "bucketAcl", "signUploadUrl":
 		bucket := res.Vars[0]
 		if _, err := f.getBucketInfo(ctx, bucket); err != nil {
 			return nil, err
 		}
-		return &ninep.SimpleFileInfo{
-			FIName: "objects",
-			FIMode: fs.ModeDir | 0o777,
-		}, nil
-	case "metadata":
+		return ninep.DevFileInfo(filepath.Base(path)), nil
+	case "objects", "metadata", "sign", "signDownload", "signUpload":
 		bucket := res.Vars[0]
 		if _, err := f.getBucketInfo(ctx, bucket); err != nil {
 			return nil, err
 		}
-		return &ninep.SimpleFileInfo{
-			FIName: "metadata",
-			FIMode: fs.ModeDir | 0o777,
-		}, nil
-	case "objectByKey", "metadataByKey":
+		return ninep.DirFileInfo(filepath.Base(path)), nil
+	case "objectByKey", "metadataByKey", "signDownloadByKey":
 		bucket := res.Vars[0]
 		key := res.Vars[1]
 		if _, err := f.getBucketInfo(ctx, bucket); err != nil {
@@ -523,12 +571,9 @@ func (f *fsys) Stat(ctx context.Context, path string) (fs.FileInfo, error) {
 				}
 			}
 			if object == nil {
-				info = &ninep.SimpleFileInfo{
-					FIName: key,
-					FIMode: 0o777 | fs.ModeDir,
-				}
+				info = ninep.DirFileInfo(key)
 			} else {
-				info = objectInfo(len(key), object, key)
+				info = objectInfo(filepath.Base(key), object, key)
 			}
 			f.setCachedObject(bucket, key, info)
 		}
@@ -547,7 +592,7 @@ func (f *fsys) WriteStat(ctx context.Context, path string, s ninep.Stat) error {
 		return fs.ErrNotExist
 	}
 	switch res.Id {
-	case "root", "buckets", "objects", "metadata", "ctl", "bucketCtl":
+	case "root", "buckets", "objects", "metadata", "ctl", "bucketCtl", "sign", "signExpires", "signDownload", "signUpload", "signUploadKey", "signUploadUrl":
 		return fs.ErrPermission
 	case "objectByKey":
 		bucket := res.Vars[0]
@@ -557,12 +602,7 @@ func (f *fsys) WriteStat(ctx context.Context, path string, s ninep.Stat) error {
 		}
 
 		return ninep.ErrUnsupported
-	case "metadataByKey":
-		bucket := res.Vars[0]
-		// key := res.Vars[1]
-		if _, err := f.getBucketInfo(ctx, bucket); err != nil {
-			return err
-		}
+	case "metadataByKey", "signDownloadByKey":
 		return ninep.ErrUnsupported
 	default:
 		return fs.ErrNotExist
@@ -575,7 +615,7 @@ func (f *fsys) Delete(ctx context.Context, path string) error {
 		return fs.ErrNotExist
 	}
 	switch res.Id {
-	case "root", "buckets", "objects", "metadata", "ctl", "bucketCtl":
+	case "root", "buckets", "objects", "metadata", "ctl", "bucketCtl", "signExpires", "signDownload", "signUpload", "signUploadKey", "signUploadUrl":
 		return fs.ErrPermission
 	case "bucket":
 		bucket := res.Vars[0]
@@ -587,6 +627,10 @@ func (f *fsys) Delete(ctx context.Context, path string) error {
 			return f.deleteObjectsByPrefix(ctx, bucket, key)
 		}
 		return f.deleteObject(ctx, bucket, key)
+	case "metadataByKey":
+		return ninep.ErrUnsupported
+	case "signDownloadByKey":
+		return ninep.ErrUnsupported
 	default:
 		return fs.ErrNotExist
 	}
@@ -602,90 +646,183 @@ func (f *fsys) Walk(ctx context.Context, parts []string) ([]fs.FileInfo, error) 
 		return nil, fs.ErrNotExist
 	}
 	infos := make([]fs.FileInfo, 0, len(parts))
-
-	addDir := func(out []fs.FileInfo, name string, mode fs.FileMode) []fs.FileInfo {
-		return append(out, &ninep.SimpleFileInfo{
-			FIName: name,
-			FIMode: mode,
-		})
-	}
-
-	infos = addDir(infos, ".", fs.ModeDir|0o777)
+	infos = append(infos, ninep.DirFileInfo("."))
 
 	switch res.Id {
 	case "root":
-		return infos, nil
 	case "ctl":
-		return infos, ninep.ErrListingOnNonDir
+		infos = append(infos, ninep.DevFileInfo("ctl"))
 	case "buckets":
-		infos = addDir(infos, "buckets", fs.ModeDir|0o777)
-		return infos, nil
+		infos = append(infos, ninep.DirFileInfo("buckets"))
 	case "bucket":
-		infos = addDir(infos, "buckets", fs.ModeDevice|0o666)
+		infos = append(infos, ninep.DirFileInfo("buckets"))
 		bucket := res.Vars[0]
 		if info, err := f.getBucketInfo(ctx, bucket); err != nil {
 			return nil, err
 		} else {
 			infos = append(infos, info)
 		}
-		return infos, nil
+	case "bucketAcl":
+		infos = append(infos, ninep.DirFileInfo("buckets"))
+		bucket := res.Vars[0]
+		if info, err := f.getBucketInfo(ctx, bucket); err != nil {
+			return nil, err
+		} else {
+			infos = append(infos, info)
+		}
+		infos = append(infos, ninep.DevFileInfo("acl"))
 	case "bucketCtl":
-		infos = addDir(infos, "buckets", fs.ModeDevice|0o666)
+		infos = append(infos, ninep.DirFileInfo("buckets"))
 		bucket := res.Vars[0]
 		if info, err := f.getBucketInfo(ctx, bucket); err != nil {
 			return nil, err
 		} else {
 			infos = append(infos, info)
 		}
-		return infos, ninep.ErrListingOnNonDir
+		infos = append(infos, ninep.DevFileInfo("ctl"))
 	case "objects":
-		infos = addDir(infos, "buckets", fs.ModeDevice|0o666)
+		infos = append(infos, ninep.DirFileInfo("buckets"))
 		bucket := res.Vars[0]
 		if info, err := f.getBucketInfo(ctx, bucket); err != nil {
 			return nil, err
 		} else {
 			infos = append(infos, info)
 		}
-		infos = addDir(infos, "objects", fs.ModeDir|0o777)
-		return infos, nil
+		infos = append(infos, ninep.DirFileInfo("objects"))
 	case "metadata":
-		infos = addDir(infos, "buckets", fs.ModeDevice|0o666)
+		infos = append(infos, ninep.DirFileInfo("buckets"))
 		bucket := res.Vars[0]
 		if info, err := f.getBucketInfo(ctx, bucket); err != nil {
 			return nil, err
 		} else {
 			infos = append(infos, info)
 		}
-		infos = addDir(infos, "metadata", fs.ModeDir|0o777)
-		return infos, nil
+		infos = append(infos, ninep.DirFileInfo("metadata"))
+	case "sign":
+		infos = append(infos, ninep.DirFileInfo("buckets"))
+		bucket := res.Vars[0]
+		if info, err := f.getBucketInfo(ctx, bucket); err != nil {
+			return nil, err
+		} else {
+			infos = append(infos, info)
+		}
+		infos = append(infos, ninep.DirFileInfo("sign"))
+	case "signExpires":
+		infos = append(infos, ninep.DirFileInfo("buckets"))
+		bucket := res.Vars[0]
+		if info, err := f.getBucketInfo(ctx, bucket); err != nil {
+			return nil, err
+		} else {
+			infos = append(infos, info)
+		}
+		infos = append(infos, ninep.DirFileInfo("sign"))
+		infos = append(infos, ninep.DevFileInfo("expires"))
+	case "signDownload":
+		infos = append(infos, ninep.DirFileInfo("buckets"))
+		bucket := res.Vars[0]
+		if info, err := f.getBucketInfo(ctx, bucket); err != nil {
+			return nil, err
+		} else {
+			infos = append(infos, info)
+		}
+		infos = append(infos, ninep.DirFileInfo("sign"))
+		infos = append(infos, ninep.DirFileInfo("download_url"))
+	case "signUpload":
+		infos = append(infos, ninep.DirFileInfo("buckets"))
+		bucket := res.Vars[0]
+		if info, err := f.getBucketInfo(ctx, bucket); err != nil {
+			return nil, err
+		} else {
+			infos = append(infos, info)
+		}
+		infos = append(infos, ninep.DirFileInfo("sign"))
+		infos = append(infos, ninep.DirFileInfo("upload"))
+	case "signUploadKey":
+		infos = append(infos, ninep.DirFileInfo("buckets"))
+		bucket := res.Vars[0]
+		if info, err := f.getBucketInfo(ctx, bucket); err != nil {
+			return nil, err
+		} else {
+			infos = append(infos, info)
+		}
+		infos = append(infos, ninep.DirFileInfo("sign"))
+		infos = append(infos, ninep.DirFileInfo("upload"))
+		infos = append(infos, ninep.TempFileInfo("key"))
+	case "signUploadUrl":
+		infos = append(infos, ninep.DirFileInfo("buckets"))
+		bucket := res.Vars[0]
+		if info, err := f.getBucketInfo(ctx, bucket); err != nil {
+			return nil, err
+		} else {
+			infos = append(infos, info)
+		}
+		infos = append(infos, ninep.DirFileInfo("sign"))
+		infos = append(infos, ninep.DirFileInfo("upload"))
+		infos = append(infos, ninep.DevFileInfo("url"))
 	case "objectByKey", "metadataByKey":
 		bucket := res.Vars[0]
 		key := res.Vars[1]
-		infos = addDir(infos, "buckets", fs.ModeDevice|0o666)
+		infos = append(infos, ninep.DirFileInfo("buckets"))
 		if info, err := f.getBucketInfo(ctx, bucket); err != nil {
 			return nil, err
 		} else {
 			infos = append(infos, info)
 		}
 		var em fs.FileMode
-		if res.Id == "metadataByKey" {
-			infos = addDir(infos, "metadata", fs.ModeDir|0o777)
+		infos = append(infos, ninep.DirFileInfo(res.Attrs["dir"]))
+		if res.Id != "objectByKey" {
 			em = fs.ModeDevice
-		} else {
-			infos = addDir(infos, "objects", fs.ModeDir|0o777)
 		}
 
+		found := false
 		for info, err := range f.listObjects(ctx, bucket, key, em) {
 			if err != nil {
 				return nil, err
 			}
 			infos = append(infos, info)
-			return infos, nil
+			found = true
+			break
 		}
-		return infos, fs.ErrNotExist
+		if !found {
+			return infos, fs.ErrNotExist
+		}
+	case "signDownloadByKey":
+		bucket := res.Vars[0]
+		key := res.Vars[1]
+		infos = append(infos, ninep.DirFileInfo("buckets"))
+		if info, err := f.getBucketInfo(ctx, bucket); err != nil {
+			return nil, err
+		} else {
+			infos = append(infos, info)
+		}
+		infos = append(infos, ninep.DirFileInfo("sign"))
+		infos = append(infos, ninep.DirFileInfo("download_url"))
+
+		found := false
+		for info, err := range f.listObjects(ctx, bucket, key, fs.ModeDevice) {
+			if err != nil {
+				return nil, err
+			}
+			infos = append(infos, info)
+			found = true
+			break
+		}
+		if !found {
+			return infos, fs.ErrNotExist
+		}
 	default:
 		return nil, fs.ErrNotExist
 	}
+	if parts[len(parts)-1] == "." && len(parts) > len(infos) && len(infos) > 0 {
+		infos = append(infos, infos[len(infos)-1])
+	}
+	// for i, info := range infos {
+	// 	fmt.Printf("INFO: %d %q\n", i, info.Name())
+	// }
+	// for i, part := range parts {
+	// 	fmt.Printf("PART: %d %q\n", i, part)
+	// }
+	return infos, nil
 }
 
 func (f *fsys) deleteBucket(ctx context.Context, bucket string) error {
@@ -850,7 +987,7 @@ func (f *fsys) listObjects(ctx context.Context, bucket, prefix string, em fs.Fil
 					if !strings.HasPrefix(key, "/") {
 						key = "/" + key
 					}
-					info := objectInfo(len(prefix), obj, key)
+					info := objectInfo(filepath.Base(key), obj, key)
 					f.setCachedObject(bucket, key, info)
 					if em != 0 {
 						info = ninep.FileInfoWithMode(info, info.Mode()|em)
@@ -887,21 +1024,25 @@ func (f *fsys) listObjects(ctx context.Context, bucket, prefix string, em fs.Fil
 						continue
 					}
 					key := *obj.Key
-					if !strings.HasPrefix(key, "/") {
-						key = "/" + key
+					// if !strings.HasPrefix(key, "/") {
+					// 	key = "/" + key
+					// }
+					parts := ninep.PathSplit(key[len(prefix):])
+					if len(parts) >= 1 && parts[0] == "" {
+						parts = parts[1:]
 					}
-					parts := ninep.PathSplit(key[len(prefix)+1:])
-					var dirname string
-					if len(parts) > 2 {
-						dirname = parts[1]
-						if _, ok := seen[dirname]; ok {
-							continue
+					switch len(parts) {
+					case 0: // complete match
+						prefixSize := len(prefix)
+						if prefixSize == len(key) {
+							idx := strings.LastIndex(key, "/")
+							if idx != -1 {
+								prefixSize = idx
+							} else {
+								prefixSize = 0
+							}
 						}
-					} else if len(parts) <= 1 {
-						continue
-					}
-					if len(parts) == 2 {
-						info := objectInfo(len(prefix), obj, key)
+						info := objectInfo(key[prefixSize:], obj, key)
 						f.setCachedObject(bucket, key, info)
 						if em != 0 {
 							info = ninep.FileInfoWithMode(info, info.Mode()|em)
@@ -910,17 +1051,28 @@ func (f *fsys) listObjects(ctx context.Context, bucket, prefix string, em fs.Fil
 							return
 						}
 						seen[key] = struct{}{}
-					} else {
-						var info fs.FileInfo = &ninep.SimpleFileInfo{
-							FIName:    dirname,
-							FIMode:    0777 | fs.ModeDir,
-							FIModTime: *obj.LastModified,
-							FISize:    *obj.Size,
-						}
+					case 1: // object is a direct child of the prefix
+						info := objectInfo(parts[0], obj, key)
 						f.setCachedObject(bucket, key, info)
 						if em != 0 {
 							info = ninep.FileInfoWithMode(info, info.Mode()|em)
 						}
+						if !yield(info, nil) {
+							return
+						}
+						seen[key] = struct{}{}
+
+					default: // more sub directories needed for prefix to reach the object
+						dirname := parts[0]
+						if _, ok := seen[dirname]; ok {
+							continue
+						}
+
+						var info fs.FileInfo = &ninep.SimpleFileInfo{
+							FIName: dirname,
+							FIMode: 0777 | fs.ModeDir,
+						}
+						f.setCachedObject(bucket, key, info)
 						if !yield(info, nil) {
 							return
 						}
@@ -989,29 +1141,51 @@ func writePairs(w io.Writer, pairs map[string]any) error {
 	for k := range pairs {
 		keys = append(keys, k)
 	}
-	sort.Sort(sort.StringSlice(keys))
+	sort.Strings(keys)
 	for _, k := range keys {
-		switch v := pairs[k].(type) {
+		v := pairs[k]
+		if v == nil {
+			continue
+		}
+		switch v := v.(type) {
 		case *string:
+			if v == nil {
+				continue
+			}
 			if _, err := fmt.Fprintf(w, "%s\n", kvp.KeyPair(k, *v)); err != nil {
 				return err
 			}
 		case *int64:
+			if v == nil {
+				continue
+			}
 			if _, err := fmt.Fprintf(w, "%s\n", kvp.KeyPair(k, strconv.FormatInt(*v, 10))); err != nil {
 				return err
 			}
 		case *bool:
+			if v == nil {
+				continue
+			}
 			if _, err := fmt.Fprintf(w, "%s\n", kvp.KeyPair(k, strconv.FormatBool(*v))); err != nil {
 				return err
 			}
 		case *time.Time:
+			if v == nil {
+				continue
+			}
 			if _, err := fmt.Fprintf(w, "%s\n", kvp.KeyPair(k, v.Format(time.RFC3339))); err != nil {
 				return err
 			}
 		case *map[string]*string:
+			if v == nil {
+				continue
+			}
 			prefix := k
 			m := *v
 			for k, v := range m {
+				if v == nil {
+					continue
+				}
 				if _, err := fmt.Fprintf(w, "%s\n", kvp.KeyPair(fmt.Sprintf("%s-%s", prefix, k), *v)); err != nil {
 					return err
 				}
@@ -1035,60 +1209,107 @@ func isNoSuchBucket(err error) bool {
 	return awsErrCode(err) == s3.ErrCodeNoSuchBucket
 }
 
-func (f *fsys) bucketAclFile(ctx context.Context, bucket string, flag ninep.OpenMode) (ninep.FileHandle, error) {
-	h := &ninep.RWFileHandle{}
-	if flag.IsReadable() {
-		r, w := io.Pipe()
-		go func() {
-			defer r.Close()
-			scanner := bufio.NewScanner(r)
-			for scanner.Scan() {
-				line := scanner.Text()
-				kv := kvp.MustParseKeyValues(line)
-				input := s3.PutBucketAclInput{
-					Bucket: aws.String(bucket),
+func (f *fsys) bucketCtlFile(ctx context.Context, bucket string, flag ninep.OpenMode) (ninep.FileHandle, error) {
+	h, r, w := ninep.DeviceHandle(flag)
+	if r == nil || w == nil {
+		r.Close()
+		w.Close()
+		return nil, fmt.Errorf("device handle must be read/write: %v", flag)
+	}
+	go func() {
+		defer r.Close()
+		scanner := bufio.NewScanner(r)
+		help := [][2]string{
+			{"help", "displays this help"},
+			{"sign_upload_url", "get a signed upload URL for an object"},
+		}
+		for scanner.Scan() {
+			line := scanner.Text()
+			kv, err := kvp.ParseKeyValues(line)
+			if err != nil {
+				fmt.Fprintf(w, "ok=false error=parse_error reason=%q\n", err.Error())
+				continue
+			}
+			switch kv.GetOne("op") {
+			case "help", "":
+				fmt.Fprintf(w, "HELP\n\nOPERATIONS\n")
+				for _, cmd := range help {
+					fmt.Fprintf(w, "  %s: %s\n", cmd[0], cmd[1])
 				}
-				if acl := kv.GetOne("acl"); acl != "" {
-					input.ACL = aws.String(acl)
-				}
-				if grantFullControl := kv.GetOne("grant_full_control"); grantFullControl != "" {
-					input.GrantFullControl = aws.String(grantFullControl)
-				}
-				if grantRead := kv.GetOne("grant_read"); grantRead != "" {
-					input.GrantRead = aws.String(grantRead)
-				}
-				if grantReadACP := kv.GetOne("grant_read_acp"); grantReadACP != "" {
-					input.GrantReadACP = aws.String(grantReadACP)
-				}
-				if grantWrite := kv.GetOne("grant_write"); grantWrite != "" {
-					input.GrantWrite = aws.String(grantWrite)
-				}
-				if grantWriteACP := kv.GetOne("grant_write_acp"); grantWriteACP != "" {
-					input.GrantWriteACP = aws.String(grantWriteACP)
-				}
-
-				_, err := f.s3c.Client.PutBucketAcl(&input)
-				if f.logger != nil {
-					f.logger.InfoContext(ctx, "S3.PutBucketAcl", slog.String("bucket", bucket), slog.Any("err", err))
-				}
-				if err != nil {
-					return
+			case "sign_upload_url":
+				if key := kv.GetOne("key"); key != "" {
+					d := interpretTimeKeyValues(kv)
+					if d <= 0 {
+						d = f.getSigningExpiry(bucket)
+					}
+					url, err := f.signedUploadURL(bucket, key, d)
+					if err != nil {
+						fmt.Fprintf(w, "ok=false error=s3_error reason=%q\n", err.Error())
+						continue
+					}
+					fmt.Fprintf(w, "url=%q\n", url)
+				} else {
+					fmt.Fprintf(w, "ok=false error=missing_key reason=%q\n", "key is required")
 				}
 			}
+		}
+	}()
+	return h, nil
+}
+
+func (f *fsys) bucketAclFile(ctx context.Context, bucket string, flag ninep.OpenMode) (ninep.FileHandle, error) {
+	h, r, w := ninep.DeviceHandle(flag)
+	if r != nil {
+		go func() {
+			data, err := io.ReadAll(r)
+			if err != nil {
+				r.CloseWithError(err)
+				return
+			}
+			kv, err := kvp.ParseKeyValues(string(data))
+			if err != nil {
+				r.CloseWithError(err)
+				return
+			}
+			input := s3.PutBucketAclInput{
+				Bucket: aws.String(bucket),
+			}
+			if acl := kv.GetOne("acl"); acl != "" {
+				input.ACL = aws.String(acl)
+			}
+			if grantFullControl := kv.GetOne("grant_full_control"); grantFullControl != "" {
+				input.GrantFullControl = aws.String(grantFullControl)
+			}
+			if grantRead := kv.GetOne("grant_read"); grantRead != "" {
+				input.GrantRead = aws.String(grantRead)
+			}
+			if grantReadACP := kv.GetOne("grant_read_acp"); grantReadACP != "" {
+				input.GrantReadACP = aws.String(grantReadACP)
+			}
+			if grantWrite := kv.GetOne("grant_write"); grantWrite != "" {
+				input.GrantWrite = aws.String(grantWrite)
+			}
+			if grantWriteACP := kv.GetOne("grant_write_acp"); grantWriteACP != "" {
+				input.GrantWriteACP = aws.String(grantWriteACP)
+			}
+			_, err = f.s3c.Client.PutBucketAcl(&input)
+			if f.logger != nil {
+				f.logger.InfoContext(ctx, "S3.PutBucketAcl", slog.String("bucket", bucket), slog.Any("err", err))
+			}
+			r.CloseWithError(mapAwsErrToNinep(err))
 		}()
-		h.W = w
 	}
-	if flag.IsWriteable() {
-		input := s3.GetBucketAclInput{
-			Bucket: aws.String(bucket),
-		}
-		out, err := f.s3c.Client.GetBucketAcl(&input)
-		if err != nil {
-			return nil, mapAwsErrToNinep(err)
-		}
-		r, w := io.Pipe()
+	if w != nil {
 		go func() {
 			defer w.Close()
+			input := s3.GetBucketAclInput{
+				Bucket: aws.String(bucket),
+			}
+			out, err := f.s3c.Client.GetBucketAcl(&input)
+			if err != nil {
+				fmt.Fprintf(w, "ok=false error=s3_error reason=%q\n", err.Error())
+				return
+			}
 			for _, grant := range out.Grants {
 				pairs := [][2]string{}
 				pairs = append(pairs, [2]string{"permission", aws.StringValue(grant.Permission)})
@@ -1103,7 +1324,86 @@ func (f *fsys) bucketAclFile(ctx context.Context, bucket string, flag ninep.Open
 				fmt.Fprintf(w, "%s\n", kvp.NonEmptyKeyPairs(pairs))
 			}
 		}()
-		h.R = r
 	}
 	return h, nil
+}
+
+func (f *fsys) signedDownloadURL(bucket, key string, expires time.Duration) (string, error) {
+	req, _ := f.s3c.Client.GetObjectRequest(&s3.GetObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	})
+	url, err := req.Presign(expires)
+	if err != nil {
+		return "", err
+	}
+	return url, nil
+}
+
+func (f *fsys) signedUploadURL(bucket, key string, expires time.Duration) (string, error) {
+	req, _ := f.s3c.Client.PutObjectRequest(&s3.PutObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	})
+	url, err := req.Presign(expires)
+	if err != nil {
+		return "", err
+	}
+	return url, nil
+}
+
+func (f *fsys) signExpiresFile(ctx context.Context, bucket string, flag ninep.OpenMode) (ninep.FileHandle, error) {
+	f.mu.Lock()
+	d, ok := f.expires[bucket]
+	f.mu.Unlock()
+	if !ok {
+		d = 15 * time.Minute
+	}
+	onFlush := func(p []byte) error {
+		kvp, err := kvp.ParseKeyValues(string(p))
+		if err != nil {
+			return err
+		}
+		d := interpretTimeKeyValues(kvp)
+		if d <= 0 {
+			d = 15 * time.Minute
+		}
+		f.mu.Lock()
+		f.expires[bucket] = d
+		f.mu.Unlock()
+		return nil
+	}
+	h := ninep.NewMemoryFileHandle([]byte(stringDuration(d)), nil, onFlush)
+	return h, nil
+}
+
+func (f *fsys) signUploadKeyFile(bucket string, flag ninep.OpenMode) (ninep.FileHandle, error) {
+	f.mu.Lock()
+	d := f.uploadKey[bucket]
+	f.mu.Unlock()
+	onFlush := func(p []byte) error {
+		str := string(p)
+		f.mu.Lock()
+		f.uploadKey[bucket] = str
+		f.mu.Unlock()
+		return nil
+	}
+	h := ninep.NewMemoryFileHandle([]byte(d), nil, onFlush)
+	return h, nil
+}
+
+func (f *fsys) signUploadUrlFile(bucket string, flag ninep.OpenMode) (ninep.FileHandle, error) {
+	if flag.IsWriteable() {
+		return nil, fmt.Errorf("signUploadUrlFile is not writeable")
+	}
+	key := f.getUploadKey(bucket)
+	if key == "" {
+		return nil, fmt.Errorf("no upload key for bucket %q", bucket)
+	}
+	d := f.getSigningExpiry(bucket)
+	url, err := f.signedUploadURL(bucket, key, d)
+	if err != nil {
+		return nil, err
+	}
+	return ninep.NewMemoryFileHandle([]byte(url), nil, nil), nil
 }

@@ -13,10 +13,9 @@ func keysMatch(objKey *string, wantedKey string) bool {
 	return objKey != nil && (*objKey == wantedKey || *objKey == wantedKey+"/")
 }
 
-func objectInfo(nameOffset int, object *s3.Object, fallbackKey string) fs.FileInfo {
+func objectInfo(name string, object *s3.Object, fallbackKey string) fs.FileInfo {
 	var (
 		uid     string
-		name    string
 		key     string
 		modTime time.Time
 		size    int64
@@ -35,10 +34,9 @@ func objectInfo(nameOffset int, object *s3.Object, fallbackKey string) fs.FileIn
 	} else {
 		key = fallbackKey
 	}
-	name = key[nameOffset:]
 	name = strings.Trim(name, "/")
 	if name == "" {
-		name = "/"
+		name = "."
 	}
 
 	// From Docs: https://docs.aws.amazon.com/AmazonS3/latest/user-guide/using-folders.html

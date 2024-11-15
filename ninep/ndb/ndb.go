@@ -86,6 +86,20 @@ func OpenOne(sys ninep.FileSystem, filepath string) (*Ndb, error) {
 	return db, nil
 }
 
+func ParseOne(p []byte) (*Ndb, error) {
+	db := &Ndb{
+		files: []string{"inline"},
+		data:  [][]byte{p},
+		mods:  []time.Time{{}},
+		sys:   nil,
+	}
+	return db, nil
+}
+
+func ParseOneString(s string) (*Ndb, error) {
+	return ParseOne([]byte(s))
+}
+
 func (n *Ndb) readFile(fileToRead string, lastSeen time.Time) ([]byte, time.Time, error) {
 	ctx := context.Background()
 	fi, err := n.sys.Stat(ctx, fileToRead)
@@ -111,6 +125,9 @@ func (n *Ndb) readFile(fileToRead string, lastSeen time.Time) ([]byte, time.Time
 }
 
 func (n *Ndb) readFiles(skip int) (int, error) {
+	if n.sys == nil {
+		return 0, nil
+	}
 	count := 0
 	for i, fileToRead := range n.files[skip:] {
 		idx := i + skip

@@ -14,9 +14,11 @@ import (
 
 func main() {
 	var (
-		mode int
+		mode           int
+		readAfterWrite bool
 	)
 	flag.IntVar(&mode, "mode", 0644, "The mode to set the file that gets created")
+	flag.BoolVar(&readAfterWrite, "res", false, "Read the file after writing it (for device files)")
 
 	flag.Usage = func() {
 		w := flag.CommandLine.Output()
@@ -37,6 +39,9 @@ func main() {
 		path := mnt.Prefix
 		_, err = mnt.FS.Stat(ctx, path)
 		flags := ninep.OpenMode(ninep.OWRITE)
+		if readAfterWrite {
+			flags = ninep.OpenMode(ninep.ORDWR)
+		}
 		flags |= ninep.OTRUNC
 
 		if os.IsNotExist(err) {
@@ -53,6 +58,14 @@ func main() {
 		_, err = io.Copy(wtr, os.Stdin)
 		if err != nil && err != io.EOF {
 			return err
+		}
+
+		if readAfterWrite {
+			rdr := ninep.Reader(h)
+			_, err = io.Copy(os.Stdout, rdr)
+			if err != nil && err != io.EOF {
+				return err
+			}
 		}
 
 		return nil

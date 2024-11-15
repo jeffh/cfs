@@ -1,6 +1,8 @@
 package s3fs
 
 import (
+	"bytes"
+	"io"
 	"strconv"
 	"time"
 
@@ -18,6 +20,36 @@ func interpretTimeKeyValues(m kvp.Map) time.Duration {
 	total += time.Duration(m.GetOneInt64("day")) * 24 * time.Hour
 	total += time.Duration(m.GetOneInt64("days")) * 24 * time.Hour
 	return total
+}
+
+func writeDuration(w io.Writer, d time.Duration) error {
+	days := int64(d.Hours() / 24)
+	hours := int64(d.Hours()) % 24
+	minutes := int64(d.Minutes()) % 60
+	seconds := int64(d.Seconds()) % 60
+
+	pairs := [][2]string{}
+	if days > 0 {
+		pairs = append(pairs, [2]string{"days", strconv.FormatInt(days, 10)})
+	}
+	if hours > 0 {
+		pairs = append(pairs, [2]string{"hours", strconv.FormatInt(hours, 10)})
+	}
+	if minutes > 0 {
+		pairs = append(pairs, [2]string{"minutes", strconv.FormatInt(minutes, 10)})
+	}
+	if seconds > 0 || len(pairs) == 0 {
+		pairs = append(pairs, [2]string{"seconds", strconv.FormatInt(seconds, 10)})
+	}
+
+	_, err := io.WriteString(w, kvp.NonEmptyKeyPairs(pairs))
+	return err
+}
+
+func stringDuration(d time.Duration) string {
+	var buf bytes.Buffer
+	writeDuration(&buf, d)
+	return buf.String()
 }
 
 func stringPtrIfNotEmpty(s string) *string {
