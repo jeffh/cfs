@@ -120,7 +120,7 @@ func newFs(s3c *S3Ctx, opts fsysOptions) *fsys {
 	}
 	return &fsys{
 		s3c:         s3c,
-		logger:      opts.logger,
+		logger:      opts.Logger,
 		listKeys:    opts.ListKeys,
 		bucketCache: expirable.NewLRU[string, fs.FileInfo](opts.BucketCacheSize, nil, opts.BucketTTL),
 		objCache:    expirable.NewLRU[string, fs.FileInfo](opts.ObjectCacheSize, nil, opts.ObjectTTL),
