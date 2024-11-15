@@ -6,9 +6,36 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 )
+
+func Clean(path string) string {
+	return "/" + strings.TrimPrefix(filepath.Clean(path), "/")
+}
+
+// NextSegment returns the next segment in the path, or "." if it is only the current directory
+func NextSegment(path string) string {
+	i := strings.Index(path, "/")
+	if i == -1 {
+		return path
+	}
+	candidate := path[:i]
+	for candidate == "" || candidate == "." {
+		path = path[i+1:]
+		i = strings.Index(path, "/")
+		if i == -1 {
+			candidate = path
+			break
+		}
+		candidate = path[:i]
+	}
+	if candidate == "" {
+		return "."
+	}
+	return candidate
+}
 
 // Returns the parent path of the given path, or . if can't go up another directory
 func Dirname(path string) string {

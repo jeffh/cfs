@@ -3,6 +3,7 @@ package unionfs
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"iter"
@@ -31,11 +32,15 @@ type UnionFileSystem interface {
 	Unbind(path string) error
 }
 
+const (
+	mountPrefix = "#m"
+)
+
 var mx = ninep.NewMux().
-	Define().Path("/#m").TrailSlash().As("mounts").
-	Define().Path("/#m/ctl").As("ctl").
-	Define().Path("/#m/{n}").TrailSlash().As("mount").
-	Define().Path("/#m/{n}/{path*}").TrailSlash().As("mountPath").
+	Define().Path("/" + mountPrefix).TrailSlash().As("mounts").
+	Define().Path("/" + mountPrefix + "/ctl").As("ctl").
+	Define().Path("/" + mountPrefix + "/{n}").TrailSlash().As("mount").
+	Define().Path("/" + mountPrefix + "/{n}/{path*}").TrailSlash().As("mountPath").
 	Define().Path("/").As("root").
 	Define().Path("/{path*}").As("path")
 
@@ -61,10 +66,6 @@ type unionFS struct {
 
 var _ ninep.FileSystem = (*unionFS)(nil)
 
-const (
-	mountPrefix = "#m"
-)
-
 func (ufs *unionFS) nextMountId() uint64 {
 	return ufs.nextId.Add(1)
 }
@@ -84,7 +85,7 @@ func (ufs *unionFS) getMountByIndex(indexStr string) (proxy.FileSystemMount, err
 }
 
 func (ufs *unionFS) resolvePath(path string) ([]string, error) {
-	mPrefix := mountPrefix + "/"
+	mPrefix := "/" + mountPrefix + "/"
 	if strings.HasPrefix(path, mPrefix) {
 		return []string{path}, nil
 	}
@@ -92,25 +93,30 @@ func (ufs *unionFS) resolvePath(path string) ([]string, error) {
 	ufs.mu2.RLock()
 	defer ufs.mu2.RUnlock()
 	stack := []string{path}
+	seen := make(map[string]struct{})
+	// relativeMatch := false
 	for len(stack) > 0 {
 		path = stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
 		for i, sp := range ufs.sourcePaths {
 			relativePath := strings.TrimPrefix(path, sp)
 			if relativePath != path {
+				// relativeMatch = true
 				for _, dp := range ufs.destinationPaths[i] {
 					fullPath := filepath.Join(dp, relativePath)
 					if strings.HasPrefix(fullPath, mPrefix) {
-						output = append(output, fullPath)
+						if _, ok := seen[fullPath]; !ok {
+							output = append(output, ninep.Clean(fullPath))
+							seen[fullPath] = struct{}{}
+						}
 					} else {
 						stack = append(stack, fullPath)
 					}
 				}
-				break
 			}
 		}
 	}
-	// if len(output) == 0 {
+	// if !relativeMatch {
 	// 	return nil, fs.ErrNotExist
 	// }
 	return output, nil
@@ -126,8 +132,10 @@ func (ufs *unionFS) prepareMounts(paths []string) ([]mountPath, error) {
 		return nil, nil
 	}
 	mounts := make([]mountPath, 0, len(paths))
+	mprefix := "/" + mountPrefix + "/"
+	var lastErr error
 	for _, p := range paths {
-		tmp := strings.TrimPrefix(p, mountPrefix+"/")
+		tmp := strings.TrimPrefix(p, mprefix)
 		idx := strings.Index(tmp, "/")
 		var subpath string
 		if idx != -1 {
@@ -137,9 +145,13 @@ func (ufs *unionFS) prepareMounts(paths []string) ([]mountPath, error) {
 
 		mount, err := ufs.getMountByIndex(tmp)
 		if err != nil {
-			return nil, err
+			lastErr = err
+			continue
 		}
 		mounts = append(mounts, mountPath{mount, subpath})
+	}
+	if len(mounts) == 0 {
+		return nil, lastErr
 	}
 	return mounts, nil
 }
@@ -319,6 +331,15 @@ func (ufs *unionFS) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileI
 			if !yield(ninep.DirFileInfo(mountPrefix), nil) {
 				return
 			}
+
+			seen := make(map[string]struct{})
+			matches := ufs.getSourceDirs(seen, "/")
+			for _, match := range matches {
+				if !yield(ninep.DirFileInfo(match), nil) {
+					return
+				}
+			}
+
 			paths, err := ufs.resolvePath(path)
 			if err != nil {
 				return
@@ -327,7 +348,6 @@ func (ufs *unionFS) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileI
 			if err != nil {
 				return
 			}
-			seen := make(map[string]struct{})
 			for _, mp := range mpaths {
 				for h, err := range mp.mount.FS.ListDir(ctx, filepath.Join(mp.mount.Prefix, mp.path)) {
 					if _, ok := seen[h.Name()]; ok {
@@ -341,7 +361,23 @@ func (ufs *unionFS) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileI
 			}
 		}
 	case "path":
+		path = ninep.Clean(path)
 		return func(yield func(fs.FileInfo, error) bool) {
+			seen := make(map[string]struct{})
+			{
+				mpath := path + "/"
+				matches := ufs.getSourceDirs(seen, mpath)
+				for _, match := range matches {
+					if match == mpath {
+						continue
+					} else {
+						if !yield(ninep.DirFileInfo(match), nil) {
+							return
+						}
+					}
+				}
+			}
+
 			paths, err := ufs.resolvePath(path)
 			if err != nil {
 				yield(nil, err)
@@ -352,9 +388,16 @@ func (ufs *unionFS) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileI
 				yield(nil, err)
 				return
 			}
-			seen := make(map[string]struct{})
 			for _, mp := range mpaths {
-				for h, err := range mp.mount.FS.ListDir(ctx, filepath.Join(mp.mount.Prefix, mp.path)) {
+				fpath := ninep.Clean(filepath.Join(mp.mount.Prefix, mp.path))
+				for h, err := range mp.mount.FS.ListDir(ctx, fpath) {
+					if err != nil {
+						if errors.Is(err, fs.ErrNotExist) {
+							break
+						}
+						yield(nil, err)
+						return
+					}
 					if _, ok := seen[h.Name()]; ok {
 						continue
 					}
@@ -523,6 +566,7 @@ func (ufs *unionFS) Mount(fsm proxy.FileSystemMount) (string, error) {
 	return mountPrefix + "/" + strconv.FormatUint(idx, 10), nil
 }
 func (ufs *unionFS) Unmount(path string) error {
+	path = ninep.Clean(path)
 	target := strings.TrimPrefix(path, mountPrefix+"/")
 	if target == path {
 		return fs.ErrInvalid
@@ -558,6 +602,8 @@ func (ufs *unionFS) Unmount(path string) error {
 	return nil
 }
 func (ufs *unionFS) Bind(srcPath, dstPath string) error {
+	srcPath = ninep.Clean(srcPath)
+	dstPath = ninep.Clean(dstPath)
 	ufs.mu2.Lock()
 	defer ufs.mu2.Unlock()
 	i := slices.Index(ufs.sourcePaths, dstPath)
@@ -570,6 +616,7 @@ func (ufs *unionFS) Bind(srcPath, dstPath string) error {
 	return nil
 }
 func (ufs *unionFS) Unbind(path string) error {
+	path = ninep.Clean(path)
 	ufs.mu2.Lock()
 	defer ufs.mu2.Unlock()
 	i := slices.Index(ufs.sourcePaths, path)
@@ -592,7 +639,7 @@ func (ufs *unionFS) Walk(ctx context.Context, parts []string) ([]fs.FileInfo, er
 	if len(parts) > 1 && parts[1] == mountPrefix {
 		L := len(parts)
 		if L >= 2 { // mounts dir
-			infos = append(infos, ninep.DirFileInfo("#m"))
+			infos = append(infos, ninep.DirFileInfo(mountPrefix))
 		}
 		var mount proxy.FileSystemMount
 		if L >= 3 { // specific mount or ctl
@@ -622,7 +669,25 @@ func (ufs *unionFS) Walk(ctx context.Context, parts []string) ([]fs.FileInfo, er
 		}
 		return infos, nil
 	} else {
-		paths, err := ufs.resolvePath(strings.Trim(strings.Join(parts, "/"), "."))
+		rpath := ninep.Clean(filepath.Join(parts...))
+		// seen := make(map[string]struct{})
+		ufs.mu2.RLock()
+		var match *string
+		for _, spath := range ufs.sourcePaths {
+			if strings.HasPrefix(rpath, spath) {
+				match = &spath
+				break
+			}
+		}
+		ufs.mu2.RUnlock()
+		if match != nil {
+			subparts := ninep.PathSplit(*match)
+			if len(subparts) > 0 {
+				infos = append(infos, ninep.DirFileInfo(subparts[len(subparts)-1]))
+			}
+		}
+
+		paths, err := ufs.resolvePath(rpath)
 		if err != nil {
 			return nil, err
 		}
@@ -697,9 +762,6 @@ func (ufs *unionFS) CtlHandle(ctx context.Context, flag ninep.OpenMode) (ninep.F
 				}
 				if path := kv.GetOne("mount"); path != "" {
 					to := kv.GetOne("to")
-					if to == "" {
-						to = "/"
-					}
 					mountConfig, ok := proxy.ParseMount(path)
 					if !ok {
 						continue
@@ -712,9 +774,11 @@ func (ufs *unionFS) CtlHandle(ctx context.Context, flag ninep.OpenMode) (ninep.F
 					if err != nil {
 						continue
 					}
-					err = ufs.Bind(path, to)
-					if err != nil {
-						continue
+					if to != "" {
+						err = ufs.Bind(path, to)
+						if err != nil {
+							continue
+						}
 					}
 				}
 				if path := kv.GetOne("unmount"); path != "" {
@@ -743,4 +807,24 @@ func (ufs *unionFS) CtlHandle(ctx context.Context, flag ninep.OpenMode) (ninep.F
 		}()
 	}
 	return h, nil
+}
+
+func (ufs *unionFS) getSourceDirs(seen map[string]struct{}, path string) []string {
+	path = ninep.Clean(path)
+	ufs.mu2.RLock()
+	defer ufs.mu2.RUnlock()
+	dirs := make([]string, 0, len(ufs.sourcePaths))
+	for _, sp := range ufs.sourcePaths {
+		relPath := strings.TrimPrefix(sp+"/", path)
+		if relPath != path {
+			dir := ninep.NextSegment(relPath)
+			if dir == "." {
+				continue
+			}
+			if _, ok := seen[dir]; !ok {
+				dirs = append(dirs, dir)
+			}
+		}
+	}
+	return dirs
 }
