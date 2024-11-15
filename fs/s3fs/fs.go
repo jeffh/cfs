@@ -5,6 +5,7 @@
 package s3fs
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -13,7 +14,6 @@ import (
 	"iter"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -29,6 +29,17 @@ import (
 	"github.com/jeffh/cfs/ninep/kvp"
 )
 
+var mx = ninep.NewMux().
+	Define().Path("/").As("root").
+	Define().Path("/ctl").As("ctl").
+	Define().Path("/buckets").As("buckets").
+	Define().Path("/buckets/{bucket}").As("bucket").
+	Define().Path("/buckets/{bucket}/ctl").As("bucketCtl").
+	Define().Path("/buckets/{bucket}/objects").As("objects").
+	Define().Path("/buckets/{bucket}/objects/{key*}").As("objectByKey").
+	Define().Path("/buckets/{bucket}/metadata").As("metadata").
+	Define().Path("/buckets/{bucket}/metadata/{key*}").As("metadataByKey")
+
 func stringPtrOrNil(s string) *string {
 	if s == "" {
 		return nil
@@ -43,7 +54,13 @@ type S3Ctx struct {
 
 // Reasonable default configuration of NewFs(), an empty string of endpoint
 // defaults to AWS' S3 service
-func NewBasicFs(endpoint string, truncate bool) ninep.FileSystem {
+//
+// Parameters:
+//   - endpoint defaults to AWS' S3 service if it is an empty string.
+//   - flatten makes listing an object key prefix returns the full keys instead of
+//     just the logical directory names. This can be more efficient to use S3
+//     API at the cost of breaking some of the file system abstraction layer.
+func New(endpoint string, flatten bool) ninep.FileSystem {
 	cfg := &aws.Config{
 		Endpoint: stringPtrOrNil(endpoint),
 	}
@@ -54,84 +71,21 @@ func NewBasicFs(endpoint string, truncate bool) ninep.FileSystem {
 		Client:  svc,
 	}
 
-	return NewFs(&ctx, truncate)
+	return NewWithClient(&ctx, flatten)
 }
 
-func NewFs(s3c *S3Ctx, truncate bool) ninep.FileSystem {
+func NewWithClient(s3c *S3Ctx, flatten bool) ninep.FileSystem {
 	trace := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelDebug,
 	}))
-	return newFs(s3c, trace, truncate, -1, -1)
-	// return &ninep.SimpleWalkableFileSystem{
-	// 	ninep.SimpleFileSystem{
-	// 		Root: ninep.StaticRootDir(
-	// 			&buckets{
-	// 				ninep.SimpleFileInfo{
-	// 					FIName:    "buckets",
-	// 					FIMode:    os.ModeDir | 0755,
-	// 					FIModTime: time.Now(),
-	// 				},
-	// 				s3c,
-	// 			},
-	// 		),
-	// 	},
-	// }
+	return newFs(s3c, fsysOptions{
+		Logger:          trace,
+		BucketCacheSize: -1,
+		ObjectCacheSize: -1,
+	})
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-
-func staticDir(name string, children ...ninep.Node) *ninep.StaticReadOnlyDir {
-	return &ninep.StaticReadOnlyDir{
-		SimpleFileInfo: ninep.SimpleFileInfo{
-			FIName: name,
-			FIMode: os.ModeDir | 0555,
-		},
-		Children: children,
-	}
-}
-
-func staticDirWithTime(name string, modTime time.Time, children ...ninep.Node) *ninep.StaticReadOnlyDir {
-	return &ninep.StaticReadOnlyDir{
-		SimpleFileInfo: ninep.SimpleFileInfo{
-			FIName:    name,
-			FIMode:    os.ModeDir | 0555,
-			FIModTime: modTime,
-		},
-		Children: children,
-	}
-}
-
-func dynamicDir(name string, resolve func() ([]ninep.Node, error)) *ninep.DynamicReadOnlyDir {
-	return &ninep.DynamicReadOnlyDir{
-		SimpleFileInfo: ninep.SimpleFileInfo{
-			FIName: name,
-			FIMode: os.ModeDir | 0555,
-		},
-		GetChildren: resolve,
-	}
-}
-
-func dynamicDirItr(name string, resolve func() iter.Seq2[ninep.Node, error]) *ninep.DynamicReadOnlyDirItr {
-	return &ninep.DynamicReadOnlyDirItr{
-		SimpleFileInfo: ninep.SimpleFileInfo{
-			FIName: name,
-			FIMode: os.ModeDir | 0777,
-		},
-		GetChildren: resolve,
-	}
-}
-
-func dynamicCtlFile(name string, thread func(m ninep.OpenMode, r io.Reader, w io.Writer)) *ninep.SimpleFile {
-	return ninep.CtlFile(name, 0777, time.Time{}, thread)
-}
-
-func staticStringFile(name string, modTime time.Time, contents string) *ninep.SimpleFile {
-	return ninep.StaticReadOnlyFile(name, 0444, modTime, []byte(contents))
-}
-
-func dynamicStringFile(name string, modTime time.Time, content func() ([]byte, error)) *ninep.SimpleFile {
-	return ninep.DynamicReadOnlyFile(name, 0444, modTime, content)
-}
 
 type fsys struct {
 	s3c      *S3Ctx
@@ -142,19 +96,34 @@ type fsys struct {
 	objCache    *expirable.LRU[string, fs.FileInfo]
 }
 
-func newFs(s3c *S3Ctx, logger *slog.Logger, listKeys bool, bucketCacheSize, objCacheSize int) *fsys {
-	if bucketCacheSize < 0 {
-		bucketCacheSize = 32
+type fsysOptions struct {
+	Logger          *slog.Logger
+	ListKeys        bool
+	BucketCacheSize int
+	ObjectCacheSize int
+	BucketTTL       time.Duration
+	ObjectTTL       time.Duration
+}
+
+func newFs(s3c *S3Ctx, opts fsysOptions) *fsys {
+	if opts.BucketTTL == 0 {
+		opts.BucketTTL = 24 * time.Hour
 	}
-	if objCacheSize < 0 {
-		objCacheSize = 512
+	if opts.ObjectTTL == 0 {
+		opts.ObjectTTL = 1 * time.Hour
+	}
+	if opts.BucketCacheSize < 0 {
+		opts.BucketCacheSize = 32
+	}
+	if opts.ObjectCacheSize < 0 {
+		opts.ObjectCacheSize = 512
 	}
 	return &fsys{
 		s3c:         s3c,
-		logger:      logger,
-		listKeys:    listKeys,
-		bucketCache: expirable.NewLRU[string, fs.FileInfo](bucketCacheSize, nil, 24*time.Hour),
-		objCache:    expirable.NewLRU[string, fs.FileInfo](objCacheSize, nil, 1*time.Hour),
+		logger:      opts.logger,
+		listKeys:    opts.ListKeys,
+		bucketCache: expirable.NewLRU[string, fs.FileInfo](opts.BucketCacheSize, nil, opts.BucketTTL),
+		objCache:    expirable.NewLRU[string, fs.FileInfo](opts.ObjectCacheSize, nil, opts.ObjectTTL),
 	}
 }
 
@@ -193,17 +162,6 @@ func (f *fsys) evictCachedObjectsForBucket(bucket string) {
 		f.objCache.Remove(key)
 	}
 }
-
-var mx = ninep.NewMux().
-	Define().Path("/").As("root").
-	Define().Path("/ctl").As("ctl").
-	Define().Path("/buckets").As("buckets").
-	Define().Path("/buckets/{bucket}").As("bucket").
-	Define().Path("/buckets/{bucket}/ctl").As("bucketCtl").
-	Define().Path("/buckets/{bucket}/objects").As("objects").
-	Define().Path("/buckets/{bucket}/objects/{key*}").As("objectByKey").
-	Define().Path("/buckets/{bucket}/metadata").As("metadata").
-	Define().Path("/buckets/{bucket}/metadata/{key*}").As("metadataByKey")
 
 func (f *fsys) MakeDir(ctx context.Context, path string, mode ninep.Mode) error {
 	var res ninep.Match
@@ -307,6 +265,9 @@ func (f *fsys) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (
 		return nil, fs.ErrNotExist
 	}
 	switch res.Id {
+	case "bucketCtl":
+		bucket := res.Vars[0]
+		return f.bucketAclFile(ctx, bucket, flag)
 	case "objectByKey":
 		bucket := res.Vars[0]
 		key := res.Vars[1]
@@ -697,7 +658,7 @@ func (f *fsys) Walk(ctx context.Context, parts []string) ([]fs.FileInfo, error) 
 		}
 		infos = addDir(infos, "metadata", fs.ModeDir|0o777)
 		return infos, nil
-	case "objectByKey":
+	case "objectByKey", "metadataByKey":
 		bucket := res.Vars[0]
 		key := res.Vars[1]
 		infos = addDir(infos, "buckets", fs.ModeDevice|0o666)
@@ -706,68 +667,22 @@ func (f *fsys) Walk(ctx context.Context, parts []string) ([]fs.FileInfo, error) 
 		} else {
 			infos = append(infos, info)
 		}
-		infos = addDir(infos, "objects", fs.ModeDir|0o777)
+		var em fs.FileMode
+		if res.Id == "metadataByKey" {
+			infos = addDir(infos, "metadata", fs.ModeDir|0o777)
+			em = fs.ModeDevice
+		} else {
+			infos = addDir(infos, "objects", fs.ModeDir|0o777)
+		}
 
-		for info, err := range f.listObjects(ctx, bucket, key, 0) {
+		for info, err := range f.listObjects(ctx, bucket, key, em) {
 			if err != nil {
 				return nil, err
 			}
 			infos = append(infos, info)
-			break
-		}
-		subpath := parts[4:]
-		fmt.Printf("SUFFIX: %q -- %#v\n", key, subpath)
-		input := s3.ListObjectsV2Input{
-			Bucket:  aws.String(bucket),
-			Prefix:  aws.String(key),
-			MaxKeys: aws.Int64(2),
-		}
-		resp, err := f.s3c.Client.ListObjectsV2(&input)
-		if f.logger != nil {
-			f.logger.InfoContext(ctx, "S3.ListObjectsV2", slog.String("bucket", bucket), slog.String("prefix", key), slog.Int("count", len(resp.Contents)), slog.Any("err", err))
-		}
-		if err != nil {
-			return infos, mapAwsErrToNinep(err)
-		}
-		if len(resp.Contents) == 0 {
-			return infos, fs.ErrNotExist
-		}
-		if keysMatch(resp.Contents[0].Key, key) {
-			object := resp.Contents[0]
-			parentObjectKey := filepath.Join(subpath[:len(subpath)-1]...)
-			if !strings.HasSuffix(key, "/") {
-				key += "/"
-			}
-			objInfo := objectInfo(len(parentObjectKey), object, parentObjectKey)
-			for i, part := range subpath[:len(subpath)-1] {
-				name := part
-				if name == "." && len(subpath) > 1 {
-					name = subpath[len(subpath)-2]
-				}
-				info := &ninep.SimpleFileInfo{
-					FIName:    name,
-					FIMode:    0777 | fs.ModeDir,
-					FIModTime: *object.LastModified,
-					FISize:    *object.Size,
-				}
-				infos = append(infos, info)
-				f.setCachedObject(bucket, filepath.Join(parentObjectKey, filepath.Join(subpath[:i+1]...)), info)
-			}
-			infos = append(infos, objInfo)
-			f.setCachedObject(bucket, filepath.Join(parentObjectKey, key), objInfo)
-			return infos, nil
-		} else {
-			for _, part := range subpath {
-				infos = append(infos, &ninep.SimpleFileInfo{
-					FIName: part,
-					FIMode: 0777 | fs.ModeDir,
-				})
-			}
 			return infos, nil
 		}
-	case "metadataByKey":
-		// TODO: implement
-		return nil, ninep.ErrUnsupported
+		return infos, fs.ErrNotExist
 	default:
 		return nil, fs.ErrNotExist
 	}
@@ -1118,4 +1033,77 @@ func awsErrCode(err error) string {
 
 func isNoSuchBucket(err error) bool {
 	return awsErrCode(err) == s3.ErrCodeNoSuchBucket
+}
+
+func (f *fsys) bucketAclFile(ctx context.Context, bucket string, flag ninep.OpenMode) (ninep.FileHandle, error) {
+	h := &ninep.RWFileHandle{}
+	if flag.IsReadable() {
+		r, w := io.Pipe()
+		go func() {
+			defer r.Close()
+			scanner := bufio.NewScanner(r)
+			for scanner.Scan() {
+				line := scanner.Text()
+				kv := kvp.MustParseKeyValues(line)
+				input := s3.PutBucketAclInput{
+					Bucket: aws.String(bucket),
+				}
+				if acl := kv.GetOne("acl"); acl != "" {
+					input.ACL = aws.String(acl)
+				}
+				if grantFullControl := kv.GetOne("grant_full_control"); grantFullControl != "" {
+					input.GrantFullControl = aws.String(grantFullControl)
+				}
+				if grantRead := kv.GetOne("grant_read"); grantRead != "" {
+					input.GrantRead = aws.String(grantRead)
+				}
+				if grantReadACP := kv.GetOne("grant_read_acp"); grantReadACP != "" {
+					input.GrantReadACP = aws.String(grantReadACP)
+				}
+				if grantWrite := kv.GetOne("grant_write"); grantWrite != "" {
+					input.GrantWrite = aws.String(grantWrite)
+				}
+				if grantWriteACP := kv.GetOne("grant_write_acp"); grantWriteACP != "" {
+					input.GrantWriteACP = aws.String(grantWriteACP)
+				}
+
+				_, err := f.s3c.Client.PutBucketAcl(&input)
+				if f.logger != nil {
+					f.logger.InfoContext(ctx, "S3.PutBucketAcl", slog.String("bucket", bucket), slog.Any("err", err))
+				}
+				if err != nil {
+					return
+				}
+			}
+		}()
+		h.W = w
+	}
+	if flag.IsWriteable() {
+		input := s3.GetBucketAclInput{
+			Bucket: aws.String(bucket),
+		}
+		out, err := f.s3c.Client.GetBucketAcl(&input)
+		if err != nil {
+			return nil, mapAwsErrToNinep(err)
+		}
+		r, w := io.Pipe()
+		go func() {
+			defer w.Close()
+			for _, grant := range out.Grants {
+				pairs := [][2]string{}
+				pairs = append(pairs, [2]string{"permission", aws.StringValue(grant.Permission)})
+
+				if g := grant.Grantee; g != nil {
+					pairs = append(pairs, [2]string{"id", aws.StringValue(g.ID)})
+					pairs = append(pairs, [2]string{"name", aws.StringValue(g.DisplayName)})
+					pairs = append(pairs, [2]string{"email", aws.StringValue(g.EmailAddress)})
+					pairs = append(pairs, [2]string{"type", aws.StringValue(g.Type)})
+					pairs = append(pairs, [2]string{"uri", aws.StringValue(g.URI)})
+				}
+				fmt.Fprintf(w, "%s\n", kvp.NonEmptyKeyPairs(pairs))
+			}
+		}()
+		h.R = r
+	}
+	return h, nil
 }

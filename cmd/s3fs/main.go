@@ -31,6 +31,6 @@ func main() {
 		Description: "Provides a 9p file system that exposes buckets on AWS S3 (or compatible service)",
 	}
 	cli.ServiceMain(cfg, func() ninep.FileSystem {
-		return s3fs.NewBasicFs(endpoint, !flatten)
+		return s3fs.New(endpoint, flatten)
 	})
 }

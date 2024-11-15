@@ -1,8 +1,6 @@
 package s3fs
 
 import (
-	"fmt"
-	"io"
 	"strconv"
 	"time"
 
@@ -56,37 +54,4 @@ func mapPtrIfNotEmpty(m kvp.Map) map[string]*string {
 		return res
 	}
 	return nil
-}
-
-func writeKeyStringPtr(w io.Writer, key string, value *string) (err error) {
-	if v := value; v != nil {
-		_, err = fmt.Fprintf(w, "%s\n", kvp.KeyPair(key, *v))
-	}
-	return
-}
-
-func writeKeyInt64Ptr(w io.Writer, key string, value *int64) (err error) {
-	if v := value; v != nil {
-		_, err = fmt.Fprintf(w, "%s\n", kvp.KeyPair(key, strconv.FormatInt(*v, 10)))
-	}
-	return
-}
-
-func writeKeyBoolPtr(w io.Writer, key string, value *bool) (err error) {
-	if v := value; v != nil {
-		var s string
-		if *v {
-			s = "true"
-		} else {
-			s = "false"
-		}
-		_, err = fmt.Fprintf(w, "%s\n", kvp.KeyPair(key, s))
-	}
-	return
-}
-func writeKeyTimePtr(w io.Writer, key string, value *time.Time) (err error) {
-	if v := value; v != nil {
-		_, err = fmt.Fprintf(w, "%s\n", kvp.KeyPair(key, v.String()))
-	}
-	return
 }
