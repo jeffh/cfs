@@ -385,7 +385,7 @@ func fdsFile(f *fsys, pid Pid) (ninep.FileHandle, error) {
 	}
 	str := make([]string, len(fds))
 	for i, fd := range fds {
-		str[i] = fmt.Sprintf("num=%d type=%d name=%q socket_type=%q socket_source_addr=%q socket_remote_addr=%q", fd.Num, fd.Type, fd.Name, fd.SocketType, fd.SocketSourceAddr, fd.SocketRemoteAddr)
+		str[i] = fmt.Sprintf("num=%d type=%s name=%q socket_type=%q socket_source_addr=%q socket_remote_addr=%q", fd.Num, fd.Type, fd.Name, fd.SocketType, fd.SocketSourceAddr, fd.SocketRemoteAddr)
 	}
 	b := []byte(strings.Join(str, "\n"))
 	return &ninep.ReadOnlyMemoryFileHandle{Contents: b}, nil
