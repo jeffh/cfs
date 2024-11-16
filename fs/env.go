@@ -3,7 +3,6 @@ package fs
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"io/fs"
 	"iter"
 	"os"
@@ -76,13 +75,7 @@ func (d envFs) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, 
 		now := time.Now()
 		for _, v := range vars {
 			pair := strings.SplitN(v, "=", 2)
-			info := ninep.MakeFileInfo(
-				pair[0],
-				int64(len(pair[1])),
-				0o666,
-				now,
-				nil,
-			)
+			info := ninep.MakeFileInfoWithSize(pair[0], ninep.Readable|ninep.Writeable, now, int64(len(pair[1])))
 			if !yield(info, nil) {
 				return
 			}
@@ -93,24 +86,12 @@ func (d envFs) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, 
 // Stat returns information about a given file or directory
 func (d envFs) Stat(ctx context.Context, path string) (fs.FileInfo, error) {
 	if path == "/" {
-		return ninep.MakeFileInfo(
-			".",
-			0,
-			0o777|fs.ModeDir,
-			time.Now(),
-			nil,
-		), nil
+		return ninep.MakeFileInfo(".", fs.ModeDir|ninep.Readable|ninep.Executable, time.Now()), nil
 	}
 	key := d.key(path)
 	value, found := os.LookupEnv(key)
 	if found {
-		fi := ninep.MakeFileInfo(
-			key,
-			int64(len(value)),
-			0o666,
-			time.Now(),
-			nil,
-		)
+		fi := ninep.MakeFileInfoWithSize(key, ninep.Readable|ninep.Writeable, time.Now(), int64(len(value)))
 		return fi, nil
 	} else {
 		return nil, fs.ErrNotExist
@@ -148,7 +129,7 @@ func (d envFs) WriteStat(ctx context.Context, path string, s ninep.Stat) error {
 // Delete a file or directory. Deleting the root directory will be an error.
 func (d envFs) Delete(ctx context.Context, path string) error {
 	if path == "/" {
-		return fmt.Errorf("Cannot delete root envFs")
+		return fs.ErrPermission
 	}
 	key := d.key(path)
 	_, found := os.LookupEnv(key)

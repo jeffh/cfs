@@ -399,27 +399,43 @@ func (f *SimpleFileInfo) ModTime() time.Time { return f.FIModTime }
 func (f *SimpleFileInfo) IsDir() bool        { return f.FIMode&fs.ModeDir != 0 }
 func (f *SimpleFileInfo) Sys() interface{}   { return f.FISys }
 
+const (
+	Readable   fs.FileMode = 0o444
+	Writeable  fs.FileMode = 0o222
+	Executable fs.FileMode = 0o111
+)
+
+// MakeFileInfo returns an fs.FileInfo with the given name, mode, and modTime
+func MakeFileInfo(name string, mode fs.FileMode, modTime time.Time) *SimpleFileInfo {
+	return &SimpleFileInfo{
+		FIName:    name,
+		FIMode:    mode,
+		FIModTime: modTime,
+	}
+}
+
+// MakeFileInfoWithSize returns an fs.FileInfo with the given name, mode, modTime, and size
+func MakeFileInfoWithSize(name string, mode fs.FileMode, modTime time.Time, size int64) *SimpleFileInfo {
+	return &SimpleFileInfo{
+		FIName:    name,
+		FIMode:    mode,
+		FISize:    size,
+		FIModTime: modTime,
+	}
+}
+
 // DirFileInfo returns an fs.FileInfo that looks like a directory
 func DirFileInfo(name string) *SimpleFileInfo {
-	return &SimpleFileInfo{
-		FIName: name,
-		FIMode: fs.ModeDir | 0o777,
-	}
+	return MakeFileInfo(name, fs.ModeDir|Readable|Executable, time.Time{})
 }
 
 // DevFileInfo returns an fs.FileInfo that looks like device file
 func DevFileInfo(name string) *SimpleFileInfo {
-	return &SimpleFileInfo{
-		FIName: name,
-		FIMode: fs.ModeDevice | 0o666,
-	}
+	return MakeFileInfo(name, fs.ModeDevice|Readable|Writeable, time.Time{})
 }
 
 func TempFileInfo(name string) *SimpleFileInfo {
-	return &SimpleFileInfo{
-		FIName: name,
-		FIMode: fs.ModeTemporary | 0o666,
-	}
+	return MakeFileInfo(name, fs.ModeTemporary|Readable|Writeable, time.Time{})
 }
 
 ////////////////////////////////////////////////

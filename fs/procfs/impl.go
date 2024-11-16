@@ -2,7 +2,6 @@ package procfs
 
 import (
 	"context"
-	"fmt"
 	"io/fs"
 	"iter"
 	"os/user"
@@ -13,25 +12,25 @@ import (
 	"time"
 
 	"github.com/jeffh/cfs/ninep"
+	"github.com/jeffh/cfs/ninep/kvp"
 )
 
 type controlFile struct {
-	Info   *ninep.SimpleFileInfo
-	Handle func(f *fsys, pid Pid) (ninep.FileHandle, error)
+	Text func(f *fsys, pid Pid, pi *ProcInfo) ([]byte, error)
 }
 
 var controls = map[string]controlFile{
-	"pid":        {Handle: pidFile},
-	"status":     {Handle: statusFile},
-	"gid":        {Handle: gidFile},
-	"uid":        {Handle: uidFile},
-	"real_uid":   {Handle: realUidFile},
-	"real_gid":   {Handle: realGidFile},
-	"parent_pid": {Handle: parentPidFile},
-	"pid_group":  {Handle: pidGroupFile},
-	"cmdline":    {Handle: cmdlineFile},
-	"env":        {Handle: envFile},
-	"fds":        {Handle: fdsFile},
+	"pid":        {Text: pidFile},
+	"status":     {Text: statusFile},
+	"gid":        {Text: gidFile},
+	"uid":        {Text: uidFile},
+	"real_uid":   {Text: realUidFile},
+	"real_gid":   {Text: realGidFile},
+	"parent_pid": {Text: parentPidFile},
+	"pid_group":  {Text: pidGroupFile},
+	"cmdline":    {Text: cmdlineFile},
+	"env":        {Text: envFile},
+	"fds":        {Text: fdsFile},
 }
 
 var sortedKeys []string
@@ -83,7 +82,11 @@ func (f *fsys) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (
 		if !ok {
 			return nil, fs.ErrNotExist
 		}
-		return control.Handle(f, Pid(parsedPid))
+		text, err := control.Text(f, Pid(parsedPid), nil)
+		if err != nil {
+			return nil, err
+		}
+		return &ninep.ReadOnlyMemoryFileHandle{Contents: []byte(text)}, nil
 	default:
 		return nil, fs.ErrNotExist
 	}
@@ -120,6 +123,7 @@ func (f *fsys) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, 
 			return ninep.FileInfoErrorIterator(fs.ErrNotExist)
 		}
 		return func(yield func(fs.FileInfo, error) bool) {
+			now := time.Now()
 			pi, err := pidInfo(Pid(parsedPid))
 			if err != nil {
 				yield(nil, err)
@@ -127,13 +131,17 @@ func (f *fsys) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, 
 			}
 			user, group := f.userGroup(int(pi.Uid), int(pi.Gid))
 			for _, key := range sortedKeys {
-				meta := controls[key]
-				var info fs.FileInfo = meta.Info
-				if meta.Info == nil {
-					info = &ninep.SimpleFileInfo{
-						FIName: key,
-						FIMode: 0444,
-					}
+				control, ok := controls[key]
+				if !ok {
+					continue
+				}
+				text, _ := control.Text(f, Pid(parsedPid), &pi)
+				size := int64(len(text))
+				var info fs.FileInfo = &ninep.SimpleFileInfo{
+					FIName:    key,
+					FIMode:    ninep.Readable,
+					FISize:    size,
+					FIModTime: now,
 				}
 				info = ninep.FileInfoWithUsers(info, user, group, "")
 				if !yield(info, nil) {
@@ -158,9 +166,9 @@ func (f *fsys) Stat(ctx context.Context, path string) (fs.FileInfo, error) {
 	switch res.Id {
 	case "root":
 		return &ninep.SimpleFileInfo{
-			FIName:    "/",
+			FIName:    ".",
 			FIModTime: now,
-			FIMode:    fs.ModeDir | 0555,
+			FIMode:    fs.ModeDir | ninep.Readable | ninep.Executable,
 		}, nil
 	case "proc":
 		pid := res.Vars[0]
@@ -184,14 +192,14 @@ func (f *fsys) Stat(ctx context.Context, path string) (fs.FileInfo, error) {
 		if err != nil {
 			return nil, err
 		}
+		text, _ := control.Text(f, Pid(parsedPid), &pi)
+		size := int64(len(text))
 		user, group := f.userGroup(int(pi.Uid), int(pi.Gid))
-		var info fs.FileInfo = control.Info
-		if control.Info == nil {
-			info = &ninep.SimpleFileInfo{
-				FIName:    op,
-				FIModTime: now,
-				FIMode:    0444,
-			}
+		var info fs.FileInfo = &ninep.SimpleFileInfo{
+			FIName:    op,
+			FIModTime: now,
+			FIMode:    ninep.Readable,
+			FISize:    size,
 		}
 		info = ninep.FileInfoWithUsers(info, user, group, "")
 		return info, nil
@@ -201,41 +209,14 @@ func (f *fsys) Stat(ctx context.Context, path string) (fs.FileInfo, error) {
 }
 
 func (f *fsys) WriteStat(ctx context.Context, path string, stat ninep.Stat) error {
-	return nil
+	return fs.ErrPermission
 }
 
 func (f *fsys) Delete(ctx context.Context, path string) error {
-	return nil
+	return fs.ErrPermission
 }
 
 //////////////////////////////////////////////////////////
-
-func (f *fsys) procControls(pid Pid) iter.Seq2[fs.FileInfo, error] {
-	return func(yield func(fs.FileInfo, error) bool) {
-		now := time.Now()
-		pi, err := pidInfo(pid)
-		if err != nil {
-			yield(nil, err)
-			return
-		}
-		user, group := f.userGroup(int(pi.Uid), int(pi.Gid))
-		for _, key := range sortedKeys {
-			meta := controls[key]
-			var info fs.FileInfo = meta.Info
-			if meta.Info == nil {
-				info = &ninep.SimpleFileInfo{
-					FIName:    key,
-					FIModTime: now,
-					FIMode:    0444,
-				}
-			}
-			info = ninep.FileInfoWithUsers(info, user, group, "")
-			if !yield(info, nil) {
-				return
-			}
-		}
-	}
-}
 
 func (f *fsys) procDir(pid Pid, now time.Time) (fs.FileInfo, error) {
 	pi, err := pidInfo(pid)
@@ -246,7 +227,7 @@ func (f *fsys) procDir(pid Pid, now time.Time) (fs.FileInfo, error) {
 	var info fs.FileInfo = &ninep.SimpleFileInfo{
 		FIName:    strconv.Itoa(int(pid)),
 		FIModTime: now,
-		FIMode:    fs.ModeDir | 0777,
+		FIMode:    fs.ModeDir | ninep.Readable | ninep.Executable,
 	}
 	info = ninep.FileInfoWithUsers(info, user, group, "")
 	return info, nil
@@ -288,105 +269,123 @@ func (f *fsys) group(gid int) string {
 	return grp.Name
 }
 
-func pidFile(f *fsys, pid Pid) (ninep.FileHandle, error) {
-	b := []byte(strconv.Itoa(int(pid)))
-	return &ninep.ReadOnlyMemoryFileHandle{Contents: b}, nil
+func pidFile(f *fsys, pid Pid, pi *ProcInfo) ([]byte, error) {
+	return []byte(strconv.Itoa(int(pid))), nil
 }
 
-func statusFile(f *fsys, pid Pid) (ninep.FileHandle, error) {
-	pi, err := pidInfo(pid)
-	if err != nil {
-		return nil, err
+func statusFile(f *fsys, pid Pid, pi *ProcInfo) ([]byte, error) {
+	if pi == nil {
+		pinfo, err := pidInfo(pid)
+		if err != nil {
+			return nil, err
+		}
+		pi = &pinfo
 	}
-	b := []byte(pi.Status.String())
-	return &ninep.ReadOnlyMemoryFileHandle{Contents: b}, nil
+	return []byte(pi.Status.String()), nil
 }
 
-func gidFile(f *fsys, pid Pid) (ninep.FileHandle, error) {
-	pi, err := pidInfo(pid)
-	if err != nil {
-		return nil, err
+func gidFile(f *fsys, pid Pid, pi *ProcInfo) ([]byte, error) {
+	if pi == nil {
+		pinfo, err := pidInfo(pid)
+		if err != nil {
+			return nil, err
+		}
+		pi = &pinfo
 	}
-	b := []byte(strconv.Itoa(int(pi.Gid)) + "\n" + f.group(int(pi.Gid)) + "\n")
-	return &ninep.ReadOnlyMemoryFileHandle{Contents: b}, nil
+	return []byte(strconv.Itoa(int(pi.Gid)) + "\n" + f.group(int(pi.Gid)) + "\n"), nil
 }
 
-func uidFile(f *fsys, pid Pid) (ninep.FileHandle, error) {
-	pi, err := pidInfo(pid)
-	if err != nil {
-		return nil, err
+func uidFile(f *fsys, pid Pid, pi *ProcInfo) ([]byte, error) {
+	if pi == nil {
+		pinfo, err := pidInfo(pid)
+		if err != nil {
+			return nil, err
+		}
+		pi = &pinfo
 	}
-	b := []byte(strconv.Itoa(int(pi.Uid)) + "\n" + f.user(int(pi.Uid)) + "\n")
-	return &ninep.ReadOnlyMemoryFileHandle{Contents: b}, nil
+	return []byte(strconv.Itoa(int(pi.Uid)) + "\n" + f.user(int(pi.Uid)) + "\n"), nil
 }
 
-func realUidFile(f *fsys, pid Pid) (ninep.FileHandle, error) {
-	pi, err := pidInfo(pid)
-	if err != nil {
-		return nil, err
+func realUidFile(f *fsys, pid Pid, pi *ProcInfo) ([]byte, error) {
+	if pi == nil {
+		pinfo, err := pidInfo(pid)
+		if err != nil {
+			return nil, err
+		}
+		pi = &pinfo
 	}
-	b := []byte(strconv.Itoa(int(pi.RealUid)))
-	return &ninep.ReadOnlyMemoryFileHandle{Contents: b}, nil
+	return []byte(strconv.Itoa(int(pi.RealUid))), nil
 }
 
-func realGidFile(f *fsys, pid Pid) (ninep.FileHandle, error) {
-	pi, err := pidInfo(pid)
-	if err != nil {
-		return nil, err
+func realGidFile(f *fsys, pid Pid, pi *ProcInfo) ([]byte, error) {
+	if pi == nil {
+		pinfo, err := pidInfo(pid)
+		if err != nil {
+			return nil, err
+		}
+		pi = &pinfo
 	}
-	b := []byte(strconv.Itoa(int(pi.RealGid)))
-	return &ninep.ReadOnlyMemoryFileHandle{Contents: b}, nil
+	return []byte(strconv.Itoa(int(pi.RealGid))), nil
 }
 
-func parentPidFile(f *fsys, pid Pid) (ninep.FileHandle, error) {
-	pi, err := pidInfo(pid)
-	if err != nil {
-		return nil, err
+func parentPidFile(f *fsys, pid Pid, pi *ProcInfo) ([]byte, error) {
+	if pi == nil {
+		pinfo, err := pidInfo(pid)
+		if err != nil {
+			return nil, err
+		}
+		pi = &pinfo
 	}
-	b := []byte(strconv.Itoa(int(pi.ParentPid)))
-	return &ninep.ReadOnlyMemoryFileHandle{Contents: b}, nil
+	return []byte(strconv.Itoa(int(pi.ParentPid))), nil
 }
 
-func pidGroupFile(f *fsys, pid Pid) (ninep.FileHandle, error) {
-	pi, err := pidInfo(pid)
-	if err != nil {
-		return nil, err
+func pidGroupFile(f *fsys, pid Pid, pi *ProcInfo) ([]byte, error) {
+	if pi == nil {
+		pinfo, err := pidInfo(pid)
+		if err != nil {
+			return nil, err
+		}
+		pi = &pinfo
 	}
-	b := []byte(strconv.Itoa(pi.PidGroup))
-	return &ninep.ReadOnlyMemoryFileHandle{Contents: b}, nil
+	return []byte(strconv.Itoa(pi.PidGroup)), nil
 }
 
-func cmdlineFile(f *fsys, pid Pid) (ninep.FileHandle, error) {
+func cmdlineFile(f *fsys, pid Pid, pi *ProcInfo) ([]byte, error) {
 	argv, err := pidArgs(pid)
 	if err == nil {
 		for i, arg := range argv[1:] {
-			if strings.Index(arg, " ") != -1 {
+			if strings.Contains(arg, " ") {
 				argv[i+1] = strconv.Quote(arg)
 			}
 		}
 	}
-	b := []byte(strings.Join(argv, " "))
-	return &ninep.ReadOnlyMemoryFileHandle{Contents: b}, nil
+	return []byte(strings.Join(argv, " ")), nil
 }
 
-func envFile(f *fsys, pid Pid) (ninep.FileHandle, error) {
+func envFile(f *fsys, pid Pid, pi *ProcInfo) ([]byte, error) {
 	env, err := pidEnv(pid)
 	if err != nil {
 		return nil, err
 	}
-	b := []byte(strings.Join(env, "\n"))
-	return &ninep.ReadOnlyMemoryFileHandle{Contents: b}, nil
+	return []byte(strings.Join(env, "\n")), nil
 }
 
-func fdsFile(f *fsys, pid Pid) (ninep.FileHandle, error) {
+func fdsFile(f *fsys, pid Pid, pio *ProcInfo) ([]byte, error) {
 	fds, err := pidFds(pid)
 	if err != nil {
 		return nil, err
 	}
 	str := make([]string, len(fds))
 	for i, fd := range fds {
-		str[i] = fmt.Sprintf("num=%d type=%s name=%q socket_type=%q socket_source_addr=%q socket_remote_addr=%q", fd.Num, fd.Type, fd.Name, fd.SocketType, fd.SocketSourceAddr, fd.SocketRemoteAddr)
+		pairs := [][2]string{
+			{"num", strconv.Itoa(fd.Num)},
+			{"type", string(fd.Type)},
+			{"name", fd.Name},
+			{"socket_type", fd.SocketType},
+			{"socket_source_addr", fd.SocketSourceAddr},
+			{"socket_remote_addr", fd.SocketRemoteAddr},
+		}
+		str[i] = kvp.NonEmptyKeyPairs(pairs)
 	}
-	b := []byte(strings.Join(str, "\n"))
-	return &ninep.ReadOnlyMemoryFileHandle{Contents: b}, nil
+	return []byte(strings.Join(str, "\n")), nil
 }

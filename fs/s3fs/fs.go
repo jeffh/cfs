@@ -524,7 +524,7 @@ func (f *fsys) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (
 				}
 
 				// Write each CORS rule as a separate key-value pair
-				for i, rule := range out.CORSRules {
+				for _, rule := range out.CORSRules {
 					if rule == nil {
 						continue
 					}
