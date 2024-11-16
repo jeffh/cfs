@@ -33,7 +33,7 @@ const (
 var nocolors bool
 var humanSizes bool
 
-func printInfo(w io.Writer, info os.FileInfo, replacedName string) {
+func printInfo(w io.Writer, info os.FileInfo, replacedName string, namePrefix string) {
 	usr, gid, muid, _ := ninep.FileUsers(info)
 	size := info.Size()
 	var sizeStr string
@@ -63,6 +63,10 @@ func printInfo(w io.Writer, info os.FileInfo, replacedName string) {
 	} else if !info.Mode().IsRegular() {
 		n = irregularFileColor(n)
 	}
+	if namePrefix != "" {
+		n = namePrefix + n
+	}
+
 	fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t %s\n", info.Mode(), usr, gid, muid, sizeStr, info.ModTime().Format(time.RFC822), n)
 }
 
@@ -70,9 +74,11 @@ func main() {
 	var all bool
 	var list bool
 	var nocols bool
+	var includeHost bool
 
 	flag.BoolVar(&all, "a", false, "list info of current directory and parent directory and any dot-prefixed files")
 	flag.BoolVar(&list, "l", false, "list long format stats about each file")
+	flag.BoolVar(&includeHost, "print-addr", false, "Include mount host when printing files")
 	flag.BoolVar(&humanSizes, "h", false, "list file sizes in human-readable formats")
 	flag.BoolVar(&nocols, "nocols", false, "avoids printing in nice columns, useful to verify streaming behavior")
 	flag.BoolVar(&nocolors, "nocolor", false, "Disable color for terminal output")
@@ -88,6 +94,10 @@ func main() {
 	}
 
 	cli.MainClient(func(cfg *cli.ClientConfig, mnt proxy.FileSystemMount) error {
+		namePrefix := ""
+		if includeHost {
+			namePrefix = mnt.Addr + "/"
+		}
 
 		if list {
 			var w io.Writer
@@ -101,11 +111,11 @@ func main() {
 			if all {
 				info, err := mnt.FS.Stat(context.Background(), mnt.Prefix)
 				if err == nil && info != nil {
-					printInfo(w, info, ".")
+					printInfo(w, info, ".", namePrefix)
 				}
 				info, err = mnt.FS.Stat(context.Background(), filepath.Join(mnt.Prefix, ".."))
 				if err == nil && info != nil {
-					printInfo(w, info, "..")
+					printInfo(w, info, "..", namePrefix)
 				}
 			}
 			for info, err := range mnt.FS.ListDir(context.Background(), mnt.Prefix) {
@@ -114,14 +124,14 @@ func main() {
 				}
 				if info != nil {
 					if all || !strings.HasPrefix(info.Name(), ".") {
-						printInfo(w, info, "")
+						printInfo(w, info, "", namePrefix)
 					}
 				}
 			}
 		} else {
 			if all {
-				fmt.Println(dirColor("."))
-				fmt.Println(dirColor(".."))
+				fmt.Println(dirColor(namePrefix + "."))
+				fmt.Println(dirColor(namePrefix + ".."))
 			}
 			for info, err := range mnt.FS.ListDir(context.Background(), mnt.Prefix) {
 				if err != nil {
@@ -130,6 +140,7 @@ func main() {
 				if info != nil {
 					n := info.Name()
 					if all || !strings.HasPrefix(n, ".") {
+						n = namePrefix + n
 						if info.IsDir() {
 							n = dirColor(n)
 						} else if !info.Mode().IsRegular() {

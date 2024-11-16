@@ -68,7 +68,7 @@ func main() {
 
 	flag.BoolVar(&posixRE, "e", false, "Use POSIX Egrep syntax for expressions")
 	flag.BoolVar(&includePrefix, "p", false, "Include mount prefix when printing files")
-	flag.BoolVar(&includeHost, "h", false, "Include mount host when printing files")
+	flag.BoolVar(&includeHost, "print-addr", false, "Include mount host when printing files")
 	flag.BoolVar(&serial, "serial", false, "Don't parallelize 9p requests to speed up fetching, for deterministic ordering")
 	flag.StringVar(&kind, "type", "a", "Filter files by type ('d' = directory, 'f' = non-directory, 'a' = anything)")
 
