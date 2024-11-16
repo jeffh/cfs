@@ -208,7 +208,7 @@ func (f *fsys) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, 
 			// List ctl file
 			info := &ninep.SimpleFileInfo{
 				FIName: "ctl",
-				FIMode: 0666,
+				FIMode: fs.ModeDevice | 0666,
 			}
 			if !yield(info, nil) {
 				return
@@ -555,13 +555,11 @@ func (f *fsys) Delete(ctx context.Context, path string) error {
 
 	switch res.Id {
 	case "feed":
-		// Parse the feed ID
 		feedID, err := strconv.ParseUint(res.Vars[0], 10, 64)
 		if err != nil {
 			return fs.ErrNotExist
 		}
 
-		// Remove the feed from memory
 		f.Lock()
 		defer f.Unlock()
 
