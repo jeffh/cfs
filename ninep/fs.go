@@ -273,26 +273,6 @@ func NaiveWalk(ctx context.Context, f FileSystem, parts []string) ([]fs.FileInfo
 
 ////////////////////////////////////////////////
 
-// MakeFileInfo creates an in-memory fs.FileInfo object
-func MakeFileInfo(name string, size int64, mode fs.FileMode, mod time.Time, backing any) fs.FileInfo {
-	return &memoryFileInfo{name, size, mode, mod, backing}
-}
-
-type memoryFileInfo struct {
-	name string
-	size int64
-	mode fs.FileMode
-	mod  time.Time
-	sys  any
-}
-
-func (f *memoryFileInfo) Name() string       { return f.name }
-func (f *memoryFileInfo) Size() int64        { return f.size }
-func (f *memoryFileInfo) Mode() fs.FileMode  { return f.mode }
-func (f *memoryFileInfo) ModTime() time.Time { return f.mod }
-func (f *memoryFileInfo) IsDir() bool        { return f.mode&fs.ModeDir != 0 }
-func (f *memoryFileInfo) Sys() interface{}   { return f.sys }
-
 // file info helper wrappers
 type fileInfoWithName struct {
 	fi   fs.FileInfo
