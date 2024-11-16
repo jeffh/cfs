@@ -129,7 +129,11 @@ func (f traceFileSystem) ListDir(ctx context.Context, path string) iter.Seq2[fs.
 			if err != nil {
 				f.Errorf("FS.ListDir(%v)[%d] => (_, %s)", path, i, err)
 			} else {
-				f.Tracef("FS.ListDir(%v)[%d] => (%#v, %s)", path, i, info.Name(), err)
+				if info != nil {
+					f.Tracef("FS.ListDir(%v)[%d] => (%#v, nil)", path, i, info.Name())
+				} else {
+					f.Tracef("FS.ListDir(%v)[%d] => (nil, nil)", path, i)
+				}
 			}
 			if !yield(info, err) {
 				return

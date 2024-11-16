@@ -33,7 +33,7 @@ type UnionFileSystem interface {
 }
 
 const (
-	mountPrefix = "#m"
+	mountPrefix = "#M"
 )
 
 var mx = ninep.NewMux().
@@ -303,6 +303,9 @@ func (ufs *unionFS) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileI
 		copy(ids, ufs.mountIds)
 		ufs.mu.RUnlock()
 		return func(yield func(fs.FileInfo, error) bool) {
+			if !yield(ninep.DevFileInfo("ctl"), nil) {
+				return
+			}
 			for _, id := range ids {
 				info := ninep.DirFileInfo(strconv.FormatUint(id, 10))
 				if !yield(info, nil) {

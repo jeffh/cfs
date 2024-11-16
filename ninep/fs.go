@@ -2,10 +2,12 @@ package ninep
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"io/fs"
 	"iter"
 	"path/filepath"
+	"runtime/debug"
 	"sync"
 	"time"
 )
@@ -123,6 +125,21 @@ func FileInfoSliceIterator(fi []fs.FileInfo) iter.Seq2[fs.FileInfo, error] {
 				return
 			}
 		}
+	}
+}
+
+func DebugIterator[X any](msg string, itr iter.Seq2[X, error]) iter.Seq2[X, error] {
+	return func(yield func(X, error) bool) {
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Printf("DEBUG: %s: %#v\n", msg, r)
+				debug.PrintStack()
+				panic(r)
+			}
+		}()
+		itr(func(x X, err error) bool {
+			return yield(x, err)
+		})
 	}
 }
 

@@ -3,8 +3,25 @@ package ninep
 import (
 	"crypto/tls"
 	"net"
+	"strings"
 	"time"
 )
+
+func ParseAddr(addr string) (network, address string) {
+	network = "tcp"
+	address = addr
+	unixSocket := strings.TrimPrefix(addr, "unix!")
+	if len(unixSocket) != len(addr) {
+		network = "unix"
+		address = unixSocket
+	}
+	tcpAddr := strings.TrimPrefix(addr, "tcp!")
+	if len(tcpAddr) != len(addr) {
+		network = "tcp"
+		address = tcpAddr
+	}
+	return
+}
 
 type Dialer interface {
 	Dial(network, address string) (net.Conn, error)
