@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"os/signal"
@@ -59,7 +58,7 @@ func (c *ClientConfig) FSMount(mnt *proxy.FileSystemMountConfig) (proxy.FileSyst
 	case ":memory":
 		return proxy.FileSystemMount{&fs.Mem{}, mnt.Prefix, nil, mnt.Addr, nil}, nil
 	case ":tmp":
-		dir, err := ioutil.TempDir("", "*")
+		dir, err := os.MkdirTemp("", "*")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to create temp directory: %s", err)
 		}
