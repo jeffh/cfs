@@ -10,9 +10,8 @@ require (
 	github.com/go-git/go-billy/v5 v5.6.0
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/hanwen/go-fuse/v2 v2.1.0
-	github.com/jeffh/b2client v0.0.0-20220313203245-97fc927d3672
+	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/kardianos/service v1.2.1
-	github.com/kurin/blazer v0.5.3
 	github.com/mattn/go-isatty v0.0.17
 	github.com/mmcdole/gofeed v1.1.3
 	github.com/pkg/sftp v1.13.4
@@ -34,7 +33,6 @@ require (
 	github.com/go-logr/logr v1.4.1 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
-	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/kr/fs v0.1.0 // indirect
