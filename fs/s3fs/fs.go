@@ -37,6 +37,7 @@ var mx = ninep.NewMux().
 	Define().Path("/buckets").TrailSlash().As("buckets").
 	Define().Path("/buckets/{bucket}").TrailSlash().As("bucket").
 	Define().Path("/buckets/{bucket}/ctl").As("bucketCtl").
+	Define().Path("/buckets/{bucket}/cors").As("bucketCors").
 	Define().Path("/buckets/{bucket}/objects").TrailSlash().As("objects").
 	Define().Path("/buckets/{bucket}/objects/{key*}").Attr("dir", "objects").As("objectByKey").
 	Define().Path("/buckets/{bucket}/metadata").TrailSlash().As("metadata").
@@ -441,6 +442,129 @@ func (f *fsys) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (
 			}()
 		}
 		return h, nil
+	case "bucketCors":
+		bucket := res.Vars[0]
+		h, r, w := ninep.DeviceHandle(flag)
+		if r != nil {
+			go func() {
+				data, err := io.ReadAll(r)
+				if err != nil {
+					r.CloseWithError(err)
+					return
+				}
+				kv, err := kvp.ParseKeyValues(string(data))
+				if err != nil {
+					r.CloseWithError(err)
+					return
+				}
+
+				// Parse CORS configuration from key-value pairs
+				var corsRules []*s3.CORSRule
+				for _, ruleStr := range kv.GetAll("rule") {
+					ruleKV, err := kvp.ParseKeyValues(ruleStr)
+					if err != nil {
+						r.CloseWithError(err)
+						return
+					}
+
+					rule := &s3.CORSRule{}
+					if maxAge := ruleKV.GetOne("max_age"); maxAge != "" {
+						if age, err := strconv.ParseInt(maxAge, 10, 64); err == nil {
+							rule.MaxAgeSeconds = aws.Int64(age)
+						}
+					}
+					if methods := ruleKV.GetOne("allowed_methods"); methods != "" {
+						for _, m := range strings.Split(methods, ",") {
+							rule.AllowedMethods = append(rule.AllowedMethods, aws.String(strings.TrimSpace(m)))
+						}
+					}
+					if headers := ruleKV.GetOne("allowed_headers"); headers != "" {
+						for _, h := range strings.Split(headers, ",") {
+							rule.AllowedHeaders = append(rule.AllowedHeaders, aws.String(strings.TrimSpace(h)))
+						}
+					}
+					if origins := ruleKV.GetOne("allowed_origins"); origins != "" {
+						for _, o := range strings.Split(origins, ",") {
+							rule.AllowedOrigins = append(rule.AllowedOrigins, aws.String(strings.TrimSpace(o)))
+						}
+					}
+					if headers := ruleKV.GetOne("expose_headers"); headers != "" {
+						for _, h := range strings.Split(headers, ",") {
+							rule.ExposeHeaders = append(rule.ExposeHeaders, aws.String(strings.TrimSpace(h)))
+						}
+					}
+					corsRules = append(corsRules, rule)
+				}
+
+				input := &s3.PutBucketCorsInput{
+					Bucket:            aws.String(bucket),
+					CORSConfiguration: &s3.CORSConfiguration{CORSRules: corsRules},
+				}
+				_, err = f.s3c.Client.PutBucketCors(input)
+				if f.logger != nil {
+					f.logger.InfoContext(ctx, "S3.PutBucketCors", slog.String("bucket", bucket), slog.Any("err", err))
+				}
+				r.CloseWithError(mapAwsErrToNinep(err))
+			}()
+		}
+		if w != nil {
+			go func() {
+				defer w.Close()
+				input := &s3.GetBucketCorsInput{
+					Bucket: aws.String(bucket),
+				}
+				out, err := f.s3c.Client.GetBucketCors(input)
+				if err != nil {
+					if awsErrCode(err) == "NoSuchCORSConfiguration" {
+						// No CORS configuration exists - return empty
+						return
+					}
+					w.CloseWithError(mapAwsErrToNinep(err))
+					return
+				}
+
+				// Write each CORS rule as a separate key-value pair
+				for i, rule := range out.CORSRules {
+					if rule == nil {
+						continue
+					}
+					pairs := [][2]string{}
+					if rule.MaxAgeSeconds != nil {
+						pairs = append(pairs, [2]string{"max_age", fmt.Sprintf("%d", *rule.MaxAgeSeconds)})
+					}
+					if len(rule.AllowedMethods) > 0 {
+						methods := make([]string, len(rule.AllowedMethods))
+						for i, m := range rule.AllowedMethods {
+							methods[i] = aws.StringValue(m)
+						}
+						pairs = append(pairs, [2]string{"allowed_methods", strings.Join(methods, ",")})
+					}
+					if len(rule.AllowedHeaders) > 0 {
+						headers := make([]string, len(rule.AllowedHeaders))
+						for i, h := range rule.AllowedHeaders {
+							headers[i] = aws.StringValue(h)
+						}
+						pairs = append(pairs, [2]string{"allowed_headers", strings.Join(headers, ",")})
+					}
+					if len(rule.AllowedOrigins) > 0 {
+						origins := make([]string, len(rule.AllowedOrigins))
+						for i, o := range rule.AllowedOrigins {
+							origins[i] = aws.StringValue(o)
+						}
+						pairs = append(pairs, [2]string{"allowed_origins", strings.Join(origins, ",")})
+					}
+					if len(rule.ExposeHeaders) > 0 {
+						headers := make([]string, len(rule.ExposeHeaders))
+						for i, h := range rule.ExposeHeaders {
+							headers[i] = aws.StringValue(h)
+						}
+						pairs = append(pairs, [2]string{"expose_headers", strings.Join(headers, ",")})
+					}
+					fmt.Fprintf(w, "rule=%s\n", kvp.NonEmptyKeyPairs(pairs))
+				}
+			}()
+		}
+		return h, nil
 	default:
 		return nil, fs.ErrPermission
 	}
@@ -470,6 +594,7 @@ func (f *fsys) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, 
 		infos := [...]fs.FileInfo{
 			ninep.DevFileInfo("acl"),
 			ninep.DevFileInfo("ctl"),
+			ninep.DevFileInfo("cors"),
 			ninep.DirFileInfo("metadata"),
 			ninep.DirFileInfo("objects"),
 			ninep.DirFileInfo("sign"),
