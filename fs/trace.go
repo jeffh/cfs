@@ -132,7 +132,7 @@ func (f traceFileSystem) ListDir(ctx context.Context, path string) iter.Seq2[fs.
 				if info != nil {
 					f.Tracef("FS.ListDir(%v)[%d] => (%#v, nil)", path, i, info.Name())
 				} else {
-					f.Tracef("FS.ListDir(%v)[%d] => (nil, nil)", path, i)
+					f.Errorf("FS.ListDir(%v)[%d] => (nil, nil) # WARNING: this is non-spec compliant!", path, i)
 				}
 			}
 			if !yield(info, err) {

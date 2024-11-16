@@ -234,7 +234,7 @@ func (f *fsys) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, 
 			return ninep.FileInfoErrorIterator(fs.ErrNotExist)
 		}
 
-		infos := make([]fs.FileInfo, len(controls)+1)
+		infos := make([]fs.FileInfo, 0, len(controls)+1)
 		keys := slices.Collect(maps.Keys(controls))
 		sort.Strings(keys)
 		for _, k := range keys {
