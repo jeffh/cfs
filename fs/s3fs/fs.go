@@ -299,16 +299,16 @@ func (f *fsys) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (
 	switch res.Id {
 	case "bucketCtl":
 		bucket := res.Vars[0]
-		return f.bucketCtlFile(ctx, bucket, flag)
+		return f.bucketCtlFile(bucket, flag)
 	case "bucketAcl":
 		bucket := res.Vars[0]
 		return f.bucketAclFile(ctx, bucket, flag)
 	case "signExpires":
 		bucket := res.Vars[0]
-		return f.signExpiresFile(ctx, bucket, flag)
+		return f.signExpiresFile(bucket)
 	case "signUploadKey":
 		bucket := res.Vars[0]
-		return f.signUploadKeyFile(bucket, flag)
+		return f.signUploadKeyFile(bucket)
 	case "signUploadUrl":
 		bucket := res.Vars[0]
 		return f.signUploadUrlFile(bucket, flag)
@@ -1209,7 +1209,7 @@ func isNoSuchBucket(err error) bool {
 	return awsErrCode(err) == s3.ErrCodeNoSuchBucket
 }
 
-func (f *fsys) bucketCtlFile(ctx context.Context, bucket string, flag ninep.OpenMode) (ninep.FileHandle, error) {
+func (f *fsys) bucketCtlFile(bucket string, flag ninep.OpenMode) (ninep.FileHandle, error) {
 	h, r, w := ninep.DeviceHandle(flag)
 	if r == nil || w == nil {
 		r.Close()
@@ -1352,7 +1352,7 @@ func (f *fsys) signedUploadURL(bucket, key string, expires time.Duration) (strin
 	return url, nil
 }
 
-func (f *fsys) signExpiresFile(ctx context.Context, bucket string, flag ninep.OpenMode) (ninep.FileHandle, error) {
+func (f *fsys) signExpiresFile(bucket string) (ninep.FileHandle, error) {
 	f.mu.Lock()
 	d, ok := f.expires[bucket]
 	f.mu.Unlock()
@@ -1377,7 +1377,7 @@ func (f *fsys) signExpiresFile(ctx context.Context, bucket string, flag ninep.Op
 	return h, nil
 }
 
-func (f *fsys) signUploadKeyFile(bucket string, flag ninep.OpenMode) (ninep.FileHandle, error) {
+func (f *fsys) signUploadKeyFile(bucket string) (ninep.FileHandle, error) {
 	f.mu.Lock()
 	d := f.uploadKey[bucket]
 	f.mu.Unlock()
