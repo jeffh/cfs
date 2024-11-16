@@ -230,7 +230,6 @@ func (f *fsys) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, 
 	case "feed":
 		t, err := f.getFeedTime(res.Vars[0])
 		if err != nil {
-			fmt.Printf("FEED: %#v %s\n", res, err.Error())
 			return ninep.FileInfoErrorIterator(fs.ErrNotExist)
 		}
 
@@ -284,12 +283,12 @@ func (f *fsys) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, 
 				return
 			}
 			fields := []string{"title", "description", "content", "link", "updated", "published", "author", "guid", "categories"}
+			info := &ninep.SimpleFileInfo{
+				FIModTime: t,
+				FIMode:    0444,
+			}
 			for _, field := range fields {
-				info := &ninep.SimpleFileInfo{
-					FIName:    field,
-					FIModTime: t,
-					FIMode:    0444,
-				}
+				info.FIName = field
 				if !yield(info, nil) {
 					return
 				}

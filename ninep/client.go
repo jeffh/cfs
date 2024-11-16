@@ -577,6 +577,7 @@ func (fs *FileSystemProxy) Traverse(ctx context.Context, path string) (Traversab
 var _ Traversable = (*FileSystemProxy)(nil)
 var _ TraversableFile = (*FileProxy)(nil)
 
+// TraversableFileSystem is a FileSystem that supports Traversable
 type TraversableFileSystem interface {
 	FileSystem
 	Traversable
@@ -609,7 +610,7 @@ type TraversableFile interface {
 type BasicTraversableFile struct {
 	FS   FileSystem
 	Path string
-	Info os.FileInfo
+	Info fs.FileInfo
 	St   Stat
 
 	FileHandle
