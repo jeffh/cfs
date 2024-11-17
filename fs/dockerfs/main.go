@@ -6,7 +6,6 @@ import (
 	"io/fs"
 	"iter"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/docker/docker/api/types"
@@ -67,7 +66,6 @@ var mx = ninep.NewMux().
 	Define().Path("/networks/{id}/ipv6").As("networkIPv6")
 
 type Fs struct {
-	sync.Mutex
 	C *client.Client
 }
 
