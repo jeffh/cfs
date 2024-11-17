@@ -2,6 +2,7 @@ package dockerfs
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"slices"
@@ -30,6 +31,12 @@ func volumeFileContents(fileType string, inspect volume.Volume) (string, error) 
 		content = b.String()
 	case "volumeMountpoint":
 		content = inspect.Mountpoint
+	case "volumeJSON":
+		b, err := json.MarshalIndent(inspect, "", "  ")
+		if err != nil {
+			return "", err
+		}
+		content = string(b)
 	}
 	return content, nil
 }

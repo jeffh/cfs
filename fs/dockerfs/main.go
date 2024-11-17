@@ -67,12 +67,14 @@ var mx = ninep.NewMux().
 	Define().Path("/networks/{id}/containers/{containerId}").TrailSlash().As("networkContainer").
 	Define().Path("/networks/{id}/driver").As("networkDriver").
 	Define().Path("/networks/{id}/ipv6").As("networkIPv6").
+	Define().Path("/networks/{id}/json").As("networkJSON").
 	Define().Path("/volumes").TrailSlash().As("volumes").
 	Define().Path("/volumes/{name}").TrailSlash().As("volume").
 	Define().Path("/volumes/{name}/scope").As("volumeScope").
 	Define().Path("/volumes/{name}/driver").As("volumeDriver").
 	Define().Path("/volumes/{name}/labels").As("volumeLabels").
-	Define().Path("/volumes/{name}/mountpoint").As("volumeMountpoint")
+	Define().Path("/volumes/{name}/mountpoint").As("volumeMountpoint").
+	Define().Path("/volumes/{name}/json").As("volumeJSON")
 
 type Fs struct {
 	C *client.Client
@@ -120,7 +122,7 @@ func (f *Fs) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (ni
 		"containerHealthLogs", "containerImage", "containerName", "containerRestartCount",
 		"containerPlatform", "containerLabels", "containerJSON", "containerEnv", "containerPorts", "containerMounts":
 		return handleContainerFile(f, res.Id, res.Vars[0], flag)
-	case "networkName", "networkLabels", "networkDriver", "networkIPv6":
+	case "networkName", "networkLabels", "networkDriver", "networkIPv6", "networkJSON":
 		return handleNetworkFile(f, res.Id, res.Vars[0], flag)
 	case "containerLogs", "containerStdout", "containerStderr":
 		options := container.LogsOptions{
@@ -132,7 +134,7 @@ func (f *Fs) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (ni
 		return handleContainerLogsFile(f, res.Vars[0], options, flag)
 	case "containerCtl":
 		return handleContainerCtlFile(f, res.Vars[0], flag)
-	case "volumeScope", "volumeDriver", "volumeLabels", "volumeMountpoint":
+	case "volumeScope", "volumeDriver", "volumeLabels", "volumeMountpoint", "volumeJSON":
 		return handleVolumeFile(f, res.Id, res.Vars[0], flag)
 	default:
 		return nil, fs.ErrNotExist
@@ -314,6 +316,7 @@ func (f *Fs) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, er
 			ninep.DirFileInfo("containers"),
 			readOnlyNetworkFileInfo("networkDriver", "driver", t, inspect),
 			readOnlyNetworkFileInfo("networkIPv6", "ipv6", t, inspect),
+			readOnlyNetworkFileInfo("networkJSON", "json", t, inspect),
 		})
 	case "networkContainers":
 		inspect, err := f.C.NetworkInspect(ctx, res.Vars[0], network.InspectOptions{})
@@ -381,8 +384,9 @@ func (f *Fs) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, er
 			readOnlyVolumeFileInfo("volumeDriver", "driver", created, inspect),
 			readOnlyVolumeFileInfo("volumeLabels", "labels", created, inspect),
 			readOnlyVolumeFileInfo("volumeMountpoint", "mountpoint", created, inspect),
+			readOnlyVolumeFileInfo("volumeJSON", "json", created, inspect),
 		})
-	case "volumeScope", "volumeDriver", "volumeLabels", "volumeMountpoint":
+	case "volumeScope", "volumeDriver", "volumeLabels", "volumeMountpoint", "volumeJSON":
 		_, err := f.C.VolumeInspect(ctx, res.Vars[0])
 		if err != nil {
 			return ninep.FileInfoErrorIterator(fs.ErrNotExist)
@@ -525,7 +529,7 @@ func (f *Fs) Stat(ctx context.Context, path string) (fs.FileInfo, error) {
 			FIModTime: inspect.Created,
 			FIMode:    fs.ModeDir | ninep.Readable | ninep.Executable,
 		}, nil
-	case "networkName", "networkLabels", "networkDriver", "networkIPv6":
+	case "networkName", "networkLabels", "networkDriver", "networkIPv6", "networkJSON":
 		inspect, err := f.C.NetworkInspect(ctx, res.Vars[0], network.InspectOptions{})
 		if err != nil {
 			return nil, fs.ErrNotExist
@@ -572,7 +576,7 @@ func (f *Fs) Stat(ctx context.Context, path string) (fs.FileInfo, error) {
 			FIModTime: created,
 			FIMode:    fs.ModeDir | ninep.Readable | ninep.Executable,
 		}, nil
-	case "volumeScope", "volumeDriver", "volumeLabels", "volumeMountpoint":
+	case "volumeScope", "volumeDriver", "volumeLabels", "volumeMountpoint", "volumeJSON":
 		inspect, err := f.C.VolumeInspect(ctx, res.Vars[0])
 		if err != nil {
 			return nil, fs.ErrNotExist

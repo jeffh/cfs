@@ -2,18 +2,19 @@ package dockerfs
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"slices"
 	"sort"
 	"strings"
 
-	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/network"
 	"github.com/jeffh/cfs/ninep"
 	"github.com/jeffh/cfs/ninep/kvp"
 )
 
-func networkFileContents(fileType string, inspect types.NetworkResource) (string, error) {
+func networkFileContents(fileType string, inspect network.Inspect) (string, error) {
 	var content string
 	switch fileType {
 	case "networkName":
@@ -30,6 +31,12 @@ func networkFileContents(fileType string, inspect types.NetworkResource) (string
 		content = inspect.Driver
 	case "networkIPv6":
 		content = fmt.Sprintf("%v", inspect.EnableIPv6)
+	case "networkJSON":
+		b, err := json.MarshalIndent(inspect, "", "  ")
+		if err != nil {
+			return "", err
+		}
+		content = string(b)
 	}
 	return content, nil
 }
@@ -39,7 +46,7 @@ func handleNetworkFile(f *Fs, fileType string, networkID string, flag ninep.Open
 		return nil, ninep.ErrWriteNotAllowed
 	}
 
-	inspect, err := f.C.NetworkInspect(context.Background(), networkID, types.NetworkInspectOptions{})
+	inspect, err := f.C.NetworkInspect(context.Background(), networkID, network.InspectOptions{})
 	if err != nil {
 		return nil, err
 	}
