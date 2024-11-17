@@ -54,6 +54,9 @@ var mx = ninep.NewMux().
 	Define().Path("/containers/{id}/env").As("containerEnv").
 	Define().Path("/containers/{id}/ports").As("containerPorts").
 	Define().Path("/containers/{id}/mounts").As("containerMounts").
+	Define().Path("/containers/{id}/logs").As("containerLogs").
+	Define().Path("/containers/{id}/stdout").As("containerStdout").
+	Define().Path("/containers/{id}/stderr").As("containerStderr").
 	Define().Path("/networks").TrailSlash().As("networks").
 	Define().Path("/networks/{id}").TrailSlash().As("network").
 	Define().Path("/networks/{id}/name").As("networkName").
@@ -112,6 +115,14 @@ func (f *Fs) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (ni
 		return handleContainerFile(f, res.Id, res.Vars[0], flag)
 	case "networkName", "networkLabels", "networkDriver", "networkIPv6":
 		return handleNetworkFile(f, res.Id, res.Vars[0], flag)
+	case "containerLogs", "containerStdout", "containerStderr":
+		options := container.LogsOptions{
+			ShowStdout: res.Id == "containerLogs" || res.Id == "containerStdout",
+			ShowStderr: res.Id == "containerLogs" || res.Id == "containerStderr",
+			Follow:     true,
+			Timestamps: true,
+		}
+		return handleContainerLogsFile(f, res.Vars[0], options, flag)
 	default:
 		return nil, fs.ErrNotExist
 	}
@@ -179,11 +190,27 @@ func (f *Fs) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, er
 				yield(nil, err)
 				return
 			}
+			// Containers by name
+			for _, container := range containers {
+				for _, name := range container.Names {
+					// Docker prefixes names with '/', so trim it
+					name = strings.TrimPrefix(name, "/")
+					info := &ninep.SimpleFileInfo{
+						FIName:    name,
+						FIMode:    fs.ModeDir | ninep.Readable | ninep.Executable | fs.ModeSymlink,
+						FIModTime: time.Unix(container.Created, 0),
+					}
+					if !yield(info, nil) {
+						return
+					}
+				}
+			}
+			// Containers by id
 			for _, container := range containers {
 				info := &ninep.SimpleFileInfo{
 					FIName:    container.ID,
 					FIMode:    fs.ModeDir | ninep.Readable | ninep.Executable,
-					FIModTime: now,
+					FIModTime: time.Unix(container.Created, 0),
 				}
 				if !yield(info, nil) {
 					return
@@ -215,6 +242,9 @@ func (f *Fs) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, er
 			readOnlyContainerFileInfo("containerJSON", "json", t, inspect),
 			readOnlyContainerFileInfo("containerPorts", "ports", t, inspect),
 			readOnlyContainerFileInfo("containerMounts", "mounts", t, inspect),
+			ninep.ReadDevFileInfo("logs"),
+			ninep.ReadDevFileInfo("stdout"),
+			ninep.ReadDevFileInfo("stderr"),
 		}, user, "", "")
 	case "containerHealth":
 		inspect, err := f.C.ContainerInspect(ctx, res.Vars[0])
@@ -237,6 +267,16 @@ func (f *Fs) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, er
 			if err != nil {
 				yield(nil, err)
 				return
+			}
+			for _, net := range networks {
+				info := &ninep.SimpleFileInfo{
+					FIName:    net.Name,
+					FIMode:    fs.ModeDir | ninep.Readable | ninep.Executable,
+					FIModTime: net.Created,
+				}
+				if !yield(info, nil) {
+					return
+				}
 			}
 			for _, net := range networks {
 				info := &ninep.SimpleFileInfo{
@@ -440,6 +480,22 @@ func (f *Fs) Stat(ctx context.Context, path string) (fs.FileInfo, error) {
 			FIModTime: inspect.Created,
 			FIMode:    ninep.Readable,
 			FISize:    int64(len(content)),
+		}, nil
+	case "containerLogs", "containerStdout", "containerStderr":
+		// Verify container exists
+		inspect, err := f.C.ContainerInspect(ctx, res.Vars[0])
+		if err != nil {
+			return nil, fs.ErrNotExist
+		}
+		created, err := time.Parse(time.RFC3339, inspect.Created)
+		if err != nil {
+			created = now
+		}
+		name := strings.ToLower(strings.TrimPrefix(res.Id, "container"))
+		return &ninep.SimpleFileInfo{
+			FIName:    name,
+			FIModTime: created,
+			FIMode:    fs.ModeDevice | ninep.Readable,
 		}, nil
 
 	default:

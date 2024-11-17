@@ -444,6 +444,10 @@ func DevFileInfo(name string) *SimpleFileInfo {
 	return MakeFileInfo(name, fs.ModeDevice|Readable|Writeable, time.Now())
 }
 
+func ReadDevFileInfo(name string) *SimpleFileInfo {
+	return MakeFileInfo(name, fs.ModeDevice|Readable, time.Now())
+}
+
 func TempFileInfo(name string) *SimpleFileInfo {
 	return MakeFileInfo(name, fs.ModeTemporary|Readable|Writeable, time.Now())
 }
@@ -498,6 +502,35 @@ func (f *SimpleFile) Open(m OpenMode) (FileHandle, error) {
 		return nil, ErrUnsupported
 	}
 	return f.OpenFn(m)
+}
+
+////////////////////////////////////////////////
+
+type ReaderFileHandle struct {
+	io.Reader
+}
+
+func NewReaderFileHandle(r io.Reader) *ReaderFileHandle {
+	return &ReaderFileHandle{r}
+}
+
+func (h *ReaderFileHandle) ReadAt(p []byte, off int64) (n int, err error) {
+	if h.Reader == nil {
+		return 0, io.ErrClosedPipe
+	}
+	return h.Reader.Read(p)
+}
+func (h *ReaderFileHandle) WriteAt(p []byte, off int64) (n int, err error) {
+	return 0, fs.ErrPermission
+}
+func (h *ReaderFileHandle) Sync() error { return nil }
+func (h *ReaderFileHandle) Close() error {
+	if rc, ok := h.Reader.(io.Closer); ok {
+		err := rc.Close()
+		h.Reader = nil
+		return err
+	}
+	return nil
 }
 
 ////////////////////////////////////////////////

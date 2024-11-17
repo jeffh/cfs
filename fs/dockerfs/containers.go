@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"maps"
 	"slices"
 	"sort"
@@ -12,10 +13,29 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
 	"github.com/docker/go-connections/nat"
 	"github.com/jeffh/cfs/ninep"
 	"github.com/jeffh/cfs/ninep/kvp"
 )
+
+type containerLogsFileHandle struct {
+	rc   io.ReadCloser
+	done chan struct{}
+}
+
+func (h *containerLogsFileHandle) Read(p []byte) (n int, err error) {
+	return h.rc.Read(p)
+}
+
+func (h *containerLogsFileHandle) Write(p []byte) (n int, err error) {
+	return 0, ninep.ErrWriteNotAllowed
+}
+
+func (h *containerLogsFileHandle) Close() error {
+	close(h.done)
+	return h.rc.Close()
+}
 
 func containerFileContents(fileType string, inspect types.ContainerJSON) (string, error) {
 	var content string
@@ -152,4 +172,23 @@ func handleContainerFile(f *Fs, fileType string, containerID string, flag ninep.
 		return nil, err
 	}
 	return &ninep.ReadOnlyMemoryFileHandle{Contents: []byte(content)}, nil
+}
+
+func handleContainerLogsFile(f *Fs, containerID string, options container.LogsOptions, flag ninep.OpenMode) (ninep.FileHandle, error) {
+	if !flag.IsReadable() {
+		return nil, ninep.ErrWriteNotAllowed
+	}
+
+	// Verify container exists
+	_, err := f.C.ContainerInspect(context.Background(), containerID)
+	if err != nil {
+		return nil, err
+	}
+
+	rc, err := f.C.ContainerLogs(context.Background(), containerID, options)
+	if err != nil {
+		return nil, err
+	}
+
+	return ninep.NewReaderFileHandle(rc), nil
 }
