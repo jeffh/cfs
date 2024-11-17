@@ -128,6 +128,16 @@ func FileInfoSliceIterator(fi []fs.FileInfo) iter.Seq2[fs.FileInfo, error] {
 	}
 }
 
+func FileInfoSliceIteratorWithUsers(fi []fs.FileInfo, uid, gid, muid string) iter.Seq2[fs.FileInfo, error] {
+	return func(yield func(fs.FileInfo, error) bool) {
+		for _, f := range fi {
+			if !yield(FileInfoWithUsers(f, uid, gid, muid), nil) {
+				return
+			}
+		}
+	}
+}
+
 func DebugIterator[X any](msg string, itr iter.Seq2[X, error]) iter.Seq2[X, error] {
 	return func(yield func(X, error) bool) {
 		defer func() {
@@ -426,16 +436,16 @@ func MakeFileInfoWithSize(name string, mode fs.FileMode, modTime time.Time, size
 
 // DirFileInfo returns an fs.FileInfo that looks like a directory
 func DirFileInfo(name string) *SimpleFileInfo {
-	return MakeFileInfo(name, fs.ModeDir|Readable|Executable, time.Time{})
+	return MakeFileInfo(name, fs.ModeDir|Readable|Executable, time.Now())
 }
 
 // DevFileInfo returns an fs.FileInfo that looks like device file
 func DevFileInfo(name string) *SimpleFileInfo {
-	return MakeFileInfo(name, fs.ModeDevice|Readable|Writeable, time.Time{})
+	return MakeFileInfo(name, fs.ModeDevice|Readable|Writeable, time.Now())
 }
 
 func TempFileInfo(name string) *SimpleFileInfo {
-	return MakeFileInfo(name, fs.ModeTemporary|Readable|Writeable, time.Time{})
+	return MakeFileInfo(name, fs.ModeTemporary|Readable|Writeable, time.Now())
 }
 
 ////////////////////////////////////////////////

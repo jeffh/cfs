@@ -4,8 +4,7 @@ go 1.23
 
 require (
 	github.com/aws/aws-sdk-go v1.43.17
-	github.com/docker/docker v27.3.1+incompatible
-	github.com/docker/go-connections v0.4.0
+	github.com/docker/go-connections v0.5.0
 	github.com/fatih/color v1.13.0
 	github.com/go-git/go-billy/v5 v5.6.0
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
@@ -14,6 +13,7 @@ require (
 	github.com/kardianos/service v1.2.1
 	github.com/mattn/go-isatty v0.0.17
 	github.com/mmcdole/gofeed v1.1.3
+	github.com/moby/moby v27.3.1+incompatible
 	github.com/pkg/sftp v1.13.4
 	github.com/secure-io/sio-go v0.3.1
 	github.com/smallfz/libnfs-go v0.0.6
@@ -28,7 +28,8 @@ require (
 	github.com/andybalholm/cascadia v1.3.1 // indirect
 	github.com/containerd/log v0.1.0 // indirect
 	github.com/distribution/reference v0.5.0 // indirect
-	github.com/docker/go-units v0.4.0 // indirect
+	github.com/docker/docker v27.3.1+incompatible // indirect
+	github.com/docker/go-units v0.5.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-logr/logr v1.4.1 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect

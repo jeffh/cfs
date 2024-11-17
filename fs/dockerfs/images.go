@@ -2,8 +2,12 @@ package dockerfs
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
+	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -15,56 +19,6 @@ import (
 	"github.com/jeffh/cfs/ninep"
 	"github.com/jeffh/cfs/ninep/kvp"
 )
-
-func imageDir(c *client.Client, name string, img image.Summary) ninep.Node {
-	createdAt := time.Unix(img.Created, 0)
-	dir := staticDir(name,
-		staticStringFile("id", createdAt, img.ID),
-		staticStringFile("parent_id", createdAt, img.ParentID),
-		staticStringFile("size", createdAt, fmt.Sprintf("%d", img.Size)),
-		staticStringFile("shared_size", createdAt, fmt.Sprintf("%d", img.SharedSize)),
-		staticStringFile("virtual_size", createdAt, fmt.Sprintf("%d", img.VirtualSize)),
-		dynamicCtlFile("image", func(m ninep.OpenMode, r io.Reader, w io.Writer) {
-			wr := w.(*io.PipeWriter)
-			refs := []string{img.ID}
-			for _, tag := range img.RepoTags {
-				refs = append(refs, tag)
-			}
-			rc, err := c.ImageSave(context.Background(), refs)
-			if err != nil {
-				wr.CloseWithError(err)
-				return
-			}
-			_, err = io.Copy(w, rc)
-			if err != nil {
-				wr.CloseWithError(err)
-				return
-			}
-		}),
-		dynamicDirWithTime("labels", createdAt, func() ([]ninep.Node, error) {
-			n := make([]ninep.Node, 0, len(img.Labels))
-			for label, value := range img.Labels {
-				n = append(n, staticStringFile(label, createdAt, value))
-			}
-			return n, nil
-		}),
-	)
-	dir.SimpleFileInfo.FIModTime = createdAt
-	return dir
-}
-
-func imageListAs(c *client.Client, fn func(results []ninep.Node, img image.Summary) []ninep.Node) ([]ninep.Node, error) {
-	imgs, err := c.ImageList(context.Background(), image.ListOptions{})
-	if err != nil {
-		return nil, err
-	}
-
-	children := make([]ninep.Node, 0, len(imgs))
-	for _, img := range imgs {
-		children = fn(children, img)
-	}
-	return children, nil
-}
 
 func imagesCtl(c *client.Client) func(ninep.OpenMode, io.Reader, io.Writer) {
 	return func(m ninep.OpenMode, rdr io.Reader, w io.Writer) {
@@ -331,4 +285,76 @@ func resolveImageRef(ref string) string {
 		}
 	}
 	return ref
+}
+
+func contentsImageFile(fileType string, inspect types.ImageInspect) (string, error) {
+	var content string
+	switch fileType {
+	case "imageRepoTags":
+		content = strings.Join(inspect.RepoTags, "\n")
+	case "imageParent":
+		content = inspect.Parent
+	case "imageComment":
+		content = inspect.Comment
+	case "imageDockerVersion":
+		content = inspect.DockerVersion
+	case "imageAuthor":
+		content = inspect.Author
+	case "imageArch":
+		content = inspect.Architecture
+	case "imageVariant":
+		content = inspect.Variant
+	case "imageOS":
+		content = inspect.Os
+	case "imageSize":
+		content = fmt.Sprintf("%d", inspect.Size)
+	case "imageMetadata":
+		var b strings.Builder
+		if !inspect.Metadata.LastTagTime.IsZero() {
+			fmt.Fprintf(&b, "%s\n", kvp.KeyPair("LastTagTime", inspect.Metadata.LastTagTime.Format(time.RFC3339Nano)))
+		}
+		content = b.String()
+	case "imageID":
+		content = inspect.ID
+	case "imageLabels":
+		var b strings.Builder
+		keys := slices.Collect(maps.Keys(inspect.Config.Labels))
+		sort.Strings(keys)
+		for _, k := range keys {
+			fmt.Fprintf(&b, "%s\n", kvp.KeyPair(k, inspect.Config.Labels[k]))
+		}
+		content = b.String()
+	case "imageJSON":
+		b, err := json.MarshalIndent(inspect, "", "  ")
+		if err != nil {
+			return "", err
+		}
+		content = string(b)
+	case "imageEnv":
+		var b strings.Builder
+		for _, env := range inspect.Config.Env {
+			// Environment variables are already in KEY=value format
+			fmt.Fprintf(&b, "%s\n", env)
+		}
+		content = b.String()
+	}
+	return content, nil
+}
+
+func handleImageFile(f *Fs, fileType string, imageID string, flag ninep.OpenMode) (ninep.FileHandle, error) {
+	if !flag.IsReadable() {
+		return nil, ninep.ErrWriteNotAllowed
+	}
+
+	inspect, _, err := f.C.ImageInspectWithRaw(context.Background(), imageID)
+	if err != nil {
+		return nil, err
+	}
+
+	content, err := contentsImageFile(fileType, inspect)
+	if err != nil {
+		return nil, err
+	}
+
+	return &ninep.ReadOnlyMemoryFileHandle{Contents: []byte(content)}, nil
 }
