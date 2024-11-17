@@ -12,6 +12,7 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/jeffh/cfs/ninep"
 )
@@ -52,7 +53,15 @@ var mx = ninep.NewMux().
 	Define().Path("/containers/{id}/json").As("containerJSON").
 	Define().Path("/containers/{id}/env").As("containerEnv").
 	Define().Path("/containers/{id}/ports").As("containerPorts").
-	Define().Path("/containers/{id}/mounts").As("containerMounts")
+	Define().Path("/containers/{id}/mounts").As("containerMounts").
+	Define().Path("/networks").TrailSlash().As("networks").
+	Define().Path("/networks/{id}").TrailSlash().As("network").
+	Define().Path("/networks/{id}/name").As("networkName").
+	Define().Path("/networks/{id}/labels").As("networkLabels").
+	Define().Path("/networks/{id}/containers").TrailSlash().As("networkContainers").
+	Define().Path("/networks/{id}/containers/{containerId}").TrailSlash().As("networkContainer").
+	Define().Path("/networks/{id}/driver").As("networkDriver").
+	Define().Path("/networks/{id}/ipv6").As("networkIPv6")
 
 type Fs struct {
 	sync.Mutex
@@ -101,6 +110,8 @@ func (f *Fs) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (ni
 		"containerHealthLogs", "containerImage", "containerName", "containerRestartCount",
 		"containerPlatform", "containerLabels", "containerJSON", "containerEnv", "containerPorts", "containerMounts":
 		return handleContainerFile(f, res.Id, res.Vars[0], flag)
+	case "networkName", "networkLabels", "networkDriver", "networkIPv6":
+		return handleNetworkFile(f, res.Id, res.Vars[0], flag)
 	default:
 		return nil, fs.ErrNotExist
 	}
@@ -119,6 +130,7 @@ func (f *Fs) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, er
 		return ninep.FileInfoSliceIterator([]fs.FileInfo{
 			ninep.DirFileInfo("images"),
 			ninep.DirFileInfo("containers"),
+			ninep.DirFileInfo("networks"),
 		})
 	case "images":
 		return func(yield func(fs.FileInfo, error) bool) {
@@ -219,6 +231,64 @@ func (f *Fs) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, er
 			readOnlyContainerFileInfo("containerHealthFailingStreak", "failing_streak", t, inspect),
 			readOnlyContainerFileInfo("containerHealthLogs", "logs", t, inspect),
 		}, user, "", "")
+	case "networks":
+		return func(yield func(fs.FileInfo, error) bool) {
+			networks, err := f.C.NetworkList(context.Background(), network.ListOptions{})
+			if err != nil {
+				yield(nil, err)
+				return
+			}
+			for _, net := range networks {
+				info := &ninep.SimpleFileInfo{
+					FIName:    net.ID,
+					FIMode:    fs.ModeDir | ninep.Readable | ninep.Executable,
+					FIModTime: net.Created,
+				}
+				if !yield(info, nil) {
+					return
+				}
+			}
+		}
+	case "network":
+		inspect, err := f.C.NetworkInspect(ctx, res.Vars[0], network.InspectOptions{})
+		if err != nil {
+			return ninep.FileInfoErrorIterator(fs.ErrNotExist)
+		}
+		t := inspect.Created
+		return ninep.FileInfoSliceIterator([]fs.FileInfo{
+			readOnlyNetworkFileInfo("networkName", "name", t, inspect),
+			readOnlyNetworkFileInfo("networkLabels", "labels", t, inspect),
+			ninep.DirFileInfo("containers"),
+			readOnlyNetworkFileInfo("networkDriver", "driver", t, inspect),
+			readOnlyNetworkFileInfo("networkIPv6", "ipv6", t, inspect),
+		})
+	case "networkContainers":
+		inspect, err := f.C.NetworkInspect(ctx, res.Vars[0], network.InspectOptions{})
+		if err != nil {
+			return ninep.FileInfoErrorIterator(fs.ErrNotExist)
+		}
+		t := inspect.Created
+		return func(yield func(fs.FileInfo, error) bool) {
+			for id := range inspect.Containers {
+				info := &ninep.SimpleFileInfo{
+					FIName:    id,
+					FIMode:    fs.ModeDir | ninep.Readable | ninep.Executable,
+					FIModTime: t,
+				}
+				if !yield(info, nil) {
+					return
+				}
+			}
+		}
+	case "networkContainer":
+		inspect, err := f.C.NetworkInspect(ctx, res.Vars[0], network.InspectOptions{})
+		if err != nil {
+			return ninep.FileInfoErrorIterator(fs.ErrNotExist)
+		}
+		if _, ok := inspect.Containers[res.Vars[1]]; !ok {
+			return ninep.FileInfoErrorIterator(fs.ErrNotExist)
+		}
+		return ninep.FileInfoSliceIterator([]fs.FileInfo{})
 	default:
 		return ninep.FileInfoErrorIterator(fs.ErrNotExist)
 	}
@@ -317,32 +387,89 @@ func (f *Fs) Stat(ctx context.Context, path string) (fs.FileInfo, error) {
 			FIMode:    ninep.Readable,
 		}, nil
 
+	case "networks":
+		return &ninep.SimpleFileInfo{
+			FIName:    "networks",
+			FIModTime: now,
+			FIMode:    fs.ModeDir | ninep.Readable | ninep.Executable,
+		}, nil
+	case "network":
+		inspect, err := f.C.NetworkInspect(ctx, res.Vars[0], network.InspectOptions{})
+		if err != nil {
+			return nil, fs.ErrNotExist
+		}
+		return &ninep.SimpleFileInfo{
+			FIName:    res.Vars[0],
+			FIModTime: inspect.Created,
+			FIMode:    fs.ModeDir | ninep.Readable | ninep.Executable,
+		}, nil
+	case "networkContainers":
+		inspect, err := f.C.NetworkInspect(ctx, res.Vars[0], network.InspectOptions{})
+		if err != nil {
+			return nil, fs.ErrNotExist
+		}
+		return &ninep.SimpleFileInfo{
+			FIName:    "containers",
+			FIModTime: inspect.Created,
+			FIMode:    fs.ModeDir | ninep.Readable | ninep.Executable,
+		}, nil
+	case "networkContainer":
+		inspect, err := f.C.NetworkInspect(ctx, res.Vars[0], network.InspectOptions{})
+		if err != nil {
+			return nil, fs.ErrNotExist
+		}
+		if _, ok := inspect.Containers[res.Vars[1]]; !ok {
+			return nil, fs.ErrNotExist
+		}
+		return &ninep.SimpleFileInfo{
+			FIName:    res.Vars[1],
+			FIModTime: inspect.Created,
+			FIMode:    fs.ModeDir | ninep.Readable | ninep.Executable,
+		}, nil
+	case "networkName", "networkLabels", "networkDriver", "networkIPv6":
+		inspect, err := f.C.NetworkInspect(ctx, res.Vars[0], network.InspectOptions{})
+		if err != nil {
+			return nil, fs.ErrNotExist
+		}
+		content, err := networkFileContents(res.Id, inspect)
+		if err != nil {
+			return nil, err
+		}
+		return &ninep.SimpleFileInfo{
+			FIName:    strings.TrimPrefix(res.Id, "network"),
+			FIModTime: inspect.Created,
+			FIMode:    ninep.Readable,
+			FISize:    int64(len(content)),
+		}, nil
+
 	default:
 		return nil, fs.ErrNotExist
 	}
 }
 
 func (f *Fs) Delete(ctx context.Context, path string) error {
-	return ninep.ErrWriteNotAllowed
+	var res ninep.Match
+	ok := mx.Match(path, &res)
+	if !ok {
+		return fs.ErrNotExist
+	}
+
+	switch res.Id {
+	case "image":
+		// Verify image exists first
+		_, _, err := f.C.ImageInspectWithRaw(ctx, res.Vars[0])
+		if err != nil {
+			return fs.ErrNotExist
+		}
+		_, err = f.C.ImageRemove(ctx, res.Vars[0], image.RemoveOptions{})
+		return err
+	default:
+		return ninep.ErrWriteNotAllowed
+	}
 }
 
 func (f *Fs) WriteStat(ctx context.Context, path string, stat ninep.Stat) error {
 	return ninep.ErrWriteNotAllowed
-}
-
-func staticDirListing(modTime time.Time, names []string) iter.Seq2[fs.FileInfo, error] {
-	return func(yield func(fs.FileInfo, error) bool) {
-		for _, name := range names {
-			info := &ninep.SimpleFileInfo{
-				FIName:    name,
-				FIMode:    ninep.Readable,
-				FIModTime: modTime,
-			}
-			if !yield(info, nil) {
-				return
-			}
-		}
-	}
 }
 
 func readOnlyImageFileInfo(ftype, name string, modTime time.Time, inspect types.ImageInspect) fs.FileInfo {
@@ -357,6 +484,16 @@ func readOnlyImageFileInfo(ftype, name string, modTime time.Time, inspect types.
 
 func readOnlyContainerFileInfo(ftype, name string, modTime time.Time, inspect types.ContainerJSON) fs.FileInfo {
 	content, _ := containerFileContents(ftype, inspect)
+	return &ninep.SimpleFileInfo{
+		FIName:    name,
+		FIMode:    ninep.Readable,
+		FIModTime: modTime,
+		FISize:    int64(len(content)),
+	}
+}
+
+func readOnlyNetworkFileInfo(ftype, name string, modTime time.Time, inspect network.Inspect) fs.FileInfo {
+	content, _ := networkFileContents(ftype, inspect)
 	return &ninep.SimpleFileInfo{
 		FIName:    name,
 		FIMode:    ninep.Readable,
