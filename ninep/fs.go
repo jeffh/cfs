@@ -447,6 +447,9 @@ func DevFileInfo(name string) *SimpleFileInfo {
 func ReadDevFileInfo(name string) *SimpleFileInfo {
 	return MakeFileInfo(name, fs.ModeDevice|Readable, time.Now())
 }
+func WriteDevFileInfo(name string) *SimpleFileInfo {
+	return MakeFileInfo(name, fs.ModeDevice|Writeable, time.Now())
+}
 
 func TempFileInfo(name string) *SimpleFileInfo {
 	return MakeFileInfo(name, fs.ModeTemporary|Readable|Writeable, time.Now())
@@ -592,6 +595,13 @@ func (h *WriteOnlyFileHandle) Close() error { return nil }
 type RWFileHandle struct {
 	R io.Reader
 	W io.Writer
+}
+
+func WriteOnlyDeviceHandle() (*RWFileHandle, *io.PipeReader) {
+	h := &RWFileHandle{}
+	var r *io.PipeReader
+	r, h.W = io.Pipe()
+	return h, r
 }
 
 func DeviceHandle(flag OpenMode) (*RWFileHandle, *io.PipeReader, *io.PipeWriter) {

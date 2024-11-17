@@ -5,6 +5,7 @@ import (
 	"context"
 	"io/fs"
 	"iter"
+	"sort"
 	"strings"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 	"github.com/jeffh/cfs/ninep"
 )
@@ -56,6 +58,7 @@ var mx = ninep.NewMux().
 	Define().Path("/containers/{id}/logs").As("containerLogs").
 	Define().Path("/containers/{id}/stdout").As("containerStdout").
 	Define().Path("/containers/{id}/stderr").As("containerStderr").
+	Define().Path("/containers/{id}/ctl").As("containerCtl").
 	Define().Path("/networks").TrailSlash().As("networks").
 	Define().Path("/networks/{id}").TrailSlash().As("network").
 	Define().Path("/networks/{id}/name").As("networkName").
@@ -63,7 +66,13 @@ var mx = ninep.NewMux().
 	Define().Path("/networks/{id}/containers").TrailSlash().As("networkContainers").
 	Define().Path("/networks/{id}/containers/{containerId}").TrailSlash().As("networkContainer").
 	Define().Path("/networks/{id}/driver").As("networkDriver").
-	Define().Path("/networks/{id}/ipv6").As("networkIPv6")
+	Define().Path("/networks/{id}/ipv6").As("networkIPv6").
+	Define().Path("/volumes").TrailSlash().As("volumes").
+	Define().Path("/volumes/{name}").TrailSlash().As("volume").
+	Define().Path("/volumes/{name}/scope").As("volumeScope").
+	Define().Path("/volumes/{name}/driver").As("volumeDriver").
+	Define().Path("/volumes/{name}/labels").As("volumeLabels").
+	Define().Path("/volumes/{name}/mountpoint").As("volumeMountpoint")
 
 type Fs struct {
 	C *client.Client
@@ -121,6 +130,10 @@ func (f *Fs) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (ni
 			Timestamps: true,
 		}
 		return handleContainerLogsFile(f, res.Vars[0], options, flag)
+	case "containerCtl":
+		return handleContainerCtlFile(f, res.Vars[0], flag)
+	case "volumeScope", "volumeDriver", "volumeLabels", "volumeMountpoint":
+		return handleVolumeFile(f, res.Id, res.Vars[0], flag)
 	default:
 		return nil, fs.ErrNotExist
 	}
@@ -140,6 +153,7 @@ func (f *Fs) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, er
 			ninep.DirFileInfo("images"),
 			ninep.DirFileInfo("containers"),
 			ninep.DirFileInfo("networks"),
+			ninep.DirFileInfo("volumes"),
 		})
 	case "images":
 		return func(yield func(fs.FileInfo, error) bool) {
@@ -226,6 +240,7 @@ func (f *Fs) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, er
 		}
 		user := inspect.Config.User
 		return ninep.FileInfoSliceIteratorWithUsers([]fs.FileInfo{
+			ninep.WriteDevFileInfo("ctl"),
 			readOnlyContainerFileInfo("containerStatus", "status", t, inspect),
 			readOnlyContainerFileInfo("containerPID", "pid", t, inspect),
 			readOnlyContainerFileInfo("containerStartedAt", "started_at", t, inspect),
@@ -327,6 +342,52 @@ func (f *Fs) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, er
 			return ninep.FileInfoErrorIterator(fs.ErrNotExist)
 		}
 		return ninep.FileInfoSliceIterator([]fs.FileInfo{})
+	case "volumes":
+		return func(yield func(fs.FileInfo, error) bool) {
+			volumes, err := f.C.VolumeList(context.Background(), volume.ListOptions{})
+			if err != nil {
+				yield(nil, err)
+				return
+			}
+			sort.Slice(volumes.Volumes, func(i, j int) bool {
+				return volumes.Volumes[i].Name < volumes.Volumes[j].Name
+			})
+			for _, vol := range volumes.Volumes {
+				created, err := time.Parse(time.RFC3339, vol.CreatedAt)
+				if err != nil {
+					created = now
+				}
+				info := &ninep.SimpleFileInfo{
+					FIName:    vol.Name,
+					FIMode:    fs.ModeDir | ninep.Readable | ninep.Executable,
+					FIModTime: created,
+				}
+				if !yield(info, nil) {
+					return
+				}
+			}
+		}
+	case "volume":
+		inspect, err := f.C.VolumeInspect(ctx, res.Vars[0])
+		if err != nil {
+			return ninep.FileInfoErrorIterator(fs.ErrNotExist)
+		}
+		created, err := time.Parse(time.RFC3339, inspect.CreatedAt)
+		if err != nil {
+			created = now
+		}
+		return ninep.FileInfoSliceIterator([]fs.FileInfo{
+			readOnlyVolumeFileInfo("volumeScope", "scope", created, inspect),
+			readOnlyVolumeFileInfo("volumeDriver", "driver", created, inspect),
+			readOnlyVolumeFileInfo("volumeLabels", "labels", created, inspect),
+			readOnlyVolumeFileInfo("volumeMountpoint", "mountpoint", created, inspect),
+		})
+	case "volumeScope", "volumeDriver", "volumeLabels", "volumeMountpoint":
+		_, err := f.C.VolumeInspect(ctx, res.Vars[0])
+		if err != nil {
+			return ninep.FileInfoErrorIterator(fs.ErrNotExist)
+		}
+		return ninep.FileInfoErrorIterator(ninep.ErrListingOnNonDir)
 	default:
 		return ninep.FileInfoErrorIterator(fs.ErrNotExist)
 	}
@@ -481,19 +542,54 @@ func (f *Fs) Stat(ctx context.Context, path string) (fs.FileInfo, error) {
 		}, nil
 	case "containerLogs", "containerStdout", "containerStderr":
 		// Verify container exists
-		inspect, err := f.C.ContainerInspect(ctx, res.Vars[0])
+		_, err := f.C.ContainerInspect(ctx, res.Vars[0])
 		if err != nil {
 			return nil, fs.ErrNotExist
 		}
-		created, err := time.Parse(time.RFC3339, inspect.Created)
+		name := strings.ToLower(strings.TrimPrefix(res.Id, "container"))
+		return ninep.ReadDevFileInfo(name), nil
+
+	case "containerCtl":
+		return ninep.WriteDevFileInfo("ctl"), nil
+
+	case "volumes":
+		return &ninep.SimpleFileInfo{
+			FIName:    "volumes",
+			FIModTime: now,
+			FIMode:    fs.ModeDir | ninep.Readable | ninep.Executable,
+		}, nil
+	case "volume":
+		inspect, err := f.C.VolumeInspect(ctx, res.Vars[0])
+		if err != nil {
+			return nil, fs.ErrNotExist
+		}
+		created, err := time.Parse(time.RFC3339, inspect.CreatedAt)
 		if err != nil {
 			created = now
 		}
-		name := strings.ToLower(strings.TrimPrefix(res.Id, "container"))
 		return &ninep.SimpleFileInfo{
-			FIName:    name,
+			FIName:    res.Vars[0],
 			FIModTime: created,
-			FIMode:    fs.ModeDevice | ninep.Readable,
+			FIMode:    fs.ModeDir | ninep.Readable | ninep.Executable,
+		}, nil
+	case "volumeScope", "volumeDriver", "volumeLabels", "volumeMountpoint":
+		inspect, err := f.C.VolumeInspect(ctx, res.Vars[0])
+		if err != nil {
+			return nil, fs.ErrNotExist
+		}
+		content, err := volumeFileContents(res.Id, inspect)
+		if err != nil {
+			return nil, err
+		}
+		created, err := time.Parse(time.RFC3339, inspect.CreatedAt)
+		if err != nil {
+			created = now
+		}
+		return &ninep.SimpleFileInfo{
+			FIName:    strings.ToLower(strings.TrimPrefix(res.Id, "volume")),
+			FIModTime: created,
+			FIMode:    ninep.Readable,
+			FISize:    int64(len(content)),
 		}, nil
 
 	default:
@@ -517,6 +613,23 @@ func (f *Fs) Delete(ctx context.Context, path string) error {
 		}
 		_, err = f.C.ImageRemove(ctx, res.Vars[0], image.RemoveOptions{})
 		return err
+	case "container":
+		// Verify container exists first
+		_, err := f.C.ContainerInspect(ctx, res.Vars[0])
+		if err != nil {
+			return fs.ErrNotExist
+		}
+		return f.C.ContainerRemove(ctx, res.Vars[0], container.RemoveOptions{
+			RemoveVolumes: true,
+			Force:         true,
+		})
+	case "volume":
+		// Verify volume exists first
+		_, err := f.C.VolumeInspect(ctx, res.Vars[0])
+		if err != nil {
+			return fs.ErrNotExist
+		}
+		return f.C.VolumeRemove(ctx, res.Vars[0], false) // Force=true to remove even if in use
 	default:
 		return ninep.ErrWriteNotAllowed
 	}
@@ -548,6 +661,16 @@ func readOnlyContainerFileInfo(ftype, name string, modTime time.Time, inspect ty
 
 func readOnlyNetworkFileInfo(ftype, name string, modTime time.Time, inspect network.Inspect) fs.FileInfo {
 	content, _ := networkFileContents(ftype, inspect)
+	return &ninep.SimpleFileInfo{
+		FIName:    name,
+		FIMode:    ninep.Readable,
+		FIModTime: modTime,
+		FISize:    int64(len(content)),
+	}
+}
+
+func readOnlyVolumeFileInfo(ftype, name string, modTime time.Time, inspect volume.Volume) fs.FileInfo {
+	content, _ := volumeFileContents(ftype, inspect)
 	return &ninep.SimpleFileInfo{
 		FIName:    name,
 		FIMode:    ninep.Readable,

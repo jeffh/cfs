@@ -1,6 +1,7 @@
 package dockerfs
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -191,4 +192,72 @@ func handleContainerLogsFile(f *Fs, containerID string, options container.LogsOp
 	}
 
 	return ninep.NewReaderFileHandle(rc), nil
+}
+
+func handleContainerCtlFile(f *Fs, containerID string, flag ninep.OpenMode) (ninep.FileHandle, error) {
+	if flag.IsReadable() {
+		return nil, ninep.ErrReadNotAllowed
+	}
+
+	// Verify container exists
+	_, err := f.C.ContainerInspect(context.Background(), containerID)
+	if err != nil {
+		return nil, err
+	}
+
+	h, r := ninep.WriteOnlyDeviceHandle()
+
+	go func() {
+		defer r.Close()
+		scanner := bufio.NewScanner(r)
+		for scanner.Scan() {
+			line := scanner.Text()
+			kv, err := kvp.ParseKeyValues(line)
+			if err != nil {
+				r.CloseWithError(err)
+				continue
+			}
+
+			ctx := context.Background()
+
+			switch {
+			case kv.HasOne("kill"):
+				signal := kv.GetOne("signal")
+				err = f.C.ContainerKill(ctx, containerID, signal)
+
+			case kv.HasOne("stop"):
+				timeout := 0
+				if wait := kv.GetOne("wait"); wait != "" {
+					if t, err := strconv.Atoi(wait); err == nil {
+						timeout = t
+					}
+				}
+				err = f.C.ContainerStop(ctx, containerID, container.StopOptions{
+					Signal:  kv.GetOne("signal"),
+					Timeout: &timeout,
+				})
+
+			case kv.HasOne("start"):
+				err = f.C.ContainerStart(ctx, containerID, container.StartOptions{})
+
+			case kv.HasOne("wait"):
+				statusCh, errCh := f.C.ContainerWait(ctx, containerID, container.WaitConditionNotRunning)
+				select {
+				case err = <-errCh:
+				case status := <-statusCh:
+					r.CloseWithError(fmt.Errorf("exit_code=%d", status.StatusCode))
+				}
+
+			default:
+				r.CloseWithError(fmt.Errorf("unknown command: %q", line))
+				continue
+			}
+
+			if err != nil {
+				r.CloseWithError(err)
+			}
+		}
+	}()
+
+	return h, nil
 }

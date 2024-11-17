@@ -125,6 +125,14 @@ func (kv Map) GetOne(k string) string {
 	return ""
 }
 
+func (kv Map) HasOne(k string) bool {
+	v, ok := kv[k]
+	if ok && len(v) > 0 {
+		return true
+	}
+	return false
+}
+
 func strBool(s string) bool {
 	return s == "true" || s == "t" || s == "yes" || s == "y" || s == "ok"
 }
