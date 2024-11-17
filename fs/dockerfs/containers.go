@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"maps"
 	"slices"
 	"sort"
@@ -19,24 +18,6 @@ import (
 	"github.com/jeffh/cfs/ninep"
 	"github.com/jeffh/cfs/ninep/kvp"
 )
-
-type containerLogsFileHandle struct {
-	rc   io.ReadCloser
-	done chan struct{}
-}
-
-func (h *containerLogsFileHandle) Read(p []byte) (n int, err error) {
-	return h.rc.Read(p)
-}
-
-func (h *containerLogsFileHandle) Write(p []byte) (n int, err error) {
-	return 0, ninep.ErrWriteNotAllowed
-}
-
-func (h *containerLogsFileHandle) Close() error {
-	close(h.done)
-	return h.rc.Close()
-}
 
 func containerFileContents(fileType string, inspect types.ContainerJSON) (string, error) {
 	var content string
@@ -221,11 +202,11 @@ func handleContainerCtlFile(f *Fs, containerID string, flag ninep.OpenMode) (nin
 			ctx := context.Background()
 
 			switch {
-			case kv.HasOne("kill"):
+			case kv.Has("kill"):
 				signal := kv.GetOne("signal")
 				err = f.C.ContainerKill(ctx, containerID, signal)
 
-			case kv.HasOne("stop"):
+			case kv.Has("stop"):
 				timeout := 0
 				if wait := kv.GetOne("wait"); wait != "" {
 					if t, err := strconv.Atoi(wait); err == nil {
@@ -237,10 +218,10 @@ func handleContainerCtlFile(f *Fs, containerID string, flag ninep.OpenMode) (nin
 					Timeout: &timeout,
 				})
 
-			case kv.HasOne("start"):
+			case kv.Has("start"):
 				err = f.C.ContainerStart(ctx, containerID, container.StartOptions{})
 
-			case kv.HasOne("wait"):
+			case kv.Has("wait"):
 				statusCh, errCh := f.C.ContainerWait(ctx, containerID, container.WaitConditionNotRunning)
 				select {
 				case err = <-errCh:
