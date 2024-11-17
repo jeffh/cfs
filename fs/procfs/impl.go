@@ -44,8 +44,8 @@ func init() {
 }
 
 var mx = ninep.NewMux().
-	Define().Path("/").As("root").
-	Define().Path("/{pid}").As("proc").
+	Define().Path("/").TrailSlash().As("root").
+	Define().Path("/{pid}").TrailSlash().As("proc").
 	Define().Path("/{pid}/{op}").As("procOp")
 
 type fsys struct {

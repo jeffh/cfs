@@ -1,40 +1,47 @@
 package ninep
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 )
 
-type Match struct {
+type Nothing struct{}
+
+type MatchWith[X any] struct {
 	Id    string
 	Vars  []string
-	Tags  []string
-	Attrs map[string]string
+	Value X
 }
 
-type Mux struct {
-	patterns []pattern
+type Match = MatchWith[Nothing]
+
+type Mux[X any] struct {
+	patterns []pattern[X]
 }
 
 // NewMux creates a new Mux to map paths to ids
-func NewMux() *Mux {
-	return &Mux{}
+func NewMux() *Mux[Nothing] { return NewMuxWith[Nothing]() }
+
+// NewMuxWith creates a with a specific type associated to each pattern.
+func NewMuxWith[X any]() *Mux[X] {
+	return &Mux[X]{}
 }
 
 // Define defines a new pattern. Use As() to save the path.
-func (m *Mux) Define() *PatternBuilder {
-	return &PatternBuilder{
+func (m *Mux[X]) Define() *PatternBuilder[X] {
+	return &PatternBuilder[X]{
 		m: m,
 	}
 }
 
-type PatternBuilder struct {
+type PatternBuilder[X any] struct {
 	tpl                   string
 	optionalTrailingSlash bool
-	tags                  []string
-	attrs                 map[string]string
+	value                 X
 	id                    string
-	m                     *Mux
+	groups                []string
+	m                     *Mux[X]
 }
 
 // Path compiles a template into a regexp.
@@ -44,8 +51,9 @@ type PatternBuilder struct {
 //   - {name} captures the segment as a variable (e.g. /foo/{name}/bar)
 //   - {name*} captures zero or more segments as a variable (matches empty string as well)
 //   - {name+} captures one or more segments as a variable
-func (b *PatternBuilder) Path(tpl string) *PatternBuilder {
+func (b *PatternBuilder[X]) Path(tpl string) *PatternBuilder[X] {
 	var re strings.Builder
+	var groups []string
 	re.Grow(len(tpl) * 2)
 	start := 0
 	for i := 0; i < len(tpl); i++ {
@@ -65,6 +73,7 @@ func (b *PatternBuilder) Path(tpl string) *PatternBuilder {
 					}
 					start = j + 1
 					i = j
+					groups = append(groups, name)
 					break
 				}
 			}
@@ -72,36 +81,29 @@ func (b *PatternBuilder) Path(tpl string) *PatternBuilder {
 	}
 	re.WriteString(regexp.QuoteMeta(tpl[start:]))
 	b.tpl = re.String()
+	b.groups = groups
 	return b
 }
 
 // PathRegexp compiles a template into a regexp directly. Any groups are stored as Vars.
-func (b *PatternBuilder) PathRegexp(tpl string) *PatternBuilder {
+func (b *PatternBuilder[X]) PathRegexp(tpl string) *PatternBuilder[X] {
 	b.tpl = tpl
 	return b
 }
 
 // TrailSlash makes the pattern allow an optional trailing slash.
-func (b *PatternBuilder) TrailSlash() *PatternBuilder {
+func (b *PatternBuilder[X]) TrailSlash() *PatternBuilder[X] {
 	b.optionalTrailingSlash = true
 	return b
 }
 
-func (b *PatternBuilder) Tag(tag string) *PatternBuilder {
-	b.tags = append(b.tags, tag)
-	return b
-}
-
-func (b *PatternBuilder) Attr(key, value string) *PatternBuilder {
-	if b.attrs == nil {
-		b.attrs = make(map[string]string)
-	}
-	b.attrs[key] = value
+func (b *PatternBuilder[X]) With(value X) *PatternBuilder[X] {
+	b.value = value
 	return b
 }
 
 // As saves the pattern to Mux as the given id.
-func (b *PatternBuilder) As(id string) *Mux {
+func (b *PatternBuilder[X]) As(id string) *Mux[X] {
 	if b.tpl == "" {
 		panic("Path() must be defined")
 	}
@@ -110,31 +112,64 @@ func (b *PatternBuilder) As(id string) *Mux {
 		tpl += "/?"
 	}
 	b.id = id
-	b.m.patterns = append(b.m.patterns, pattern{
+	b.m.patterns = append(b.m.patterns, pattern[X]{
 		regexp: regexp.MustCompile("^" + tpl + "$"),
 		id:     b.id,
-		tags:   b.tags,
-		attrs:  b.attrs,
+		value:  b.value,
+		groups: b.groups,
 	})
 	return b.m
 }
 
-type pattern struct {
+type pattern[X any] struct {
 	regexp *regexp.Regexp
 	id     string
-	tags   []string
-	attrs  map[string]string
+	value  X
+	groups []string
+}
+
+func (m *Mux[X]) List(path string) []MatchWith[X] {
+	path = strings.TrimSuffix(path, "/") + "/"
+	var result []MatchWith[X]
+	for _, p := range m.patterns {
+		// Convert regexp pattern to prefix by:
+		// 1. Removing ^ from start and $ from end
+		// 2. Taking everything up to first special character
+		pattern := p.regexp.String()
+		pattern = strings.TrimPrefix(pattern, "^")
+		pattern = strings.TrimSuffix(pattern, "$")
+		pattern = strings.TrimSuffix(pattern, "/?")
+
+		// Find first special character
+		specialIdx := strings.IndexAny(pattern, "({[.*+?\\")
+		if specialIdx >= 0 {
+			pattern = pattern[:specialIdx]
+		}
+
+		// Check if this pattern matches the prefix
+		fmt.Printf("List.Compare: %q, %q => %v\n", pattern, path, strings.HasPrefix(pattern, path))
+		if strings.HasPrefix(pattern, path) {
+			if p.regexp.FindStringSubmatch(path) == nil {
+				result = append(result, MatchWith[X]{
+					Id:    p.id,
+					Vars:  p.groups,
+					Value: p.value,
+				})
+			}
+		}
+	}
+	return result
 }
 
 // Match returns true if the path matches any pattern.
-func (m *Mux) Match(path string, result *Match) bool {
+func (m *Mux[X]) Match(path string, result *MatchWith[X]) bool {
 	for _, p := range m.patterns {
 		matches := p.regexp.FindStringSubmatch(path)
 		if matches != nil {
 			if result != nil {
 				result.Id = p.id
 				result.Vars = matches[1:]
-				result.Tags = p.tags
+				result.Value = p.value
 			}
 			return true
 		}
@@ -143,10 +178,10 @@ func (m *Mux) Match(path string, result *Match) bool {
 }
 
 // Lookup returns the id and vars for the given path. If no match is found, it returns the defaultId.
-func (m *Mux) Lookup(path string, defaultId string) (id string, vars []string) {
-	var result Match
+func (m *Mux[X]) Lookup(path string, defaultId string) *MatchWith[X] {
+	var result MatchWith[X]
 	if m.Match(path, &result) {
-		return result.Id, result.Vars
+		return &result
 	}
-	return defaultId, nil
+	return nil
 }

@@ -5,3 +5,4 @@ result
 private.key
 *.out
 profile*
+.ops

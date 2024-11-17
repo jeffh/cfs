@@ -193,6 +193,8 @@ func FileInfoSliceFromIterator(itr iter.Seq2[fs.FileInfo, error], max int) ([]fs
 //
 // These keys are only populated if the FileSystem is running under a tcp
 // server context.
+//
+// Every method must be safe to call concurrently.
 type FileSystem interface {
 	// Creates a directory. Implementions should recursively make directories
 	// whenever possible.
@@ -392,6 +394,15 @@ func Reader(h FileHandle) io.Reader { return &handleReaderWriter{h, 0} }
 func Writer(h FileHandle) io.Writer { return &handleReaderWriter{h, 0} }
 
 /////////////////////////////////////////////////
+
+// RootFileInfo provides a basic fs.FileInfo for root directories
+var RootFileInfo fs.FileInfo = &SimpleFileInfo{
+	FIName:    ".",
+	FISize:    0,
+	FIMode:    fs.ModeDir | Readable | Executable,
+	FIModTime: time.Time{},
+	FISys:     nil,
+}
 
 // Implements a basic, in-memory struct that conforms to fs.FileInfo
 type SimpleFileInfo struct {

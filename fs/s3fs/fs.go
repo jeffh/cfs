@@ -31,7 +31,7 @@ import (
 	"github.com/jeffh/cfs/ninep/kvp"
 )
 
-var mx = ninep.NewMux().
+var mx = ninep.NewMuxWith[string]().
 	Define().Path("/").As("root").
 	Define().Path("/ctl").As("ctl").
 	Define().Path("/buckets").TrailSlash().As("buckets").
@@ -39,9 +39,9 @@ var mx = ninep.NewMux().
 	Define().Path("/buckets/{bucket}/ctl").As("bucketCtl").
 	Define().Path("/buckets/{bucket}/cors").As("bucketCors").
 	Define().Path("/buckets/{bucket}/objects").TrailSlash().As("objects").
-	Define().Path("/buckets/{bucket}/objects/{key*}").Attr("dir", "objects").As("objectByKey").
+	Define().Path("/buckets/{bucket}/objects/{key*}").With("objects").As("objectByKey").
 	Define().Path("/buckets/{bucket}/metadata").TrailSlash().As("metadata").
-	Define().Path("/buckets/{bucket}/metadata/{key*}").Attr("dir", "metadata").As("metadataByKey").
+	Define().Path("/buckets/{bucket}/metadata/{key*}").With("metadata").As("metadataByKey").
 	Define().Path("/buckets/{bucket}/sign").TrailSlash().As("sign").
 	Define().Path("/buckets/{bucket}/sign/expires").As("signExpires").
 	Define().Path("/buckets/{bucket}/sign/download_url").TrailSlash().As("signDownload").
@@ -197,7 +197,7 @@ func (f *fsys) evictCachedObjectsForBucket(bucket string) {
 }
 
 func (f *fsys) MakeDir(ctx context.Context, path string, mode ninep.Mode) error {
-	var res ninep.Match
+	var res ninep.MatchWith[string]
 	if !mx.Match(path, &res) {
 		return fs.ErrPermission
 	}
@@ -232,7 +232,7 @@ func (f *fsys) MakeDir(ctx context.Context, path string, mode ninep.Mode) error 
 }
 
 func (f *fsys) CreateFile(ctx context.Context, path string, flag ninep.OpenMode, mode ninep.Mode) (ninep.FileHandle, error) {
-	var res ninep.Match
+	var res ninep.MatchWith[string]
 	if !mx.Match(path, &res) {
 		return nil, fs.ErrPermission
 	}
@@ -293,7 +293,7 @@ func (f *fsys) CreateFile(ctx context.Context, path string, flag ninep.OpenMode,
 }
 
 func (f *fsys) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (ninep.FileHandle, error) {
-	var res ninep.Match
+	var res ninep.MatchWith[string]
 	if !mx.Match(path, &res) {
 		return nil, fs.ErrNotExist
 	}
@@ -571,7 +571,7 @@ func (f *fsys) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (
 }
 
 func (f *fsys) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, error] {
-	var res ninep.Match
+	var res ninep.MatchWith[string]
 	if !mx.Match(path, &res) {
 		return ninep.FileInfoErrorIterator(fs.ErrNotExist)
 	}
@@ -633,7 +633,7 @@ func (f *fsys) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, 
 }
 
 func (f *fsys) Stat(ctx context.Context, path string) (fs.FileInfo, error) {
-	var res ninep.Match
+	var res ninep.MatchWith[string]
 	if !mx.Match(path, &res) {
 		return nil, fs.ErrNotExist
 	}
@@ -712,7 +712,7 @@ func (f *fsys) Stat(ctx context.Context, path string) (fs.FileInfo, error) {
 }
 
 func (f *fsys) WriteStat(ctx context.Context, path string, s ninep.Stat) error {
-	var res ninep.Match
+	var res ninep.MatchWith[string]
 	if !mx.Match(path, &res) {
 		return fs.ErrNotExist
 	}
@@ -735,7 +735,7 @@ func (f *fsys) WriteStat(ctx context.Context, path string, s ninep.Stat) error {
 }
 
 func (f *fsys) Delete(ctx context.Context, path string) error {
-	var res ninep.Match
+	var res ninep.MatchWith[string]
 	if !mx.Match(path, &res) {
 		return fs.ErrNotExist
 	}
@@ -762,7 +762,7 @@ func (f *fsys) Delete(ctx context.Context, path string) error {
 }
 
 func (f *fsys) Walk(ctx context.Context, parts []string) ([]fs.FileInfo, error) {
-	var res ninep.Match
+	var res ninep.MatchWith[string]
 	path := strings.Trim(strings.Join(parts, "/"), ".")
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
@@ -894,7 +894,7 @@ func (f *fsys) Walk(ctx context.Context, parts []string) ([]fs.FileInfo, error) 
 			infos = append(infos, info)
 		}
 		var em fs.FileMode
-		infos = append(infos, ninep.DirFileInfo(res.Attrs["dir"]))
+		infos = append(infos, ninep.DirFileInfo(res.Value))
 		if res.Id != "objectByKey" {
 			em = fs.ModeDevice
 		}

@@ -36,7 +36,7 @@ func TestMux(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		var res Match
+		var res MatchWith
 		ok := m.Match(c.path, &res)
 		if ok != c.ok {
 			t.Errorf("Match(%q) = %v, want %v", c.path, ok, c.ok)

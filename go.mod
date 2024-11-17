@@ -22,7 +22,9 @@ require (
 	golang.org/x/crypto v0.25.0
 	golang.org/x/image v0.19.0
 	golang.org/x/sys v0.27.0
+	periph.io/x/conn/v3 v3.7.1
 	periph.io/x/devices/v3 v3.7.2
+	periph.io/x/host/v3 v3.8.2
 )
 
 require (
@@ -63,6 +65,4 @@ require (
 	golang.org/x/time v0.5.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gotest.tools/v3 v3.0.3 // indirect
-	periph.io/x/conn/v3 v3.7.1 // indirect
-	periph.io/x/host/v3 v3.8.2 // indirect
 )
