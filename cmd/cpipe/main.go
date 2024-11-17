@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -56,7 +57,7 @@ func main() {
 
 		wtr := ninep.Writer(h)
 		_, err = io.Copy(wtr, os.Stdin)
-		if err != nil && err != io.EOF {
+		if err != nil && !errors.Is(err, io.EOF) {
 			return err
 		}
 

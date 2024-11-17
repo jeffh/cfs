@@ -1,0 +1,27 @@
+name = 'einkfs.service'
+location = '/etc/systemd/system/'
+
+[unit]
+description = 'Eink display file system service'
+after = ['network.target']
+condition-path-exists = []
+
+[install]
+wanted-by = ['multi-user.target']
+required-by = []
+alias = []
+
+[service]
+# valid values: simple, exec, forking, oneshot, dbus, notify, idle
+type = 'simple'
+# valid values: always, on-failure, no, on-success, on-abnormal, on-abort, on-watchdog
+restart = 'on-failure'
+restart-sec = '10s'
+exec-start = '/home/pi/einkfs -addr :564'
+exec-reload = '/bin/kill --signal HUD $MAINPID'
+start-limit-burst = '3'
+start-limit-interval-sec = '10'
+kill-mode = 'process'
+kill-signal = 'SIGTERM'
+limit-nofile = '65536'
+environment = ['ENV=PRODUCTION']

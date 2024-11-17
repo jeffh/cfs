@@ -577,7 +577,7 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 		// TODO: handle retriable errors
 		n, err := fil.H.ReadAt(data, int64(m.Offset()))
 		if n == 0 {
-			if err == io.EOF {
+			if err == io.EOF || err == nil {
 				w.Rread(0)
 				h.Tracef("srv: Tread: EOF: fid %d", m.Fid())
 				return

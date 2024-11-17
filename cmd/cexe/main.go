@@ -328,11 +328,11 @@ func runServer() {
 		log.Fatalf("Unsupported executor: %#v", method)
 	}
 
-	log.Printf("Listening on %s\n", addr)
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		log.Fatalf("error: %s\n", err)
 	}
+	log.Printf("Listening on %s\n", ln.Addr())
 	defer ln.Close()
 
 	for {

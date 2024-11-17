@@ -56,7 +56,7 @@ func (c *ServerConfig) SetFlags(f Flags) {
 	f.BoolVar(&c.PrintHelp, "help", false, "Prints this help")
 	f.StringVar(&c.CertFile, "certfile", "", "Accept only TLS wrapped connections. Also needs to specify keyfile flag.")
 	f.StringVar(&c.KeyFile, "keyfile", "", "Accept only TLS wrapped connections. Also needs to specify certfile flag.")
-	f.StringVar(&c.Addr, "addr", "localhost:6666", "The address and port for the 9p server to listen to")
+	f.StringVar(&c.Addr, "addr", "localhost:9pfs", "The address and port for the 9p server to listen to")
 	f.StringVar(&c.MemProfile, "memprofile", "", "File to store memory profile")
 	f.StringVar(&c.CpuProfile, "cpuprofile", "", "File to store cpu profile")
 }
@@ -254,7 +254,6 @@ func srvMainWithCfg(stdout, stderr io.Writer, mkCfg func(stdout, stderr io.Write
 		ctx, cancel := context.WithCancel(parentCtx)
 		go func() {
 			defer cancel()
-			fmt.Fprintf(cfg.Stdout, "Listening on %s", cfg.Addr)
 			err := cfg.ListenAndServe(srv)
 			if err != nil {
 				fmt.Fprintf(cfg.Stdout, "Error: %s\n", err)

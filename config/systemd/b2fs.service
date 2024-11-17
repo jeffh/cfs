@@ -8,7 +8,6 @@ User=
 WorkingDirectory=/home/p9
 ExecStart=b2fs -addr localhost:6101 -err
 Restart=on-failure
-EnvironmentFile="PATH_TO_ENV_FILE"
 
 [Install]
 WantedBy=multi-user.target

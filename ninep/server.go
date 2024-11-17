@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"log"
 	"math"
 	"net"
 	"os"
@@ -209,7 +210,7 @@ func (s *Server) ListenAndServe(network, addr string, d Dialer) error {
 		d = &TCPDialer{}
 	}
 	if addr == "" {
-		addr = ":9pfs"
+		addr = ":564"
 	}
 	if network == "" {
 		network = "tcp"
@@ -218,6 +219,7 @@ func (s *Server) ListenAndServe(network, addr string, d Dialer) error {
 	if err != nil {
 		return err
 	}
+	log.Printf("listening on %s", ln.Addr())
 	return s.Serve(ln)
 }
 
@@ -232,6 +234,7 @@ func (s *Server) ListenAndServeTLS(network, addr string, certFile, keyFile strin
 	if err != nil {
 		return err
 	}
+	log.Printf("listening on %s", ln.Addr())
 	return s.ServeTLS(ln, certFile, keyFile)
 }
 
