@@ -2,6 +2,7 @@ package einkfs
 
 import (
 	"image"
+	"image/color"
 	"image/draw"
 	"log"
 
@@ -14,6 +15,7 @@ import (
 type EinkDevice interface {
 	Draw(dstRect image.Rectangle, src image.Image, srcPts image.Point) error
 	Bounds() image.Rectangle
+	Clear(color.Color) error
 }
 
 func NewNullEinkDevice(size image.Point) EinkDevice {
@@ -28,6 +30,7 @@ func (d NullEinkDevice) Draw(dstRect image.Rectangle, src image.Image, srcPts im
 	return nil
 }
 func (d NullEinkDevice) Bounds() image.Rectangle { return d.B }
+func (d NullEinkDevice) Clear(color.Color) error { return nil }
 
 func NewImage1bitVerticalLSB(r image.Rectangle) draw.Image {
 	return image1bit.NewVerticalLSB(r)
@@ -48,6 +51,7 @@ func NewWaveshare2in13v2FS(fset FontSet, logger *log.Logger, rotation int) (f ni
 		b.Close()
 		return nil, nil, err
 	}
+	dev.SetUpdateMode(waveshare2in13v2.Partial)
 	closer := func() { b.Close() }
 	return NewFS(dev, NewImage1bitVerticalLSB, logger, fset, rotation), closer, nil
 }
