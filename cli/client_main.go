@@ -56,7 +56,7 @@ func (c *ClientConfig) user() string {
 func (c *ClientConfig) FSMount(mnt *proxy.FileSystemMountConfig) (proxy.FileSystemMount, error) {
 	switch mnt.Addr {
 	case ":memory":
-		return proxy.FileSystemMount{&fs.Mem{}, mnt.Prefix, nil, mnt.Addr, nil}, nil
+		return proxy.FileSystemMount{FS: &fs.Mem{}, Prefix: mnt.Prefix, Addr: mnt.Addr}, nil
 	case ":tmp":
 		dir, err := os.MkdirTemp("", "*")
 		if err != nil {
@@ -69,7 +69,7 @@ func (c *ClientConfig) FSMount(mnt *proxy.FileSystemMountConfig) (proxy.FileSyst
 			}
 			return nil
 		}
-		return proxy.FileSystemMount{fs.Dir(dir), mnt.Prefix, nil, mnt.Addr, clean}, nil
+		return proxy.FileSystemMount{FS: fs.Dir(dir), Prefix: mnt.Prefix, Addr: mnt.Addr, Clean: clean}, nil
 	case "", ".":
 		fpath := filepath.Join(mnt.Addr, mnt.Prefix)
 		if mnt.Addr == "" {
@@ -84,13 +84,13 @@ func (c *ClientConfig) FSMount(mnt *proxy.FileSystemMountConfig) (proxy.FileSyst
 			}
 		}
 
-		return proxy.FileSystemMount{fs.Dir(fpath), prefix, nil, mnt.Addr, nil}, nil
+		return proxy.FileSystemMount{FS: fs.Dir(fpath), Prefix: prefix, Addr: mnt.Addr}, nil
 	default:
 		client, fs, err := c.CreateFs(mnt.Addr)
 		if err != nil {
-			return proxy.FileSystemMount{}, fmt.Errorf("Failed connecting to %s/%s: %w", mnt.Addr, mnt.Prefix, err)
+			return proxy.FileSystemMount{}, fmt.Errorf("failed connecting to %s/%s: %w", mnt.Addr, mnt.Prefix, err)
 		}
-		return proxy.FileSystemMount{fs, mnt.Prefix, client, mnt.Addr, nil}, nil
+		return proxy.FileSystemMount{FS: fs, Prefix: mnt.Prefix, Addr: mnt.Addr, Client: client}, nil
 	}
 }
 

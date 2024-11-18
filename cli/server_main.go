@@ -94,7 +94,10 @@ func (c *ServerConfig) CreateServer(createfs func() ninep.FileSystem) *ninep.Ser
 	if c.PrintTraceFSMessages {
 		fsys = fs.TraceFs(
 			fsys,
-			ninep.Loggable{log.New(os.Stdout, "[err] ", log.LstdFlags), log.New(os.Stdout, "[trace] ", log.LstdFlags)},
+			ninep.Loggable{
+				ErrorLog: log.New(os.Stdout, "[err] ", log.LstdFlags),
+				TraceLog: log.New(os.Stdout, "[trace] ", log.LstdFlags),
+			},
 		)
 	}
 

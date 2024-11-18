@@ -271,7 +271,7 @@ type SerialRetryClientTransport struct {
 	nextServerFid uint32
 
 	mut  sync.Mutex
-	fids map[Fid]fidState // clientFid -> serverFid
+	fids map[Fid]*fidState // clientFid -> serverFid
 
 	d          Dialer
 	network    string
@@ -292,7 +292,7 @@ func (t *SerialRetryClientTransport) MaxMessageSize() uint32 {
 
 func (t *SerialRetryClientTransport) Connect(d Dialer, network, addr, usr, mnt string, A Authorizee, L Loggable) error {
 	t.mut.Lock()
-	t.fids = make(map[Fid]fidState)
+	t.fids = make(map[Fid]*fidState)
 	t.nextServerFid = 0
 	t.mut.Unlock()
 
@@ -406,7 +406,7 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 			case Rauth:
 				r := req.(Tauth)
 				t.mut.Lock()
-				t.fids[orig.(Tauth).Afid()] = fidState{
+				t.fids[orig.(Tauth).Afid()] = &fidState{
 					qtype:     m.Aqid().Type(),
 					mode:      M_AUTH,
 					mappedFid: r.Afid(),
@@ -420,7 +420,7 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 			case Rattach:
 				r := req.(Tattach)
 				t.mut.Lock()
-				t.fids[orig.(Tattach).Fid()] = fidState{
+				t.fids[orig.(Tattach).Fid()] = &fidState{
 					qtype:      m.Qid().Type(),
 					mode:       M_MOUNT,
 					mappedFid:  r.Fid(),
@@ -439,7 +439,7 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 					qt = m.Wqid(int(m.NumWqid() - 1)).Type()
 				}
 				t.mut.Lock()
-				t.fids[orig.(Twalk).NewFid()] = fidState{
+				t.fids[orig.(Twalk).NewFid()] = &fidState{
 					qtype:        qt,
 					mappedFid:    r.NewFid(),
 					serverFid:    r.Fid(),
@@ -450,7 +450,7 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 			case Ropen:
 				r := req.(Topen)
 				t.mut.Lock()
-				t.fids[orig.(Topen).Fid()] = fidState{
+				t.fids[orig.(Topen).Fid()] = &fidState{
 					qtype:     m.Qid().Type(),
 					flag:      r.Mode(),
 					mappedFid: r.Fid(),
@@ -462,7 +462,7 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 			case Rcreate:
 				r := req.(Tcreate)
 				t.mut.Lock()
-				t.fids[orig.(Tcreate).Fid()] = fidState{
+				t.fids[orig.(Tcreate).Fid()] = &fidState{
 					qtype:        m.Qid().Type(),
 					path:         []string{r.Name()},
 					flag:         r.Mode(),

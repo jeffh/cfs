@@ -149,7 +149,7 @@ func (f *EncryptedFileSystem) CreateFile(ctx context.Context, path string, flag 
 	if err != nil {
 		return nil, err
 	}
-	return &ninep.ProtectedFileHandle{commitHandle, flag}, nil
+	return &ninep.ProtectedFileHandle{H: commitHandle, Flag: flag}, nil
 }
 
 func (f *EncryptedFileSystem) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (ninep.FileHandle, error) {

@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/disintegration/imaging"
 	"github.com/jeffh/cfs/fs/muxfs"
@@ -74,15 +75,20 @@ type internalState struct {
 	mkimg func(r image.Rectangle) draw.Image
 	fset  FontSet
 
-	mu       sync.Mutex
-	display  draw.Image
-	text     string
-	rotation int
+	mu          sync.Mutex
+	lastUpdated time.Time
+	display     draw.Image
+	text        string
+	rotation    int
 }
 
 func (f *internalState) unsafeBlit(img image.Image) {
 	zero := image.Point{}
 	draw.Draw(f.display, f.display.Bounds(), img, zero, draw.Src)
+	if time.Since(f.lastUpdated) >= 24*time.Hour {
+		f.dev.Clear(image.White)
+		f.lastUpdated = time.Now()
+	}
 	err := f.dev.Draw(f.dev.Bounds(), f.display, zero)
 	if err != nil {
 		return
@@ -123,6 +129,8 @@ func (f *internalState) clear() {
 	defer f.mu.Unlock()
 	f.text = ""
 	draw.Draw(f.display, f.display.Bounds(), &image.Uniform{image1bit.On}, image.Point{}, draw.Src)
+	f.lastUpdated = time.Now()
+	f.dev.Clear(image.White)
 	f.dev.Draw(f.dev.Bounds(), f.display, image.Point{})
 }
 
