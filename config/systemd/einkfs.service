@@ -17,7 +17,7 @@ type = 'simple'
 # valid values: always, on-failure, no, on-success, on-abnormal, on-abort, on-watchdog
 restart = 'on-failure'
 restart-sec = '10s'
-exec-start = '/home/pi/einkfs -addr :564'
+exec-start = '/home/pi/einkfs -addr :564 -rotation 1'
 exec-reload = '/bin/kill --signal HUD $MAINPID'
 start-limit-burst = '3'
 start-limit-interval-sec = '10'

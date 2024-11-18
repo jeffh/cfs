@@ -4,7 +4,9 @@ import (
 	"context"
 	"io/fs"
 	"iter"
+	"maps"
 	"os/user"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -36,10 +38,7 @@ var controls = map[string]controlFile{
 var sortedKeys []string
 
 func init() {
-	sortedKeys = make([]string, 0, len(controls))
-	for k := range controls {
-		sortedKeys = append(sortedKeys, k)
-	}
+	sortedKeys = slices.Collect(maps.Keys(controls))
 	sort.Strings(sortedKeys)
 }
 
