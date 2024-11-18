@@ -110,7 +110,12 @@ func (f *internalState) textImage(txt string) image.Image {
 }
 
 func (f *internalState) drawText(txt string) {
-	f.blit(f.textImage(txt), txt)
+	f.mu.Lock()
+	text := f.text
+	f.mu.Unlock()
+	if text != txt {
+		f.blit(f.textImage(txt), txt)
+	}
 }
 
 func (f *internalState) clear() {
@@ -189,16 +194,6 @@ func textHandle(state *internalState, flag ninep.OpenMode) (ninep.FileHandle, er
 			defer r.Close()
 			txt := buf.String()
 			txt = strings.TrimSpace(txt)
-			img := state.mkimg(rotateBounds(state.display.Bounds(), state.rotation))
-			draw.Draw(img, img.Bounds(), image.White, image.Point{}, draw.Src)
-			state.fset.RenderText(img, txt, nil)
-			switch state.rotation {
-			case 1:
-				img = imaging.Rotate270(img)
-			case 3:
-				img = imaging.Rotate90(img)
-			default:
-			}
 			state.drawText(txt)
 		}()
 	}
