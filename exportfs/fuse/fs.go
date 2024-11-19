@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -23,10 +24,11 @@ const timeout = 0
 const timeoutMsec = 0
 
 // A helper function for starting a fuse mount point
-func MountAndServeFS(ctx context.Context, f ninep.FileSystem, prefix string, loggable ninep.Loggable, mountpoint string, opts *fs.Options) error {
+func MountAndServeFS(ctx context.Context, f ninep.FileSystem, prefix, level string, L *slog.Logger, mountpoint string, opts *fs.Options) error {
+	L = ninep.CreateLogger(level, "fuse", L)
 	fscfg := &FsConfig{
-		Loggable: loggable,
-		prefix:   prefix,
+		L:      L,
+		prefix: prefix,
 	}
 	root := &Dir{fs: f, path: "", config: fscfg, timeout: 10}
 
@@ -75,7 +77,7 @@ type FsConfig struct {
 	m    sync.Mutex
 	inos map[string]uint64
 
-	ninep.Loggable
+	L *slog.Logger
 }
 
 func (c *FsConfig) putIno(path string, value *interface{}) {
@@ -125,20 +127,19 @@ type Dir struct {
 	timeout uint64
 }
 
-func (n *Dir) tracef(format string, values ...interface{}) {
-	n.config.Loggable.Tracef(format, values...)
-}
-func (n *Dir) errorf(format string, values ...interface{}) {
-	n.config.Loggable.Errorf(format, values...)
-}
-
 // func (n *Dir) Getattr(ctx context.Context, a *fuse.Attr) error {
 func (n *Dir) Getattr(ctx context.Context, h fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
 	path := n.config.path(n.path)
 	st, err := n.fs.Stat(ctx, path)
-	n.tracef("Dir.Attr(%#v, %#v)\n", path, h)
 	if err != nil {
+		if n.config.L != nil {
+			n.config.L.DebugContext(ctx, "Dir.Getattr", slog.String("path", path), slog.String("err", err.Error()))
+		}
 		return mapErr(err, syscall.EACCES)
+	} else {
+		if n.config.L != nil {
+			n.config.L.InfoContext(ctx, "Dir.Getattr", slog.String("path", path))
+		}
 	}
 	if errno := fillAttr(n.config, st, &out.Attr); errno != 0 {
 		return errno
@@ -162,10 +163,16 @@ func (n *Dir) Setattr(ctx context.Context, f fs.FileHandle, in *fuse.SetAttrIn, 
 		st.SetMode(ninep.ModeFromOS(os.FileMode(mode)))
 	}
 	path := n.config.path(n.path)
-	n.tracef("Dir.SetAttr(%#v, %#v)\n", path, f)
 	errno := mapErr(n.fs.WriteStat(ctx, path, st), syscall.EINVAL) // TODO: what is the proper error here?
 	if errno != 0 {
+		if n.config.L != nil {
+			n.config.L.ErrorContext(ctx, "Dir.Setattr", slog.String("path", path), slog.Any("st", st), slog.String("err", syscall.Errno(errno).Error()))
+		}
 		return errno
+	} else {
+		if n.config.L != nil {
+			n.config.L.InfoContext(ctx, "Dir.Setattr", slog.String("path", path), slog.Any("st", st))
+		}
 	}
 
 	stat, err := n.fs.Stat(ctx, path)
@@ -196,7 +203,9 @@ func (n *Dir) Rename(ctx context.Context, name string, newParent fs.InodeEmbedde
 
 	oldpath := filepath.Join(path, name)
 	newpath = filepath.Join(newpath, newName)
-	n.tracef("[%v]Dir.Rename(%#v, %#v)\n", path, oldpath, newpath)
+	if n.config.L != nil {
+		n.config.L.InfoContext(ctx, "Dir.Rename", slog.String("path", path), slog.String("oldpath", oldpath), slog.String("newpath", newpath))
+	}
 	st := ninep.SyncStatWithName(newpath)
 	return mapErr(n.fs.WriteStat(ctx, oldpath, st), syscall.EINVAL) // TODO: what is a better error message?
 }
@@ -208,7 +217,9 @@ func (n *Dir) Link(ctx context.Context, target fs.InodeEmbedder, name string, ou
 
 func (n *Dir) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	path := n.config.path(n.path)
-	n.tracef("[%v]Dir.ReadDirAll()\n", path)
+	if n.config.L != nil {
+		n.config.L.DebugContext(ctx, "Dir.ReadDirAll", slog.String("path", path))
+	}
 	entries := make([]fuse.DirEntry, 0, 16)
 	i := 0
 	for info, err := range n.fs.ListDir(ctx, path) {
@@ -222,7 +233,9 @@ func (n *Dir) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 			Mode: dt,
 			Name: stat.Name(),
 		})
-		n.tracef("[%v]Dir.ReadDirAll() => [%d, %#v] -> %#v | %s | %v\n", path, i, stat.Name(), entries[i], stat.Mode().String(), dt)
+		if n.config.L != nil {
+			n.config.L.DebugContext(ctx, "Dir.ReadDirAll", slog.String("path", path), slog.Int("i", i), slog.String("name", stat.Name()), slog.String("mode", stat.Mode().String()), slog.Uint64("dt", uint64(dt)))
+		}
 		i++
 	}
 	return fs.NewListDirStream(entries), 0
@@ -233,7 +246,9 @@ func (n *Dir) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.
 
 	path := n.config.path(n.path)
 	path = filepath.Join(n.path, name)
-	n.tracef("[%v]Dir.Lookup(%#v, %#v, %#v)\n", path, n.config.prefix, n.path, name)
+	if n.config.L != nil {
+		n.config.L.DebugContext(ctx, "Dir.Lookup.begin", slog.String("path", path), slog.String("name", name))
+	}
 	info, err := n.fs.Stat(ctx, path)
 	if err != nil {
 		return nil, mapErr(err, 0)
@@ -248,7 +263,9 @@ func (n *Dir) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.
 		Mode: fillMode(info),
 		Ino:  stat.Qid().Path(),
 	}
-	n.tracef(" -> ino: %d\n", stat.Qid().Path())
+	if n.config.L != nil {
+		n.config.L.DebugContext(ctx, "Dir.Lookup", slog.String("path", path), slog.String("name", name), slog.Uint64("ino", stat.Qid().Path()), slog.Bool("isDir", info.IsDir()))
+	}
 
 	out.NodeId = stable.Ino
 	out.EntryValid = n.timeout
@@ -260,7 +277,6 @@ func (n *Dir) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.
 	} else {
 		inode = n.NewInode(ctx, &File{fs: n.fs, path: path, config: n.config, timeout: n.timeout}, stable)
 	}
-	fmt.Printf(" -> inode: %#v -> isDir=%#v\n", inode, info.IsDir())
 	return inode, 0
 }
 
@@ -268,15 +284,23 @@ func (n *Dir) Mkdir(ctx context.Context, name string, mode uint32, out *fuse.Ent
 	path := n.config.path(n.path)
 	path = filepath.Join(path, name)
 	mod := flagModeToMode(0, os.FileMode(mode))
-	n.tracef("[%v]Dir.Mkdir(%#v) | %s\n", path, name, mod.String())
+	if n.config.L != nil {
+		n.config.L.DebugContext(ctx, "Dir.Mkdir", slog.String("path", path), slog.String("name", name), slog.String("mode", mod.String()))
+	}
 
 	err := n.fs.MakeDir(ctx, path, mod)
 	if err != nil {
+		if n.config.L != nil {
+			n.config.L.ErrorContext(ctx, "Dir.MkDir", slog.String("path", path), slog.String("name", name), slog.String("mode", mod.String()), slog.String("err", err.Error()))
+		}
 		return nil, mapErr(err, syscall.EINVAL) // TODO: what's better to report here?
 	}
 
 	info, err := n.fs.Stat(ctx, path)
 	if err != nil {
+		if n.config.L != nil {
+			n.config.L.ErrorContext(ctx, "Dir.MkDir", slog.String("path", path), slog.String("name", name), slog.String("mode", mod.String()), slog.String("err", err.Error()))
+		}
 		return nil, mapErr(err, syscall.EINVAL) // TODO: what's better to report here?
 	}
 
@@ -285,7 +309,6 @@ func (n *Dir) Mkdir(ctx context.Context, name string, mode uint32, out *fuse.Ent
 		Mode: fillMode(info),
 		Ino:  stat.Qid().Path(),
 	}
-	n.tracef(" -> ino: %d\n", stat.Qid().Path())
 
 	out.NodeId = stable.Ino
 	out.EntryValid = n.timeout
@@ -294,6 +317,9 @@ func (n *Dir) Mkdir(ctx context.Context, name string, mode uint32, out *fuse.Ent
 	if errno := fillAttr(n.config, info, &out.Attr); errno != 0 {
 		return nil, errno
 	}
+	if n.config.L != nil {
+		n.config.L.InfoContext(ctx, "Dir.MkDir", slog.String("path", path), slog.String("name", name), slog.String("mode", mod.String()), slog.Uint64("ino", stat.Qid().Path()))
+	}
 
 	inode := n.NewInode(ctx, &Dir{fs: n.fs, path: path, config: n.config, timeout: n.timeout}, stable)
 	return inode, 0
@@ -301,13 +327,17 @@ func (n *Dir) Mkdir(ctx context.Context, name string, mode uint32, out *fuse.Ent
 
 func (n *Dir) Create(ctx context.Context, name string, flags uint32, mode uint32, out *fuse.EntryOut) (node *fs.Inode, fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
 	path := n.config.path(n.path)
-	n.tracef("[%v]Dir.CreateFile(%#v)\n", path, name)
+	if n.config.L != nil {
+		n.config.L.DebugContext(ctx, "Dir.CreateFile.begin", slog.String("path", path), slog.String("name", name), slog.Uint64("flags", uint64(flags)), slog.Uint64("mode", uint64(mode)))
+	}
 	path = filepath.Join(path, name)
 	flg := flagToOpenMode(flags)
 	mod := flagModeToMode(flags, os.FileMode(mode))
 
 	if flags&syscall.O_CREAT == 0 {
-		n.tracef("FUSE: did not get OpenCreate\n")
+		if n.config.L != nil {
+			n.config.L.ErrorContext(ctx, "Dir.CreateFile", slog.String("path", path), slog.String("name", name), slog.String("err", "FUSE did not get OpenCreate"))
+		}
 		return nil, nil, 0, syscall.EINVAL
 	}
 
@@ -315,8 +345,10 @@ func (n *Dir) Create(ctx context.Context, name string, flags uint32, mode uint32
 		return nil, nil, 0, syscall.EINVAL
 	} else {
 		h, err := n.fs.CreateFile(ctx, path, flg, mod)
-		n.tracef("CreateFile(%#v, %s, %s) => %s\n", path, flg, mod, err)
 		if err != nil {
+			if n.config.L != nil {
+				n.config.L.ErrorContext(ctx, "Dir.CreateFile", slog.String("path", path), slog.String("name", name), slog.String("err", err.Error()))
+			}
 			return nil, nil, 0, mapErr(err, 0)
 		}
 
@@ -333,11 +365,21 @@ func (n *Dir) Create(ctx context.Context, name string, flags uint32, mode uint32
 			Mode: fillMode(info),
 			Ino:  stat.Qid().Path(),
 		}
-		n.tracef(" -> ino: %d\n", stat.Qid().Path())
 
 		if errno := fillAttr(n.config, info, &out.Attr); errno != 0 {
 			h.Close()
 			return nil, nil, 0, errno
+		}
+		if n.config.L != nil {
+			n.config.L.InfoContext(
+				ctx,
+				"Dir.CreateFile",
+				slog.String("path", path),
+				slog.String("name", name),
+				slog.Uint64("flags", uint64(flags)),
+				slog.Uint64("mode", uint64(mode)),
+				slog.Uint64("ino", stat.Qid().Path()),
+			)
 		}
 
 		out.NodeId = stable.Ino
@@ -356,7 +398,9 @@ func (n *Dir) Unlink(ctx context.Context, name string) syscall.Errno {
 
 func (n *Dir) remove(ctx context.Context, name string, isDir bool) syscall.Errno {
 	path := n.config.path(n.path)
-	n.tracef("[%v]Dir.Remove(%#v)\n", path, name)
+	if n.config.L != nil {
+		n.config.L.DebugContext(ctx, "Dir.Remove", slog.String("path", path), slog.String("name", name))
+	}
 	path = filepath.Join(path, name)
 	stat, err := n.fs.Stat(ctx, path)
 	if err != nil {
@@ -397,18 +441,13 @@ var _ fs.NodeSetxattrer = (*File)(nil)
 var _ fs.NodeFsyncer = (*File)(nil)
 var _ fs.NodeReader = (*File)(nil)
 
-func (n *File) tracef(format string, values ...interface{}) {
-	n.config.Loggable.Tracef(format, values...)
-}
-func (n *File) errorf(format string, values ...interface{}) {
-	n.config.Loggable.Errorf(format, values...)
-}
-
 func (n *File) Getattr(ctx context.Context, f FileHandle, out *fuse.AttrOut) syscall.Errno {
 	// func (n *File) Attr(ctx context.Context, a *fuse.Attr) error {
 
 	path := n.config.path(n.path)
-	n.tracef("File.Attr(%#v)\n", path)
+	if n.config.L != nil {
+		n.config.L.DebugContext(ctx, "File.Getattr", slog.String("path", path))
+	}
 	st, err := n.fs.Stat(ctx, path)
 	if err != nil {
 		return mapErr(err, 0)
@@ -435,7 +474,9 @@ func (n *File) Setattr(ctx context.Context, f fs.FileHandle, in *fuse.SetAttrIn,
 		st.SetMode(ninep.ModeFromOS(os.FileMode(mode)))
 	}
 	path := n.config.path(n.path)
-	n.tracef("[%v]File.Setattr() %s -> %s\n", path, st, st)
+	if n.config.L != nil {
+		n.config.L.DebugContext(ctx, "File.Setattr", slog.String("path", path), slog.String("st", st.String()))
+	}
 	if errno := mapErr(n.fs.WriteStat(ctx, path, st), syscall.EINVAL); errno != 0 {
 		return errno
 	}
@@ -452,7 +493,9 @@ func (n *File) Setattr(ctx context.Context, f fs.FileHandle, in *fuse.SetAttrIn,
 }
 
 func (n *File) Setxattr(ctx context.Context, attr string, data []byte, flags uint32) syscall.Errno {
-	n.tracef("SETXATTR %s\n", attr)
+	if n.config.L != nil {
+		n.config.L.DebugContext(ctx, "File.Setxattr", slog.String("path", n.config.path(n.path)), slog.String("attr", attr))
+	}
 	// technically, we can't support this because we're not the underlying fs,
 	// but not implementing this causes errors when using cp (in macos).
 	return 0
@@ -460,14 +503,15 @@ func (n *File) Setxattr(ctx context.Context, attr string, data []byte, flags uin
 
 func (n *File) Open(ctx context.Context, flags uint32) (fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
 	path := n.config.path(n.path)
-	n.tracef("[%v]File.Open()\n", path)
+	if n.config.L != nil {
+		n.config.L.DebugContext(ctx, "File.Open", slog.String("path", path), slog.Uint64("flags", uint64(flags)))
+	}
 	// st, err := n.fs.Stat(ctx, path)
 	// if err != nil {
 	// 	return nil, 0, mapErr(err, syscall.EBADF)
 	// }
 	mode := ninep.OpenMode(flags) // TODO: convert openflags
 	h, err := n.fs.OpenFile(ctx, path, mode)
-	n.tracef("FUSE: FILE OPEN: %#v %s %v\n", path, mode, err)
 	if err != nil {
 		return nil, 0, mapErr(err, syscall.EINVAL)
 	}
@@ -485,14 +529,18 @@ func (n *File) Open(ctx context.Context, flags uint32) (fh fs.FileHandle, fuseFl
 
 func (n *File) Fsync(ctx context.Context, f fs.FileHandle, flags uint32) syscall.Errno {
 	path := n.config.path(n.path)
-	n.tracef("FUSE: FSYNC %#v\n", path)
+	if n.config.L != nil {
+		n.config.L.DebugContext(ctx, "File.Fsync", slog.String("path", path))
+	}
 	h := f.(FileHandle)
 	return mapErr(h.h.Sync(), syscall.EINVAL)
 }
 
 func (n *File) Read(ctx context.Context, f fs.FileHandle, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
 	path := n.config.path(n.path)
-	n.tracef("FUSE: READ %#v %d+%d\n", path, off, len(dest))
+	if n.config.L != nil {
+		n.config.L.DebugContext(ctx, "File.Read", slog.String("path", path), slog.Int64("off", off), slog.Int("len", len(dest)))
+	}
 	fh := f.(*FileHandle)
 	return fh.Read(ctx, dest, off)
 }
@@ -512,13 +560,6 @@ var _ fs.FileFlusher = (*FileHandle)(nil)
 var _ fs.FileReader = (*FileHandle)(nil)
 var _ fs.FileReleaser = (*FileHandle)(nil)
 var _ fs.FileWriter = (*FileHandle)(nil)
-
-func (n *FileHandle) tracef(format string, values ...interface{}) {
-	n.config.Loggable.Tracef(format, values...)
-}
-func (n *FileHandle) errorf(format string, values ...interface{}) {
-	n.config.Loggable.Errorf(format, values...)
-}
 
 func (h *FileHandle) Allocate(ctx context.Context, off uint64, size uint64, mode uint32) syscall.Errno {
 	path := h.config.path(h.path)
@@ -545,7 +586,9 @@ func (h *FileHandle) Allocate(ctx context.Context, off uint64, size uint64, mode
 
 func (h *FileHandle) Read(ctx context.Context, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
 	// func (h *FileHandle) Read(ctx context.Context, req *fuse.ReadRequest, resp *fuse.ReadResponse) error {
-	h.tracef("FUSE: READ(%d, %d)\n", len(dest), off)
+	if h.config.L != nil {
+		h.config.L.DebugContext(ctx, "File.Read", slog.String("path", h.config.path(h.path)), slog.Int("len", len(dest)), slog.Int64("off", off))
+	}
 	buf := make([]byte, len(dest))
 	n, err := h.h.ReadAt(buf, off)
 	if err == io.EOF {

@@ -28,8 +28,8 @@ func main() {
 
 	flag.Parse()
 
-	cltCfg.PrintTraceMessages = srvCfg.PrintTraceMessages
-	cltCfg.PrintErrorMessages = srvCfg.PrintErrorMessages
+	cltCfg.LogLevel = srvCfg.LogLevel
+	cltCfg.Logger = srvCfg.Logger
 
 	if flag.NArg() == 0 {
 		flag.Usage()

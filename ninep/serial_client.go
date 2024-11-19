@@ -3,8 +3,8 @@ package ninep
 import (
 	"context"
 	"crypto/tls"
-	"fmt"
 	"io"
+	"log/slog"
 	"os"
 )
 
@@ -20,7 +20,7 @@ type BasicClient struct {
 
 	d Dialer
 
-	Loggable
+	Logger *slog.Logger
 }
 
 var _ FileSystemProxyClient = (*BasicClient)(nil)
@@ -52,16 +52,23 @@ func (c *BasicClient) Fs() (*FileSystemProxy, error) {
 		if err == nil {
 			err = c.Authorizee.Prove(context.Background(), user, mount)
 			if err != nil {
-				c.Errorf("Failed to authorize, because of bad credentials: %s", err)
+				if c.Logger != nil {
+					c.Logger.Error("client.auth.prove.failed", slog.String("error", err.Error()))
+				}
 				return nil, err
 			}
 		} else {
-			c.Errorf("Failed to authorize, continuing: %s", err)
+			if c.Logger != nil {
+				c.Logger.Error("client.auth.failed", slog.String("error", err.Error()))
+			}
 			err = nil
 		}
 	}
 	root, err := c.Attach(f, afid, user, mount)
 	if err != nil {
+		if c.Logger != nil {
+			c.Logger.Error("client.attach.failed", slog.String("error", err.Error()))
+		}
 		return nil, err
 	}
 	return &FileSystemProxy{c: c, rootF: f, rootQ: root}, nil
@@ -77,7 +84,7 @@ func (c *BasicClient) ConnectTLS(addr string, tlsCfg *tls.Config) error {
 
 func (c *BasicClient) connect(addr string) error {
 	network, addr := ParseAddr(addr)
-	return c.transport().Connect(c.dialer(), network, addr, c.User, c.Mount, c.Authorizee, c.Loggable)
+	return c.transport().Connect(c.dialer(), network, addr, c.User, c.Mount, c.Authorizee, c.Logger)
 }
 
 func (c *BasicClient) Connect(addr string) error {
@@ -92,7 +99,9 @@ func (c *BasicClient) Close() error {
 func (c *BasicClient) asError(r Rerror) error { return r.Error() }
 
 func (c *BasicClient) Auth(afid Fid, user, mnt string) (Qid, error) {
-	c.Tracef("Tauth(%d, %v, %v)", afid, user, mnt)
+	if c.Logger != nil {
+		c.Logger.Debug("Tauth.request", slog.Uint64("afid", uint64(afid)), slog.String("user", user), slog.String("mnt", mnt))
+	}
 	t := c.transport()
 	txn, ok := t.AllocTransaction()
 	if !ok {
@@ -103,20 +112,28 @@ func (c *BasicClient) Auth(afid Fid, user, mnt string) (Qid, error) {
 	txn.req.Tauth(afid, user, mnt)
 	msg, err := t.Request(txn)
 	if err != nil {
-		c.Errorf("Tauth: Failed requesting: %s", err)
+		if c.Logger != nil {
+			c.Logger.Error("Tauth.request.failed", slog.String("error", err.Error()))
+		}
 		return nil, err
 	}
 
 	switch r := msg.(type) {
 	case Rauth:
-		c.Tracef("Rauth")
+		if c.Logger != nil {
+			c.Logger.Debug("Tauth.response.ok")
+		}
 		return r.Aqid(), nil
 	case Rerror:
 		err := c.asError(r)
-		c.Errorf("Expected Rauth from server, got error: %s", err)
+		if c.Logger != nil {
+			c.Logger.Error("Tauth.response.error", slog.String("error", err.Error()))
+		}
 		return nil, err
 	default:
-		c.Errorf("Expected Rauth from server")
+		if c.Logger != nil {
+			c.Logger.Error("Tauth.response.unexpected", slog.String("error", "expected Rauth from server"))
+		}
 		return nil, ErrBadFormat
 	}
 }
@@ -129,24 +146,34 @@ func (c *BasicClient) Attach(fd, afid Fid, user, mnt string) (Qid, error) {
 	}
 	defer t.ReleaseTransaction(txn.req.tag)
 
-	c.Tracef("Tattach(%d, %d, %#v, %#v)", fd, afid, user, mnt)
+	if c.Logger != nil {
+		c.Logger.Debug("Tattach.request", slog.Uint64("fd", uint64(fd)), slog.Uint64("afid", uint64(afid)), slog.String("user", user), slog.String("mnt", mnt))
+	}
 	txn.req.Tattach(fd, afid, user, mnt)
 	msg, err := t.Request(txn)
 	if err != nil {
-		c.Errorf("Tattach: Failed to write request: %s", err)
+		if c.Logger != nil {
+			c.Logger.Error("Tattach.request.failed", slog.String("error", err.Error()))
+		}
 		return Qid{}, err
 	}
 
 	switch r := msg.(type) {
 	case Rattach:
-		c.Tracef("Rattach: %s", r.Qid())
+		if c.Logger != nil {
+			c.Logger.Debug("Tattach.response.ok", slog.String("qid", r.Qid().String()))
+		}
 		return r.Qid(), nil
 	case Rerror:
 		err := c.asError(r)
-		c.Errorf("Expected Rattach from server, got error: %s", err)
+		if c.Logger != nil {
+			c.Logger.Error("Tattach.response.error", slog.Any("error", err))
+		}
 		return nil, err
 	default:
-		c.Errorf("Expected Rattach from server, got: %#v", r)
+		if c.Logger != nil {
+			c.Logger.Error("Tattach.response.unexpected", slog.String("error", "expected Rattach from server"))
+		}
 		return nil, ErrBadFormat
 	}
 }
@@ -159,16 +186,29 @@ func (c *BasicClient) Walk(f, newF Fid, path []string) ([]Qid, error) {
 	}
 	defer t.ReleaseTransaction(txn.req.tag)
 	txn.req.Twalk(f, newF, path)
-	c.Tracef("Twalk %s -> %s %v %#v %d", f, newF, len(path), path, txn.req.Request().(interface{ Size() uint32 }).Size())
+	if c.Logger != nil {
+		c.Logger.Debug(
+			"Twalk.request",
+			slog.Uint64("f", uint64(f)),
+			slog.Uint64("newF", uint64(newF)),
+			slog.Int("path_len", len(path)),
+			slog.Any("path", path),
+			slog.Uint64("size", uint64(txn.req.Request().(interface{ Size() uint32 }).Size())),
+		)
+	}
 	msg, err := t.Request(txn)
 	if err != nil {
-		c.Errorf("Twalk: Failed to write request: %s", err)
+		if c.Logger != nil {
+			c.Logger.Error("Twalk.request.failed", slog.String("error", err.Error()))
+		}
 		return nil, err
 	}
 
 	switch r := msg.(type) {
 	case Rwalk:
-		c.Tracef("Rwalk %d", r.NumWqid())
+		if c.Logger != nil {
+			c.Logger.Debug("Rwalk", slog.Int("num_wqid", int(r.NumWqid())))
+		}
 		size := int(r.NumWqid())
 
 		if size != len(path) {
@@ -189,16 +229,22 @@ func (c *BasicClient) Walk(f, newF Fid, path []string) ([]Qid, error) {
 		return qids, nil
 	case Rerror:
 		err := c.asError(r)
-		c.Errorf("Expected Rwalk from server, got error: %s", err)
+		if c.Logger != nil {
+			c.Logger.Error("Twalk.response.error", slog.Any("error", err))
+		}
 		return nil, err
 	default:
-		c.Errorf("Expected Rwalk from server, got %v", r)
+		if c.Logger != nil {
+			c.Logger.Error("Twalk.response.unexpected", slog.String("error", "expected Rwalk from server"))
+		}
 		return nil, ErrBadFormat
 	}
 }
 
 func (c *BasicClient) Stat(f Fid) (Stat, error) {
-	c.Tracef("Stat(%d)", f)
+	if c.Logger != nil {
+		c.Logger.Debug("Tstat.request", slog.Uint64("f", uint64(f)))
+	}
 	t := c.transport()
 	txn, ok := t.AllocTransaction()
 	if !ok {
@@ -208,28 +254,37 @@ func (c *BasicClient) Stat(f Fid) (Stat, error) {
 	txn.req.Tstat(f)
 	msg, err := t.Request(txn)
 	if err != nil {
-		c.Errorf("Tstat: Failed to write request: %s", err)
+		if c.Logger != nil {
+			c.Logger.Error("Tstat.request.failed", slog.String("error", err.Error()))
+		}
 		return nil, err
 	}
-	c.Tracef("Tstat %s", f)
 
 	switch r := msg.(type) {
 	case Rstat:
-		c.Tracef("Rstat %s", r.Stat())
+		if c.Logger != nil {
+			c.Logger.Debug("Rstat", slog.Uint64("f", uint64(f)), slog.String("stat", r.Stat().String()))
+		}
 		st := r.Stat().Clone()
 		return st, nil
 	case Rerror:
 		err := c.asError(r)
-		c.Errorf("Expected Rstat from server, got error: %s", err)
+		if c.Logger != nil {
+			c.Logger.Error("Tstat.response.error", slog.Uint64("f", uint64(f)), slog.Any("error", err))
+		}
 		return nil, err
 	default:
-		c.Errorf("Expected Rstat from server")
+		if c.Logger != nil {
+			c.Logger.Error("Tstat.response.unexpected", slog.Uint64("f", uint64(f)), slog.String("error", "expected Rstat from server"))
+		}
 		return nil, ErrBadFormat
 	}
 }
 
 func (c *BasicClient) WriteStat(f Fid, s Stat) error {
-	c.Tracef("WriteStat(%d, _)", f)
+	if c.Logger != nil {
+		c.Logger.Debug("Twstat.request", slog.Uint64("f", uint64(f)), slog.String("stat", s.String()))
+	}
 	t := c.transport()
 	txn, ok := t.AllocTransaction()
 	if !ok {
@@ -239,26 +294,36 @@ func (c *BasicClient) WriteStat(f Fid, s Stat) error {
 	txn.req.Twstat(f, s)
 	msg, err := t.Request(txn)
 	if err != nil {
-		c.Errorf("Twstat: Failed to write request: %s", err)
+		if c.Logger != nil {
+			c.Logger.Error("Twstat.request.failed", slog.String("error", err.Error()))
+		}
 		return err
 	}
 
 	switch r := msg.(type) {
 	case Rwstat:
-		c.Tracef("Rwstat")
+		if c.Logger != nil {
+			c.Logger.Debug("Rwstat", slog.Uint64("f", uint64(f)))
+		}
 		return nil
 	case Rerror:
 		err := c.asError(r)
-		c.Errorf("Expected Rwstat from server, got error: %s", err)
+		if c.Logger != nil {
+			c.Logger.Error("Twstat.response.error", slog.Uint64("f", uint64(f)), slog.Any("error", err))
+		}
 		return err
 	default:
-		c.Errorf("Expected Rwstat from server")
+		if c.Logger != nil {
+			c.Logger.Error("Twstat.response.unexpected", slog.Uint64("f", uint64(f)), slog.String("error", "expected Rwstat from server"))
+		}
 		return ErrBadFormat
 	}
 }
 
 func (c *BasicClient) Read(f Fid, p []byte, offset uint64) (int, error) {
-	c.Tracef("Read(%s, []byte(%d), %v)", f, len(p), offset)
+	if c.Logger != nil {
+		c.Logger.Debug("Tread.request", slog.Uint64("f", uint64(f)), slog.Int("len", len(p)), slog.Uint64("offset", offset))
+	}
 	t := c.transport()
 	txn, ok := t.AllocTransaction()
 	if !ok {
@@ -268,23 +333,30 @@ func (c *BasicClient) Read(f Fid, p []byte, offset uint64) (int, error) {
 	txn.req.Tread(f, offset, uint32(len(p)))
 	msg, err := t.Request(txn)
 	if err != nil {
-		c.Errorf("Tread: Failed to write request: %s", err)
+		if c.Logger != nil {
+			c.Logger.Error("Tread.request.failed", slog.Uint64("f", uint64(f)), slog.String("error", err.Error()))
+		}
 		return 0, err
 	}
 
 	switch r := msg.(type) {
 	case Rread:
 		dat := r.Data()
-		c.Tracef("Rread -> %d", len(dat))
+		if c.Logger != nil {
+			c.Logger.Debug("Rread", slog.Uint64("f", uint64(f)), slog.Int("len", len(dat)))
+		}
 		copy(p, dat)
 		return len(dat), nil
 	case Rerror:
 		err := c.asError(r)
-		fmt.Fprintf(os.Stderr, "READ_ERROR: %#v\n", err)
-		c.Errorf("Expected Rread from server, got error: %s", err)
+		if c.Logger != nil {
+			c.Logger.Error("Tread.response.error", slog.Uint64("f", uint64(f)), slog.Any("error", err))
+		}
 		return 0, err
 	default:
-		c.Errorf("Expected Rread from server")
+		if c.Logger != nil {
+			c.Logger.Error("Tread.response.unexpected", slog.Uint64("f", uint64(f)), slog.String("error", "expected Rread from server"))
+		}
 		return 0, ErrBadFormat
 	}
 }
@@ -299,20 +371,28 @@ func (c *BasicClient) Clunk(f Fid) error {
 	txn.req.Tclunk(f)
 	msg, err := t.Request(txn)
 	if err != nil {
-		c.Errorf("Tclunk: Failed to write request: %s", err)
+		if c.Logger != nil {
+			c.Logger.Error("Tclunk.request.failed", slog.Uint64("f", uint64(f)), slog.String("error", err.Error()))
+		}
 		return err
 	}
 
 	switch r := msg.(type) {
 	case Rclunk:
-		c.Tracef("Rclunk %s", f)
+		if c.Logger != nil {
+			c.Logger.Debug("Rclunk", slog.Uint64("f", uint64(f)))
+		}
 		return nil
 	case Rerror:
 		err := c.asError(r)
-		c.Errorf("Expected Rclunk from server, got error: %s", err)
-		return nil
+		if c.Logger != nil {
+			c.Logger.Error("Tclunk.response.error", slog.Uint64("f", uint64(f)), slog.Any("error", err))
+		}
+		return err
 	default:
-		c.Errorf("Expected Rclunk from server")
+		if c.Logger != nil {
+			c.Logger.Error("Tclunk.response.unexpected", slog.Uint64("f", uint64(f)), slog.String("error", "expected Rclunk from server"))
+		}
 		return ErrBadFormat
 	}
 }
@@ -327,20 +407,28 @@ func (c *BasicClient) Remove(f Fid) error {
 	txn.req.Tremove(f)
 	msg, err := t.Request(txn)
 	if err != nil {
-		c.Errorf("Tremove: Failed to write request: %s", err)
+		if c.Logger != nil {
+			c.Logger.Error("Tremove.request.failed", slog.Uint64("f", uint64(f)), slog.String("error", err.Error()))
+		}
 		return err
 	}
 
 	switch r := msg.(type) {
 	case Rremove:
-		c.Tracef("Rremove")
+		if c.Logger != nil {
+			c.Logger.Debug("Rremove", slog.Uint64("f", uint64(f)))
+		}
 		return nil
 	case Rerror:
 		err := c.asError(r)
-		c.Errorf("Expected Rremove from server, got error: %s", err)
+		if c.Logger != nil {
+			c.Logger.Error("Tremove.response.error", slog.Uint64("f", uint64(f)), slog.Any("error", err))
+		}
 		return err
 	default:
-		c.Errorf("Expected Rremove from server")
+		if c.Logger != nil {
+			c.Logger.Error("Tremove.response.unexpected", slog.Uint64("f", uint64(f)), slog.String("error", "expected Rremove from server"))
+		}
 		return ErrBadFormat
 	}
 }
@@ -363,23 +451,31 @@ func (c *BasicClient) Write(f Fid, data []byte, offset uint64) (int, error) {
 		txn.req.Twrite(f, offset, uint32(n))
 		msg, err := t.Request(txn)
 		if err != nil {
-			c.Errorf("Twrite: Failed to write request: %s", err)
+			if c.Logger != nil {
+				c.Logger.Error("Twrite.request.failed", slog.Uint64("f", uint64(f)), slog.String("error", err.Error()))
+			}
 			return wrote, err
 		}
 
 		switch r := msg.(type) {
 		case Rwrite:
-			c.Tracef("Rwrite")
+			if c.Logger != nil {
+				c.Logger.Debug("Rwrite")
+			}
 			cnt := r.Count()
 			wrote += int(cnt)
 			offset += uint64(cnt)
 			txn.req.reset()
 		case Rerror:
 			err := c.asError(r)
-			c.Errorf("Expected Rwrite from server, got error: %s", err)
+			if c.Logger != nil {
+				c.Logger.Error("Twrite.response.error", slog.Uint64("f", uint64(f)), slog.Any("error", err))
+			}
 			return wrote, err
 		default:
-			c.Errorf("Expected Rwrite from server")
+			if c.Logger != nil {
+				c.Logger.Error("Twrite.response.unexpected", slog.Uint64("f", uint64(f)), slog.String("error", "expected Rwrite from server"))
+			}
 			return wrote, ErrBadFormat
 		}
 	}
@@ -405,27 +501,37 @@ func (c *BasicClient) WriteMsg(f Fid, data []byte, offset uint64) (uint32, error
 	txn.req.Twrite(f, offset, uint32(size))
 	msg, err := t.Request(txn)
 	if err != nil {
-		c.Errorf("Twrite: Failed to write request: %s", err)
+		if c.Logger != nil {
+			c.Logger.Error("Twrite.request.failed", slog.Uint64("f", uint64(f)), slog.String("error", err.Error()))
+		}
 		return 0, err
 	}
 
 	switch r := msg.(type) {
 	case Rwrite:
-		c.Tracef("Rwrite")
+		if c.Logger != nil {
+			c.Logger.Debug("Rwrite")
+		}
 		n := r.Count()
 		return n, nil
 	case Rerror:
 		err := c.asError(r)
-		c.Errorf("Expected Rwrite from server, got error: %s", err)
+		if c.Logger != nil {
+			c.Logger.Error("Twrite.response.error", slog.Uint64("f", uint64(f)), slog.Any("error", err))
+		}
 		return 0, err
 	default:
-		c.Errorf("Expected Rwrite from server")
+		if c.Logger != nil {
+			c.Logger.Error("Twrite.response.unexpected", slog.Uint64("f", uint64(f)), slog.String("error", "expected Rwrite from server"))
+		}
 		return 0, ErrBadFormat
 	}
 }
 
 func (c *BasicClient) Open(f Fid, m OpenMode) (q Qid, iounit uint32, err error) {
-	c.Tracef("Open(%d, %s)", f, m)
+	if c.Logger != nil {
+		c.Logger.Debug("Open", slog.Uint64("f", uint64(f)), slog.String("mode", m.String()))
+	}
 	t := c.transport()
 	txn, ok := t.AllocTransaction()
 	if !ok {
@@ -436,28 +542,38 @@ func (c *BasicClient) Open(f Fid, m OpenMode) (q Qid, iounit uint32, err error) 
 	txn.req.Topen(f, m)
 	msg, err := t.Request(txn)
 	if err != nil {
-		c.Errorf("Topen: Failed to write request: %s", err)
+		if c.Logger != nil {
+			c.Logger.Error("Topen.request.failed", slog.Uint64("f", uint64(f)), slog.String("error", err.Error()))
+		}
 		return
 	}
 
 	switch r := msg.(type) {
 	case Ropen:
-		c.Tracef("Ropen")
+		if c.Logger != nil {
+			c.Logger.Debug("Ropen")
+		}
 		q = r.Qid().Clone()
 		iounit = r.Iounit()
 		return
 	case Rerror:
 		err = c.asError(r)
-		c.Errorf("Expected Ropen from server, got error: %s", err)
+		if c.Logger != nil {
+			c.Logger.Error("Topen.response.error", slog.Uint64("f", uint64(f)), slog.Any("error", err))
+		}
 		return
 	default:
-		c.Errorf("Expected Ropen from server")
+		if c.Logger != nil {
+			c.Logger.Error("Topen.response.unexpected", slog.Uint64("f", uint64(f)), slog.String("error", "expected Ropen from server"))
+		}
 		return
 	}
 }
 
 func (c *BasicClient) Create(f Fid, name string, perm Mode, mode OpenMode) (q Qid, iounit uint32, err error) {
-	c.Tracef("Create(%d, %#v, %s, %d)", f, name, perm, mode)
+	if c.Logger != nil {
+		c.Logger.Debug("Create", slog.Uint64("f", uint64(f)), slog.String("name", name), slog.String("perm", perm.String()), slog.String("mode", mode.String()))
+	}
 	t := c.transport()
 	txn, ok := t.AllocTransaction()
 	if !ok {
@@ -468,22 +584,30 @@ func (c *BasicClient) Create(f Fid, name string, perm Mode, mode OpenMode) (q Qi
 	txn.req.Tcreate(f, name, uint32(perm), mode)
 	msg, err := t.Request(txn)
 	if err != nil {
-		c.Errorf("Tcreate: Failed to write request: %s", err)
+		if c.Logger != nil {
+			c.Logger.Error("Tcreate.request.failed", slog.Uint64("f", uint64(f)), slog.String("error", err.Error()))
+		}
 		return
 	}
 
 	switch r := msg.(type) {
 	case Rcreate:
-		c.Tracef("Rcreate")
+		if c.Logger != nil {
+			c.Logger.Debug("Rcreate")
+		}
 		q = r.Qid().Clone()
 		iounit = r.Iounit()
 		return
 	case Rerror:
 		err = c.asError(r)
-		c.Errorf("Expected Rcreate from server, got error: %s", err)
+		if c.Logger != nil {
+			c.Logger.Error("Tcreate.response.error", slog.Uint64("f", uint64(f)), slog.Any("error", err))
+		}
 		return
 	default:
-		c.Errorf("Expected Rcreate from server")
+		if c.Logger != nil {
+			c.Logger.Error("Tcreate.response.unexpected", slog.Uint64("f", uint64(f)), slog.String("error", "expected Rcreate from server"))
+		}
 		return
 	}
 }

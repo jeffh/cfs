@@ -13,7 +13,6 @@ import (
 	"github.com/jeffh/cfs/cli"
 	efuse "github.com/jeffh/cfs/exportfs/fuse"
 	"github.com/jeffh/cfs/fs/proxy"
-	"github.com/jeffh/cfs/ninep"
 )
 
 func main() {
@@ -38,15 +37,9 @@ func main() {
 	cli.OnInterrupt(cancel)
 
 	cli.MainClient(func(cfg *cli.ClientConfig, mnt proxy.FileSystemMount) error {
-		var logger ninep.Logger = log.New(os.Stderr, "", log.LstdFlags)
-		loggable := ninep.Loggable{
-			ErrorLog: logger,
-			TraceLog: logger,
-		}
-
 		switch mountType {
 		case "fuse":
-			oneSec := time.Second
+			timeout := time.Second
 			opts := fs.Options{
 				MountOptions: fuse.MountOptions{
 					FsName:        "9pfuse",
@@ -55,8 +48,8 @@ func main() {
 					DirectMount:   true,
 					Debug:         true,
 				},
-				EntryTimeout: &oneSec,
-				AttrTimeout:  &oneSec,
+				EntryTimeout: &timeout,
+				AttrTimeout:  &timeout,
 				Logger:       log.New(os.Stdout, "[fuse] ", log.LstdFlags),
 			}
 			// fuse.FSName("9pfuse"),
@@ -70,14 +63,15 @@ func main() {
 				ctx,
 				mnt.FS,
 				mnt.Prefix,
-				loggable,
+				cfg.LogLevel,
+				nil,
 				mountpoint,
 				&opts,
 			)
 		case "nfs":
 			return runServer(ctx, nfsAddr, mnt, mountpoint)
 		default:
-			return fmt.Errorf("Unknown mount type: got %#v. Expected 'fuse' or 'nfs'", mountType)
+			return fmt.Errorf("unknown mount type: got %#v. Expected 'fuse' or 'nfs'", mountType)
 		}
 	})
 }

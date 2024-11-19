@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"os"
 	"runtime"
 	"runtime/pprof"
@@ -19,11 +20,7 @@ import (
 type ServerConfig struct {
 	Addr string
 
-	PrintTraceMessages   bool
-	PrintTraceFSMessages bool
-	PrintErrorMessages   bool
-
-	PrintPrefix string
+	LogLevel string
 
 	CertFile string
 	KeyFile  string
@@ -42,6 +39,9 @@ type ServerConfig struct {
 	CpuProfile string
 
 	fCpuProfile *os.File
+
+	PrintPrefix string
+	Logger      *slog.Logger
 }
 
 func (c *ServerConfig) SetFlags(f Flags) {
@@ -50,9 +50,7 @@ func (c *ServerConfig) SetFlags(f Flags) {
 	}
 	f.IntVar(&c.ReadTimeoutInSeconds, "rtimeout", 0, "Timeout in seconds for client requests")
 	f.IntVar(&c.MaxInflightRequestsPerSession, "parallel", ninep.DefaultMaxInflightRequestsPerSession, "The number of parallel requests per client allowed. Increases per-client throughput at a server resource cost.")
-	f.BoolVar(&c.PrintTraceMessages, "srv-trace", false, "Print trace of 9p server to stdout")
-	f.BoolVar(&c.PrintTraceFSMessages, "srv-tracefs", false, "Print trace of 9p server to stdout")
-	f.BoolVar(&c.PrintErrorMessages, "srv-err", false, "Print errors of 9p server to stderr")
+	f.StringVar(&c.LogLevel, "srv-log", "error", "The log level for the server. Can be one of debug, info, warn, error.")
 	f.BoolVar(&c.PrintHelp, "help", false, "Prints this help")
 	f.StringVar(&c.CertFile, "certfile", "", "Accept only TLS wrapped connections. Also needs to specify keyfile flag.")
 	f.StringVar(&c.KeyFile, "keyfile", "", "Accept only TLS wrapped connections. Also needs to specify certfile flag.")
@@ -62,8 +60,6 @@ func (c *ServerConfig) SetFlags(f Flags) {
 }
 
 func (c *ServerConfig) CreateServer(createfs func() ninep.FileSystem) *ninep.Server {
-	var traceLogger, errLogger ninep.Logger
-
 	if c.CpuProfile != "" {
 		f, err := os.Create(c.CpuProfile)
 		if err != nil {
@@ -82,26 +78,18 @@ func (c *ServerConfig) CreateServer(createfs func() ninep.FileSystem) *ninep.Ser
 		c.Stderr = os.Stderr
 	}
 
-	if c.PrintTraceMessages {
-		traceLogger = log.New(c.Stdout, c.PrintPrefix, log.LstdFlags)
-	}
-	if c.PrintErrorMessages {
-		errLogger = log.New(c.Stderr, c.PrintPrefix, log.LstdFlags)
-	}
+	c.Logger = ninep.CreateLogger(c.LogLevel, c.PrintPrefix, c.Logger)
 
 	var fsys ninep.FileSystem = createfs()
 
-	if c.PrintTraceFSMessages {
+	if c.Logger.Enabled(context.Background(), slog.LevelDebug) {
 		fsys = fs.TraceFs(
 			fsys,
-			ninep.Loggable{
-				ErrorLog: log.New(os.Stdout, "[err] ", log.LstdFlags),
-				TraceLog: log.New(os.Stdout, "[trace] ", log.LstdFlags),
-			},
+			c.Logger,
 		)
 	}
 
-	srv := ninep.NewServer(fsys, errLogger, traceLogger)
+	srv := ninep.NewServer(fsys, c.Logger)
 	srv.ReadTimeout = time.Duration(c.ReadTimeoutInSeconds) * time.Second
 	srv.MaxInflightRequestsPerSession = c.MaxInflightRequestsPerSession
 	return srv
@@ -233,12 +221,10 @@ type srv struct {
 
 func (p *srv) Start(s service.Service) error {
 	p.runningCtx, p.cancel = context.WithCancel(context.Background())
-	p.logger.Infof("Starting")
 	go p.run()
 	return nil
 }
 func (p *srv) Stop(s service.Service) error {
-	p.logger.Infof("Stopping")
 	p.cancel()
 	time.Sleep(1 * time.Second)
 	return nil
@@ -265,22 +251,4 @@ func srvMainWithCfg(stdout, stderr io.Writer, mkCfg func(stdout, stderr io.Write
 		<-ctx.Done()
 		cfg.Close()
 	}
-}
-
-func srvMain(stdout, stderr io.Writer, createfs func() ninep.FileSystem) (start func(ctx context.Context)) {
-	return srvMainWithCfg(stdout, stderr, func(stdout, stderr io.Writer) ServerConfig {
-		cfg := ServerConfig{
-			Stdout: stdout,
-			Stderr: stderr,
-		}
-
-		cfg.SetFlags(nil)
-		flag.Parse()
-
-		if cfg.PrintHelp {
-			flag.Usage()
-			os.Exit(1)
-		}
-		return cfg
-	}, createfs)
 }

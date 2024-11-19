@@ -2,7 +2,7 @@ package cli
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"os/user"
@@ -15,6 +15,7 @@ import (
 )
 
 type ClientConfig struct {
+	LogLevel           string
 	PrintTraceMessages bool
 	PrintErrorMessages bool
 	UseRecoverClient   bool
@@ -26,7 +27,8 @@ type ClientConfig struct {
 
 	TimeoutInSeconds int
 
-	f Flags
+	f      Flags
+	Logger *slog.Logger
 }
 
 func (c *ClientConfig) SetFlags(f Flags) {
@@ -35,6 +37,7 @@ func (c *ClientConfig) SetFlags(f Flags) {
 	}
 	f.StringVar(&c.User, "user", "", "Username to connect as, defaults to current system user")
 	f.StringVar(&c.Root, "clientroot", "", "Default access path, defaults to empty string")
+	f.StringVar(&c.LogLevel, "log", "error", "The log level for the client. Can be one of debug, info, warn, error.")
 	f.IntVar(&c.TimeoutInSeconds, "timeout", 5, "Timeout in seconds for client requests")
 	f.BoolVar(&c.PrintTraceMessages, "trace", false, "Print trace of 9p client to stdout")
 	f.BoolVar(&c.PrintErrorMessages, "err", false, "Print errors of 9p client to stderr")
@@ -112,37 +115,26 @@ func (c *ClientConfig) FSMountMany(cfgs []proxy.FileSystemMountConfig) ([]proxy.
 func (c *ClientConfig) CreateClient(addr string) (ninep.Client, error) {
 	var err error
 	usr := c.user()
-	var traceLogger, errLogger ninep.Logger
 
-	if c.PrintTraceMessages {
-		traceLogger = log.New(os.Stdout, c.PrintPrefix, log.LstdFlags)
-	}
-	if c.PrintErrorMessages {
-		errLogger = log.New(os.Stderr, c.PrintPrefix, log.LstdFlags)
-	}
-
-	loggable := ninep.Loggable{
-		ErrorLog: errLogger,
-		TraceLog: traceLogger,
-	}
+	c.Logger = ninep.CreateLogger(c.LogLevel, c.PrintPrefix, c.Logger)
 
 	var transport ninep.ClientTransport
 
 	if c.UseRecoverClient {
-		if traceLogger != nil {
-			traceLogger.Printf("Using retry client\n")
+		if c.Logger != nil {
+			c.Logger.Info("Using retry client")
 		}
 		transport = &ninep.SerialRetryClientTransport{}
 	} else {
-		if traceLogger != nil {
-			traceLogger.Printf("Using basic client\n")
+		if c.Logger != nil {
+			c.Logger.Info("Using basic client")
 		}
 		transport = &ninep.SerialClientTransport{}
 	}
 
 	clt := ninep.BasicClient{
 		Transport: transport,
-		Loggable:  loggable,
+		Logger:    c.Logger,
 		User:      usr,
 		Mount:     c.Root,
 	}

@@ -59,9 +59,8 @@ func (s FontSet) RenderText(dst draw.Image, text string, start func(font.Metrics
 	}
 
 	startX := drawer.Dot.X
-	for L, line := range strings.Split(text, "\n") {
+	for _, line := range strings.Split(text, "\n") {
 		drawer.Dot.X = startX
-		drawer.Dot.Y += fixed.I(L).Mul(metrics.Height)
 		for _, r := range line {
 			_, _, face := s.glphAdvance(r)
 			// idx, advance, face := fonts.glphAdvance(r)
@@ -71,6 +70,7 @@ func (s FontSet) RenderText(dst draw.Image, text string, start func(font.Metrics
 				drawer.DrawString(string(r))
 			}
 		}
+		drawer.Dot.Y += metrics.Height
 	}
 }
 

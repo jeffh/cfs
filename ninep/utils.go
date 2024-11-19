@@ -4,12 +4,39 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
 )
+
+func CreateLogger(level string, prefix string, L *slog.Logger) *slog.Logger {
+	var minLevel slog.Level = slog.LevelError
+	switch level {
+	case "debug":
+		minLevel = slog.LevelDebug
+	case "info":
+		minLevel = slog.LevelInfo
+	case "warn":
+		minLevel = slog.LevelWarn
+	case "error":
+		minLevel = slog.LevelError
+	default:
+		log.Fatalf("Invalid log level: %s", level)
+	}
+
+	if L == nil {
+		L = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+			Level: minLevel,
+		})).WithGroup(prefix)
+	} else {
+		L = L.WithGroup(prefix)
+	}
+	return L
+}
 
 func Clean(path string) string {
 	return "/" + strings.TrimPrefix(filepath.Clean(path), "/")
@@ -97,42 +124,62 @@ func readUpTo(r io.Reader, p []byte) (int, error) {
 	return n, err
 }
 
-func acceptRversion(c Loggable, rwc net.Conn, txn *cltTransaction, maxMsgSize, minMsgSize uint32) (uint32, error) {
-	c.Tracef("Tversion(%d, %s)", maxMsgSize, VERSION_9P2000)
+func acceptRversion(L *slog.Logger, rwc net.Conn, txn *cltTransaction, maxMsgSize, minMsgSize uint32) (uint32, error) {
+	if L != nil {
+		L.Debug("Tversion", slog.Uint64("maxMsgSize", uint64(maxMsgSize)), slog.String("version", VERSION_9P2000))
+	}
 	txn.req.Tversion(maxMsgSize, VERSION_9P2000)
 	if err := txn.req.writeRequest(rwc); err != nil {
-		c.Errorf("failed to write version: %s", err)
+		if L != nil {
+			L.Error("Tversion.request.failed", slog.Any("error", err))
+		}
 		return 0, err
 	}
 
 	if err := txn.res.readReply(rwc); err != nil {
-		c.Errorf("failed to read version: %s", err)
+		if L != nil {
+			L.Error("Tversion.response.failed", slog.Any("error", err))
+		}
 		return 0, err
 	}
 
 	request, ok := txn.res.Reply().(Rversion)
 	if !ok {
-		c.Errorf("failed to negotiate version: unexpected message type: %d", txn.req.requestType())
+		if L != nil {
+			L.Error(
+				"Tversion.response.failed.unexpected",
+				slog.Uint64("requestType", uint64(txn.req.requestType())),
+				slog.String("error", "expected Rversion from server"),
+			)
+		}
 		return 0, ErrBadFormat
 	}
 
 	if !strings.HasPrefix(request.Version(), VERSION_9P) {
-		c.Tracef("unsupported server version: %s", request.Version())
+		if L != nil {
+			L.Error("Tversion.response.failed.unsupported", slog.String("version", request.Version()))
+		}
 		return 0, ErrBadFormat
 	}
 
 	size := request.MsgSize()
 	if size > maxMsgSize {
-		c.Errorf("server returned size higher than client gave: (server: %d > client: %d)", size, maxMsgSize)
+		if L != nil {
+			L.Error("Tversion.response.failed.msgSizeTooHigh", slog.Uint64("server", uint64(size)), slog.Uint64("client", uint64(maxMsgSize)))
+		}
 		return 0, ErrBadFormat
 	}
 	maxMsgSize = request.MsgSize()
 	if minMsgSize > maxMsgSize {
-		c.Errorf("server returned size lower than client supports: (server: %d < client: [gave: %d; min: %d])", size, maxMsgSize, minMsgSize)
+		if L != nil {
+			L.Error("Tversion.response.failed.msgSizeTooLow", slog.Uint64("server", uint64(size)), slog.Uint64("client", uint64(maxMsgSize)), slog.Uint64("min", uint64(minMsgSize)))
+		}
 		return 0, ErrBadFormat
 	}
 
-	c.Tracef("Accepted Rversion (msgSize=%d)", maxMsgSize)
+	if L != nil {
+		L.Debug("Tversion.response.ok", slog.Uint64("msgSize", uint64(maxMsgSize)))
+	}
 
 	return maxMsgSize, nil
 }

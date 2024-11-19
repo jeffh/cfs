@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"log"
+	"log/slog"
 	"math"
 	"net"
 	"os"
@@ -72,7 +72,7 @@ func (oc *onceCloseListener) Close() error {
 func (oc *onceCloseListener) close() { oc.closeErr = oc.Listener.Close() }
 
 type Server struct {
-	Loggable
+	Logger  *slog.Logger
 	Handler Handler
 
 	InitialTimeout                time.Duration // timeout initial 9P handshake (version exchange)
@@ -91,17 +91,13 @@ type Server struct {
 
 // Provides an easy way to create a server (you can still construct the Server
 // struct manually if you want).
-func NewServer(fs FileSystem, errLogger, traceLogger Logger) *Server {
-	loggable := Loggable{
-		ErrorLog: errLogger,
-		TraceLog: traceLogger,
-	}
+func NewServer(fs FileSystem, L *slog.Logger) *Server {
 	return &Server{
 		Handler: &defaultHandler{
-			Fs:       fs,
-			Loggable: loggable,
+			Fs:     fs,
+			Logger: L,
 		},
-		Loggable: loggable,
+		Logger: L,
 	}
 }
 
@@ -149,7 +145,9 @@ func (s *Server) ServeTLS(l net.Listener, certFile, keyFile string) error {
 }
 
 func (s *Server) Serve(l net.Listener) error {
-	s.Tracef("listening on %s", l.Addr())
+	if s.Logger != nil {
+		s.Logger.Info("listening on address", slog.String("addr", l.Addr().String()))
+	}
 	l = &onceCloseListener{Listener: l}
 	s.mu.Lock()
 	s.listener = l
@@ -185,7 +183,9 @@ func (s *Server) Serve(l net.Listener) error {
 			if isTemporaryErr(err) {
 				retries++
 				wait := time.Duration(math.Min(math.Pow(float64(10*time.Millisecond), float64(retries)), float64(maxWait)))
-				s.Tracef("accept error: %s; retrying in %v", err, wait)
+				if s.Logger != nil {
+					s.Logger.Warn("accept error, retrying", slog.String("error", err.Error()), slog.Duration("wait", wait))
+				}
 				time.Sleep(wait)
 				continue
 			} else {
@@ -193,7 +193,9 @@ func (s *Server) Serve(l net.Listener) error {
 			}
 		}
 
-		s.Tracef("accepted connection from %s", conn.RemoteAddr())
+		if s.Logger != nil {
+			s.Logger.Info("accepted connection", slog.String("addr", conn.RemoteAddr().String()))
+		}
 		sc := &serverConn{
 			rwc:        conn,
 			maxMsgSize: DEFAULT_MAX_MESSAGE_SIZE,
@@ -205,7 +207,7 @@ func (s *Server) Serve(l net.Listener) error {
 	}
 }
 
-func (s *Server) ListenAndServe(network, addr string, d Dialer) error {
+func (s *Server) Listener(network, addr string, d Dialer) (net.Listener, error) {
 	if d == nil {
 		d = &TCPDialer{}
 	}
@@ -217,24 +219,24 @@ func (s *Server) ListenAndServe(network, addr string, d Dialer) error {
 	}
 	ln, err := d.Listen(network, addr)
 	if err != nil {
+		return nil, err
+	}
+	return ln, nil
+}
+
+func (s *Server) ListenAndServe(network, addr string, d Dialer) error {
+	ln, err := s.Listener(network, addr, d)
+	if err != nil {
 		return err
 	}
-	log.Printf("listening on %s", ln.Addr())
 	return s.Serve(ln)
 }
 
 func (s *Server) ListenAndServeTLS(network, addr string, certFile, keyFile string, d Dialer) error {
-	if d == nil {
-		d = &TLSDialer{}
-	}
-	if network == "" {
-		network = "tcp"
-	}
-	ln, err := d.Listen(network, addr)
+	ln, err := s.Listener(network, addr, d)
 	if err != nil {
 		return err
 	}
-	log.Printf("listening on %s", ln.Addr())
 	return s.ServeTLS(ln, certFile, keyFile)
 }
 
@@ -266,14 +268,14 @@ type serverConn struct {
 }
 
 func (s *serverConn) tracef(f string, values ...interface{}) {
-	if s.srv.TraceLog != nil {
-		s.srv.TraceLog.Printf(f, values...)
+	if s.srv.Logger != nil {
+		s.srv.Logger.Debug(fmt.Sprintf(f, values...))
 	}
 }
 
 func (s *serverConn) errorf(f string, values ...interface{}) {
-	if s.srv.ErrorLog != nil {
-		s.srv.ErrorLog.Printf(f, values...)
+	if s.srv.Logger != nil {
+		s.srv.Logger.Error(fmt.Sprintf(f, values...))
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"iter"
+	"log/slog"
 	"math"
 	"os"
 	"path/filepath"
@@ -213,11 +214,10 @@ func cleanPath(path string) string {
 // If the FileSystem implements io.Closer, then the defaultHandler will also
 // invoke Close() when the server is shutting down.
 type defaultHandler struct {
-	Fs   FileSystem
-	Auth Authorizer
-	st   SessionTracker
-
-	Loggable
+	Fs     FileSystem
+	Auth   Authorizer
+	st     SessionTracker
+	Logger *slog.Logger
 }
 
 // Invoked by the server when the server is shutting down.
@@ -235,7 +235,9 @@ func (h *defaultHandler) Connected(addr string) {
 
 // Invoked by the server when a client has been disconnected.
 func (h *defaultHandler) Disconnected(addr string) {
-	h.Tracef("srv: disconnect: %s", addr)
+	if h.Logger != nil {
+		h.Logger.Info("disconnect", slog.String("addr", addr))
+	}
 	h.st.Remove(addr)
 }
 
@@ -243,7 +245,9 @@ func (h *defaultHandler) Disconnected(addr string) {
 func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Replier) {
 	session := h.st.Lookup(w.RemoteAddr())
 	if session == nil {
-		h.Errorf("No previous session for %s", w.RemoteAddr())
+		if h.Logger != nil {
+			h.Logger.Error("no previous session for address", slog.String("addr", w.RemoteAddr()))
+		}
 		return
 	}
 	connCtx = context.WithValue(connCtx, "session", session)
@@ -253,12 +257,16 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 	switch m := m.(type) {
 	case Tauth:
 		if h.Auth == nil {
-			h.Tracef("srv: Tattach: unsupported")
+			if h.Logger != nil {
+				h.Logger.Error("Tattach: unsupported", slog.String("addr", w.RemoteAddr()))
+			}
 			w.Rerror(ErrUnsupported)
 		} else {
 			handle, err := h.Auth.Auth(ctx, w.RemoteAddr(), m.Uname(), m.Aname())
 			if err != nil {
-				h.Tracef("srv: Tattach: reject auth request: authorizer error: %s", err)
+				if h.Logger != nil {
+					h.Logger.Warn("Tattach: reject auth request: authorizer error", slog.String("addr", w.RemoteAddr()), slog.String("error", err.Error()))
+				}
 				w.Rerror(err)
 				return
 			}
@@ -275,7 +283,9 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 
 			qid := session.PutQid(fil.Name, fil.Mode.QidType(), NoQidVersion)
 
-			h.Tracef("srv: Tattach: offer auth file: %v", fil.Name)
+			if h.Logger != nil {
+				h.Logger.Info("Tattach: offer auth file", slog.String("file", fil.Name))
+			}
 			w.Rauth(qid)
 		}
 		return
@@ -285,33 +295,45 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 			if m.Afid() != NO_FID {
 				fil, found := session.FileForFid(m.Afid())
 				if !found {
-					h.Tracef("srv: Tattach: reject auth request")
+					if h.Logger != nil {
+						h.Logger.Error("Tattach: reject auth request", slog.String("addr", w.RemoteAddr()))
+					}
 					w.Rerrorf("no authentication")
 					return
 				}
 
 				afid, ok := fil.H.(AuthFileHandle)
 				if !ok {
-					h.Tracef("srv: Tattach: invalid afid (not auth file)")
+					if h.Logger != nil {
+						h.Logger.Error("Tattach: invalid afid (not auth file)", slog.String("addr", w.RemoteAddr()))
+					}
 					w.Rerrorf("unauthorized afid")
 					return
 				}
 
 				if !afid.Authorized(m.Uname(), m.Aname()) {
-					h.Tracef("srv: Tattach: invalid afid (not authorized yet)")
+					if h.Logger != nil {
+						h.Logger.Error("Tattach: invalid afid (not authorized yet)", slog.String("addr", w.RemoteAddr()))
+					}
 					w.Rerrorf("unauthorized afid")
 					return
 				}
 
-				h.Tracef("srv: Tattach: authorized afid (%s)", afid)
+				if h.Logger != nil {
+					h.Logger.Info("Tattach: authorized afid", slog.Uint64("afid", uint64(m.Afid())))
+				}
 			} else {
-				h.Tracef("srv: Tattach: reject auth request")
+				if h.Logger != nil {
+					h.Logger.Error("Tattach: reject auth request", slog.String("addr", w.RemoteAddr()))
+				}
 				w.Rerrorf("authentication required")
 				return
 			}
 		} else {
 			if m.Afid() != NO_FID {
-				h.Tracef("srv: Tattach: reject auth request")
+				if h.Logger != nil {
+					h.Logger.Error("Tattach: reject auth request", slog.String("addr", w.RemoteAddr()))
+				}
 				w.Rerrorf("no authentication")
 				return
 			} else {
@@ -320,7 +342,9 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 		}
 
 		// associate fid to root
-		h.Tracef("srv: Tattach: %s", m.Fid())
+		if h.Logger != nil {
+			h.Logger.Info("Tattach: associate fid to root", slog.String("addr", w.RemoteAddr()), slog.Uint64("fid", uint64(m.Fid())))
+		}
 		session.PutFid(m.Fid(), serverFile{
 			Name: "/",
 			User: m.Uname(),
@@ -332,7 +356,9 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 	case Topen:
 		fil, ok := session.FileForFid(m.Fid())
 		if !ok {
-			h.Errorf("srv: Topen: unknown %s", m.Fid())
+			if h.Logger != nil {
+				h.Logger.Error("Topen: unknown fid", slog.String("addr", w.RemoteAddr()), slog.Uint64("fid", uint64(m.Fid())))
+			}
 			w.Rerrorf("unknown fid %d", m.Fid())
 			return
 		}
@@ -340,7 +366,9 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 		// fmt.Printf("==> Topen: START\n")
 		info, err := h.Fs.Stat(ctx, fullPath)
 		if err != nil {
-			h.Errorf("srv: Topen: failed to call stat on %v: %s", fullPath, err)
+			if h.Logger != nil {
+				h.Logger.Error("Topen: failed to call stat on %v", slog.String("addr", w.RemoteAddr()), slog.String("path", fullPath), slog.String("error", err.Error()))
+			}
 			w.Rerror(err)
 			return
 		}
@@ -350,11 +378,15 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 			// From Topen docs:
 			//   "It is illegal to write a directory, truncate it, or attempt to remove it on close"
 			if m.Mode()&ORCLOSE != 0 {
-				h.Tracef("srv: Topen: client error: requested dir with ORCLOSE -- %s", strFileInfo(info))
+				if h.Logger != nil {
+					h.Logger.Warn("Topen: client error: requested dir with ORCLOSE", slog.String("addr", w.RemoteAddr()), slog.String("path", fullPath))
+				}
 				w.Rerrorf("dir cannot have ORCLOSE set")
 				return
 			} else if m.Mode()&OTRUNC != 0 {
-				h.Tracef("srv: Topen: client error: requested dir with OTRUNC -- %s", strFileInfo(info))
+				if h.Logger != nil {
+					h.Logger.Warn("Topen: client error: requested dir with OTRUNC", slog.String("addr", w.RemoteAddr()), slog.String("path", fullPath))
+				}
 				w.Rerrorf("dir cannot have OTRUNC set")
 				return
 			}
@@ -369,7 +401,9 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 		} else {
 			f, err := h.Fs.OpenFile(connCtx, fullPath, m.Mode())
 			if err != nil || f == nil {
-				h.Tracef("srv: Topen: error opening file %v: %s %v", fullPath, err, m.Fid)
+				if h.Logger != nil {
+					h.Logger.Error("Topen: error opening file", slog.String("addr", w.RemoteAddr()), slog.String("path", fullPath), slog.Any("error", err))
+				}
 				w.Rerrorf("cannot open: %s", err)
 				return
 			}
@@ -379,26 +413,38 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 			// fil.IncRef()
 			session.PutFileHandle(q, f)
 		}
-		h.Tracef("srv: Topen: %s -> %v (isDir=%v, mode=%v, qid=%v)", m.Fid(), fullPath, info.IsDir(), info.Mode(), q)
+		if h.Logger != nil {
+			h.Logger.Info("Topen", slog.String("addr", w.RemoteAddr()), slog.String("path", fullPath), slog.String("qid", q.String()))
+		}
 		session.PutFid(m.Fid(), fil)
 		w.Ropen(q, 0) // TODO: would be nice to support iounit
 
 	case Twalk:
 		fil, ok := session.FileForFid(m.Fid())
 		if !ok {
-			h.Errorf("srv: Twalk: unknown %s", m.Fid())
+			if h.Logger != nil {
+				h.Logger.Error("unknown fid", slog.String("addr", w.RemoteAddr()), slog.Uint64("fid", uint64(m.Fid())))
+			}
 			w.Rerrorf("unknown fid %d", m.Fid())
 			return
 		}
 		if m.Fid() != m.NewFid() {
 			if _, found := session.FileForFid(m.NewFid()); found {
-				h.Errorf("srv: Twalk: %s wanted new %s which is already taken", m.Fid(), m.NewFid())
+				if h.Logger != nil {
+					h.Logger.Error("newfid already taken",
+						slog.Uint64("fid", uint64(m.Fid())),
+						slog.Uint64("newfid", uint64(m.NewFid())))
+				}
 				w.Rerrorf("conflict with newfid (fid=%d, newfid=%d)", m.Fid(), m.NewFid())
 				return
 			}
 		}
 		if fil.Mode&M_DIR == 0 && m.NumWname() > 0 {
-			h.Errorf("srv: Twalk: failed to because file is not a dir %s: %v", m.Fid(), fil.Name)
+			if h.Logger != nil {
+				h.Logger.Error("walk in non-directory",
+					slog.Uint64("fid", uint64(m.Fid())),
+					slog.String("name", fil.Name))
+			}
 			w.Rerrorf("walk in non-directory")
 			return
 		}
@@ -407,15 +453,22 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 		path := cleanPath(fil.Name)
 		var info os.FileInfo
 		if wfs, ok := h.Fs.(WalkableFileSystem); ok {
-			h.Tracef("srv: Twalk: using WalkableFileSystem")
 			size := int(m.NumWname())
 			parts := make([]string, 0, size)
-			h.Tracef("srv: Twalk: size: %#v\n", size)
+			if h.Logger != nil {
+				h.Logger.Info("using WalkableFileSystem", slog.Int("size", size))
+			}
 			for _, uncleanName := range m.Wnames() {
-				h.Tracef("srv: Twalk: path: %#v\n", uncleanName)
+				if h.Logger != nil {
+					h.Logger.Info("walk path", slog.String("path", uncleanName))
+				}
 				name := cleanPath(uncleanName)
 				if strings.Contains(name, string(os.PathSeparator)) {
-					h.Errorf("srv: Twalk: invalid walk element for %s: %v", m.Fid(), name)
+					if h.Logger != nil {
+						h.Logger.Error("invalid walk element",
+							slog.Uint64("fid", uint64(m.Fid())),
+							slog.String("name", name))
+					}
 					w.Rerrorf("invalid walk element: %v", name)
 					return
 				}
@@ -423,7 +476,9 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 			}
 			infos, err := wfs.Walk(ctx, parts)
 			if err != nil {
-				h.Errorf("srv: Twalk: invalid file system walk for %s (%#v): %s", m.Fid(), filepath.Join(parts...), err)
+				if h.Logger != nil {
+					h.Logger.Error("invalid file system walk for %s (%#v): %s", m.Fid(), filepath.Join(parts...), err)
+				}
 				w.Rerror(err)
 				return
 			}
@@ -445,10 +500,16 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 				info := infos[i]
 
 				if info != nil {
-					h.Tracef("srv: Twalk: %s :: %v %v", m.Fid(), path, info.Mode())
+					if h.Logger != nil {
+						h.Logger.Info("walk info",
+							slog.Uint64("fid", uint64(m.Fid())),
+							slog.String("path", path),
+							slog.Int("mode", int(info.Mode()&M_DIR>>24)))
+					}
 				} else {
-					h.Tracef("srv: Twalk: %s :: %v nil", m.Fid(), path)
-					h.Errorf("srv: implementation returned a nil info without an error; returning not found")
+					if h.Logger != nil {
+						h.Logger.Error("implementation returned a nil info without an error; returning not found")
+					}
 					w.Rerror(os.ErrNotExist)
 					return
 				}
@@ -465,13 +526,19 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 				}
 			}
 		} else {
-			h.Tracef("srv: Twalk: not using WalkableFileSystem")
+			if h.Logger != nil {
+				h.Logger.Info("not using WalkableFileSystem")
+			}
 			for _, uncleanName := range m.Wnames() {
 				name := cleanPath(uncleanName)
 				if name == "/" {
 					path = "/"
 				} else if strings.Contains(name, string(os.PathSeparator)) {
-					h.Errorf("srv: Twalk: invalid walk element for %s: %v", m.Fid(), name)
+					if h.Logger != nil {
+						h.Logger.Error("invalid walk element",
+							slog.Uint64("fid", uint64(m.Fid())),
+							slog.String("name", name))
+					}
 					w.Rerrorf("invalid walk element: %v", name)
 					return
 				} else {
@@ -480,15 +547,23 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 				var err error
 				info, err = h.Fs.Stat(ctx, path)
 				if err != nil {
-					h.Errorf("srv: Twalk: failed to call stat on %v for %s", path, m.Fid())
+					if h.Logger != nil {
+						h.Logger.Error("failed to call stat on %v for %s", path, m.Fid())
+					}
 					break
 				}
 
 				if info != nil {
-					h.Tracef("srv: Twalk: %s :: %v %v", m.Fid(), path, info.Mode())
+					if h.Logger != nil {
+						h.Logger.Info("walk info",
+							slog.Uint64("fid", uint64(m.Fid())),
+							slog.String("path", path),
+							slog.Int("mode", int(info.Mode()&M_DIR>>24)))
+					}
 				} else {
-					h.Tracef("srv: Twalk: %s :: %v nil", m.Fid(), path)
-					h.Errorf("srv: implementation returned a nil info without an error; returning not found")
+					if h.Logger != nil {
+						h.Logger.Error("implementation returned a nil info without an error; returning not found")
+					}
 					w.Rerror(os.ErrNotExist)
 					return
 				}
@@ -517,23 +592,39 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 		if len(walkedQids) == int(m.NumWname()) {
 			session.PutFid(m.NewFid(), fil)
 		}
-		h.Tracef("srv: Twalk: %s=>%s: %#v %v -> %v", m.Fid(), m.NewFid(), fil.Name, m.NumWname(), len(walkedQids))
+		if h.Logger != nil {
+			h.Logger.Info("walk result",
+				slog.Uint64("fid", uint64(m.Fid())),
+				slog.Uint64("newfid", uint64(m.NewFid())),
+				slog.String("file", fil.Name),
+				slog.Int("num_wname", int(m.NumWname())),
+				slog.Int("walked_qids", len(walkedQids)))
+		}
 		if len(walkedQids) > 0 {
-			h.Tracef("srv: Twalk: %s=>%s: qid=%v", m.Fid(), m.NewFid(), walkedQids[len(walkedQids)-1])
+			if h.Logger != nil {
+				h.Logger.Info("walk result",
+					slog.Uint64("fid", uint64(m.Fid())),
+					slog.Uint64("newfid", uint64(m.NewFid())),
+					slog.String("qid", walkedQids[len(walkedQids)-1].String()))
+			}
 		}
 		w.Rwalk(walkedQids)
 
 	case Tstat:
 		fil, ok := session.FileForFid(m.Fid())
 		if !ok {
-			h.Errorf("srv: Tstat: unknown %s", m.Fid())
+			if h.Logger != nil {
+				h.Logger.Error("unknown fid", slog.String("addr", w.RemoteAddr()), slog.Uint64("fid", uint64(m.Fid())))
+			}
 			w.Rerrorf("unknown fid %d", m.Fid())
 			return
 		}
 		fullPath := cleanPath(fil.Name)
 		info, err := h.Fs.Stat(ctx, fullPath)
 		if err != nil {
-			h.Errorf("srv: Tstat: failed to call stat on %v: %s", fullPath, err)
+			if h.Logger != nil {
+				h.Logger.Error("failed to call stat on %v: %s", fullPath, err)
+			}
 			w.Rerror(err)
 			return
 		}
@@ -542,25 +633,37 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 		fil.User = stat.Uid()
 		fil.Mode = ModeFromOS(info.Mode())
 		session.PutFid(m.Fid(), fil)
-		h.Tracef("srv: Tstat %s %v -> %s %v", m.Fid(), fil.Name, stat, info.Mode())
+		if h.Logger != nil {
+			h.Logger.Info("stat result",
+				slog.Uint64("fid", uint64(m.Fid())),
+				slog.String("file", fil.Name),
+				slog.String("stat", stat.String()))
+		}
 		w.Rstat(stat)
 
 	case Tread:
 		fil, ok := session.FileForFid(m.Fid())
 		if !ok {
-			h.Errorf("srv: Tread: unknown %s", m.Fid())
+			if h.Logger != nil {
+				h.Logger.Error("unknown fid", slog.String("addr", w.RemoteAddr()), slog.Uint64("fid", uint64(m.Fid())))
+			}
 			w.Rerrorf("unknown fid %d", m.Fid())
 			return
 		}
 
 		if fil.Flag&3 != OREAD && fil.Flag&3 != ORDWR {
-			h.Errorf("srv: Tread: file opened with wrong flags: %s", m.Fid())
+			if h.Logger != nil {
+				h.Logger.Error("file opened with wrong flags", slog.Uint64("fid", uint64(m.Fid())))
+			}
 			w.Rerrorf("%s wasn't opened with read flag set", m.Fid())
 			return
 		}
 
 		if fil.H == nil {
-			h.Errorf("srv: Tread: file not opened: %s", m.Fid())
+			if h.Logger != nil {
+				h.Logger.Error("file not opened",
+					slog.Uint64("fid", uint64(m.Fid())))
+			}
 			w.Rerrorf("%s wasn't opened", m.Fid())
 			return
 		}
@@ -579,16 +682,27 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 		if n == 0 {
 			if err == io.EOF || err == nil {
 				w.Rread(0)
-				h.Tracef("srv: Tread: EOF: fid %d", m.Fid())
+				if h.Logger != nil {
+					h.Logger.Info("read EOF", slog.Uint64("fid", uint64(m.Fid())))
+				}
 				return
 			}
-			h.Errorf("srv: Tread: error: fid %d couldn't read: %s", m.Fid(), err)
+			if h.Logger != nil {
+				h.Logger.Error("error", slog.Uint64("fid", uint64(m.Fid())), slog.String("error", err.Error()))
+			}
 			w.Rerror(err)
 			return
 		} else if err != nil && err != io.EOF {
-			h.Tracef("srv: Tread: warn: %s couldn't read full buffer (only %d bytes): %s", m.Fid(), n, err)
+			if h.Logger != nil {
+				h.Logger.Error("warn", slog.Uint64("fid", uint64(m.Fid())), slog.String("error", err.Error()))
+			}
 		}
-		h.Tracef("srv: Tread: %s (offset=%d, bytes=%d)", m.Fid(), m.Offset(), n)
+		if h.Logger != nil {
+			h.Logger.Info("read result",
+				slog.Uint64("fid", uint64(m.Fid())),
+				slog.Uint64("offset", m.Offset()),
+				slog.Int("bytes", n))
+		}
 		if uint64(len(data)) > math.MaxUint32 {
 			panic(fmt.Errorf("data is larger than allowed: %d", len(data)))
 		}
@@ -610,7 +724,9 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 				// }
 			}
 			if fil.Flag&ORCLOSE != 0 {
-				h.Tracef("srv: deleting %s %#v", m.Fid(), fil.Name)
+				if h.Logger != nil {
+					h.Logger.Info("deleting", slog.Uint64("fid", uint64(m.Fid())), slog.String("file", fil.Name))
+				}
 				if fsd, ok := h.Fs.(DeleteWithModeFileSystem); ok {
 					fsd.DeleteWithMode(ctx, fil.Name, fil.Mode)
 				} else {
@@ -620,7 +736,9 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 			}
 			session.MayDeleteQid(fil.Name) // not ideal, since there may be other active references! but this is better then leaking memory?
 			session.DeleteFid(m.Fid())
-			h.Tracef("srv: Tclunk: %s %v", m.Fid(), fil.Name)
+			if h.Logger != nil {
+				h.Logger.Info("Tclunk", slog.Uint64("fid", uint64(m.Fid())), slog.String("file", fil.Name))
+			}
 			w.Rclunk()
 		} else {
 			w.Rerrorf("srv: Tclunk: unknown %s", m.Fid())
@@ -629,12 +747,16 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 	case Tremove:
 		fil, ok := session.FileForFid(m.Fid())
 		if ok {
-			h.Tracef("srv: Tremove: %v %v // with mode %s", m.Fid(), fil.Name, fil.Mode)
+			if h.Logger != nil {
+				h.Logger.Info("Tremove", slog.Uint64("fid", uint64(m.Fid())), slog.String("file", fil.Name))
+			}
 			err := Delete(ctx, h.Fs, fil.Name, fil.Mode)
 			session.DeleteFid(m.Fid())
 			session.DeleteQid(fil.Name)
 			if err != nil {
-				h.Errorf("srv: Tremove: error %v: %v %v", err, m.Fid(), fil.Name)
+				if h.Logger != nil {
+					h.Logger.Error("error", slog.Uint64("fid", uint64(m.Fid())), slog.String("file", fil.Name), slog.String("error", err.Error()))
+				}
 				w.Rerror(err)
 			} else {
 				w.Rremove()
@@ -646,20 +768,26 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 	case Tcreate:
 		fil, ok := session.FileForFid(m.Fid())
 		if !ok {
-			h.Errorf("srv: Tcreate: unknown fid: %v", m.Fid())
+			if h.Logger != nil {
+				h.Logger.Error("unknown fid", slog.Uint64("fid", uint64(m.Fid())))
+			}
 			w.Rerrorf("unknown fid %d", m.Fid())
 			return
 		}
 		name := m.Name()
 		if name == "." || name == ".." {
-			h.Errorf("srv: Tcreate: cannot create file: %v", name)
+			if h.Logger != nil {
+				h.Logger.Error("cannot create file", slog.String("file", name))
+			}
 			w.Rerrorf("invalid name: %#v", name)
 			return
 		}
 		fullPath := filepath.Join(fil.Name, cleanPath(m.Name()))
 		info, err := h.Fs.Stat(ctx, fullPath)
 		if errors.Is(err, os.ErrExist) {
-			h.Errorf("srv: Tcreate: file exists %v: %s", fullPath, err)
+			if h.Logger != nil {
+				h.Logger.Error("file exists", slog.String("file", fullPath), slog.String("error", err.Error()))
+			}
 			w.Rerror(err)
 			return
 		}
@@ -675,17 +803,23 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 			// From Topen docs:
 			//   "It is illegal to write a directory, truncate it, or attempt to remove it on close"
 			if m.Mode()&ORCLOSE != 0 {
-				h.Tracef("srv: Tcreate: client error: requested dir with ORCLOSE")
+				if h.Logger != nil {
+					h.Logger.Error("client error: requested dir with ORCLOSE")
+				}
 				w.Rerrorf("dir cannot have ORCLOSE set")
 				return
 			} else if m.Mode()&OTRUNC != 0 {
-				h.Tracef("srv: Tcreate: client error: requested dir with OTRUNC")
+				if h.Logger != nil {
+					h.Logger.Error("client error: requested dir with OTRUNC")
+				}
 				w.Rerrorf("dir cannot have OTRUNC set")
 				return
 			}
 
 			if err := h.Fs.MakeDir(ctx, fullPath, m.Perm()); err != nil {
-				h.Errorf("srv: Tcreate: failed to create dir: %s", err)
+				if h.Logger != nil {
+					h.Logger.Error("failed to create dir", slog.String("file", fullPath), slog.String("error", err.Error()))
+				}
 				w.Rerror(err)
 				return
 			}
@@ -701,7 +835,9 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 		} else {
 			f, err := h.Fs.CreateFile(connCtx, fullPath, m.Mode(), m.Perm())
 			if err != nil || f == nil {
-				h.Tracef("srv: Tcreate: error creating file %v %v: %s", fullPath, m.Perm().ToOsMode(), err)
+				if h.Logger != nil {
+					h.Logger.Error("error creating file", slog.String("file", fullPath), slog.String("mode", m.Perm().String()), slog.String("error", err.Error()))
+				}
 				w.Rerror(err)
 				return
 			}
@@ -714,51 +850,75 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 		if info != nil {
 			fil.Mode = ModeFromOS(info.Mode())
 		}
-		h.Tracef("srv: Tcreate: %v -> %v (isDir=%v, mode=%d)", m.Fid(), fil.Name, isDir, m.Mode())
+		if h.Logger != nil {
+			h.Logger.Info("Tcreate", slog.Uint64("fid", uint64(m.Fid())), slog.String("file", fil.Name), slog.Bool("isDir", isDir), slog.String("mode", m.Mode().String()))
+		}
 		session.PutFid(m.Fid(), fil)
 		w.Rcreate(q, 0) // TODO: would be nice to support iounit
 
 	case Twrite:
 		fil, ok := session.FileForFid(m.Fid())
 		if !ok {
-			h.Errorf("srv: Twrite: unknown fid: %v", m.Fid())
+			if h.Logger != nil {
+				h.Logger.Error("unknown fid", slog.Uint64("fid", uint64(m.Fid())))
+			}
 			w.Rerrorf("unknown fid %d", m.Fid())
 			return
 		}
 
 		if fil.Flag&3 != OWRITE && fil.Flag&3 != ORDWR {
-			h.Errorf("srv: Twrite: file opened with wrong flags: fid %v", m.Fid())
+			if h.Logger != nil {
+				h.Logger.Error("file opened with wrong flags", slog.Uint64("fid", uint64(m.Fid())))
+			}
 			w.Rerrorf("fid %d wasn't opened with write flag set", m.Fid())
 			return
 		}
 
 		if fil.H == nil {
-			h.Errorf("srv: Twrite: file not opened: %v", m.Fid())
+			if h.Logger != nil {
+				h.Logger.Error("file not opened",
+					slog.Uint64("fid", uint64(m.Fid())))
+			}
 			w.Rerrorf("fid %d wasn't opened", m.Fid())
 			return
 		}
 
 		data := m.Data()
-		h.Tracef("srv: Twrite: want fid %d (offset=%d, data=%d)", m.Fid(), m.Offset(), len(data))
+		if h.Logger != nil {
+			h.Logger.Info("write request",
+				slog.Uint64("fid", uint64(m.Fid())),
+				slog.Uint64("offset", m.Offset()),
+				slog.Int("data_len", len(data)))
+		}
 		// TODO: handle overflow of converting uint64 -> int64
 		// TODO: handle retriable errors
 		n, err := fil.H.WriteAt(data, int64(m.Offset()))
 		if n == 0 && err != nil {
-			h.Errorf("srv: Twrite: error: fid %d couldn't write: %s", m.Fid(), err)
+			if h.Logger != nil {
+				h.Logger.Error("error", slog.Uint64("fid", uint64(m.Fid())), slog.String("error", err.Error()))
+			}
 			w.Rerror(err)
 			return
 		}
 		session.TouchQid(fil.Name, fil.Mode.QidType())
-		if err != nil {
-			h.Tracef("srv: Twrite: warn: fid %d couldn't write full buffer (only %d/%d bytes): %s", m.Fid(), n, len(data), err)
+		if h.Logger != nil {
+			if err != nil {
+				h.Logger.Error("warn", slog.Uint64("fid", uint64(m.Fid())), slog.String("error", err.Error()))
+			} else {
+				h.Logger.Info("write result",
+					slog.Uint64("fid", uint64(m.Fid())),
+					slog.Uint64("offset", m.Offset()),
+					slog.Int("bytes", n))
+			}
 		}
-		h.Tracef("srv: Twrite: fid %d (offset=%d, bytes=%d)", m.Fid(), m.Offset(), n)
 		w.Rwrite(uint32(n))
 
 	case Twstat:
 		fil, ok := session.FileForFid(m.Fid())
 		if !ok {
-			h.Errorf("srv: Twstat: unknown fid: %v", m.Fid())
+			if h.Logger != nil {
+				h.Logger.Error("unknown fid", slog.String("addr", w.RemoteAddr()), slog.Uint64("fid", uint64(m.Fid())))
+			}
 			w.Rerrorf("unknown fid %d", m.Fid())
 			return
 		}
@@ -776,7 +936,9 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 		if stat.IsZero() {
 			if fil.H != nil {
 				if err := fil.H.Sync(); err != nil {
-					h.Errorf("srv: Twstat: failed to fsync %v: %s", fullPath, err)
+					if h.Logger != nil {
+						h.Logger.Error("failed to fsync %v: %s", fullPath, err)
+					}
 					w.Rerror(err)
 					return
 				}
@@ -796,38 +958,50 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 			//   the state of the file exactly what it claims to be.”)"
 
 			if !stat.MuidNoTouch() {
-				h.Errorf("srv: Twstat: client failed: deny attempt to change Muid")
+				if h.Logger != nil {
+					h.Logger.Error("client failed: deny attempt to change Muid")
+				}
 				w.Rerrorf("wstat: attempted to change Muid")
 				return
 			}
 
 			if !stat.DevNoTouch() {
-				h.Errorf("srv: Twstat: client failed: deny attempt to change dev (%d != %d)", stat.Dev(), NoTouchU32)
+				if h.Logger != nil {
+					h.Logger.Error("client failed: deny attempt to change dev (%d != %d)", stat.Dev(), NoTouchU32)
+				}
 				w.Rerrorf("wstat: attempted to change dev")
 				return
 			}
 
 			if !stat.TypeNoTouch() {
-				h.Errorf("srv: Twstat: client failed: deny attempt to change type (%d)", stat.Type())
+				if h.Logger != nil {
+					h.Logger.Error("client failed: deny attempt to change type (%d)", stat.Type())
+				}
 				w.Rerrorf("wstat: attempted to change type")
 				return
 			}
 
 			if !stat.Qid().IsNoTouch() {
-				h.Errorf("srv: Twstat: client failed: deny attempt to change qid")
+				if h.Logger != nil {
+					h.Logger.Error("client failed: deny attempt to change qid")
+				}
 				w.Rerrorf("wstat: attempted to change qid")
 				return
 			}
 
 			if !stat.ModeNoTouch() && int(stat.Mode()&M_DIR>>24) != int(qid.Type()&QT_DIR) {
-				h.Errorf("srv: Twstat: client failed: deny attempt to change M_DIR bit on Mode")
+				if h.Logger != nil {
+					h.Logger.Error("client failed: deny attempt to change M_DIR bit on Mode")
+				}
 				w.Rerrorf("wstat: attempted to change Mode to M_DIR bit")
 				return
 			}
 
 			err := h.Fs.WriteStat(ctx, fullPath, stat)
 			if err != nil {
-				h.Errorf("srv: Twstat: failed for %v: %s", fullPath, err)
+				if h.Logger != nil {
+					h.Logger.Error("failed for %v: %s", fullPath, err)
+				}
 				w.Rerror(err)
 				return
 			}
@@ -840,7 +1014,9 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 		// 	H:    fil.H,
 		// })
 		// qid := session.PutQid(fil.Name, ModeFromOS(m.Mode()).QidType())
-		h.Tracef("srv: Twstat ->Rwstat %v %v -> %s", m.Fid(), fil.Name, stat)
+		if h.Logger != nil {
+			h.Logger.Info("Twstat ->Rwstat", slog.Uint64("fid", uint64(m.Fid())), slog.String("file", fil.Name))
+		}
 		w.Rwstat()
 
 	default:

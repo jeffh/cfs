@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"iter"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -272,7 +273,9 @@ func (fp *FileProxy) eachStat(yield func(Stat, error) bool) {
 		st := Stat(b)
 		size := st.Size()
 		if int(size) > len(b) {
-			fs.c.Errorf("Invalid format while reading dir: (wanted: %d bytes, had: %d bytes)", size, len(b))
+			if fs.Logger != nil {
+				fs.Logger.Error("FileProxy.eachStat.readStat.invalidFormat", slog.Int("wanted", int(size)), slog.Int("had", len(b)))
+			}
 			return nil, b, ErrBadFormat
 		}
 		st = Stat(b[:size+2])
@@ -367,10 +370,6 @@ type FileSystemProxyClient interface {
 
 	// Extra - Max size the client uses for messaging. FS Proxy uses it for buffer sizes
 	MaxMessageSize() uint32
-
-	// Logging
-	Errorf(format string, values ...interface{})
-	Tracef(format string, values ...interface{})
 }
 
 // A 9p client's representation a file on a remote FileSystem
@@ -378,9 +377,10 @@ type FileSystemProxyClient interface {
 // Using this can be more efficient that using paths all the time, otherwise
 // the client effectively cd-s to the given path each time which can be slower.
 type FileSystemProxy struct {
-	c     FileSystemProxyClient
-	rootF Fid
-	rootQ Qid
+	Logger *slog.Logger
+	c      FileSystemProxyClient
+	rootF  Fid
+	rootQ  Qid
 
 	mut      sync.Mutex
 	usedFids map[Fid]bool
@@ -502,7 +502,9 @@ func (fsp *FileSystemProxy) ListDir(ctx context.Context, path string) iter.Seq2[
 func (fs *FileSystemProxy) ListDirStat(path string) iter.Seq2[Stat, error] {
 	return func(yield func(Stat, error) bool) {
 		fid := fs.allocFid()
-		fs.c.Tracef("ListDir(%#v) %s", path, fid)
+		if fs.Logger != nil {
+			fs.Logger.Debug("FileSystemProxy.ListDirStat", slog.String("path", path), slog.Uint64("fid", uint64(fid)))
+		}
 		q, err := fs.walk(fid, path)
 		if err != nil {
 			fs.releaseFid(fid)

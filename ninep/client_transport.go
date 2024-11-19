@@ -3,6 +3,7 @@ package ninep
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"sort"
 	"sync"
@@ -11,7 +12,7 @@ import (
 )
 
 type ClientTransport interface {
-	Connect(d Dialer, network, addr, usr, mnt string, A Authorizee, L Loggable) error
+	Connect(d Dialer, network, addr, usr, mnt string, A Authorizee, L *slog.Logger) error
 	Disconnect() error
 
 	MaxMessageSize() uint32
@@ -42,7 +43,7 @@ func (t *SerialClientTransport) MaxMessageSize() uint32 {
 	return t.maxMsgSize
 }
 
-func (t *SerialClientTransport) Connect(d Dialer, network, addr, usr, mnt string, A Authorizee, L Loggable) error {
+func (t *SerialClientTransport) Connect(d Dialer, network, addr, usr, mnt string, A Authorizee, L *slog.Logger) error {
 	t.m.Lock()
 	defer t.m.Unlock()
 	var err error
@@ -96,18 +97,18 @@ type ParallelClientTransport struct {
 	readCancel              context.CancelFunc
 	maxMsgSize              uint32
 	MaxSimultaneousRequests uint
-	Loggable
+	Logger                  *slog.Logger
 }
 
 var _ ClientTransport = (*ParallelClientTransport)(nil)
 
 func (t *ParallelClientTransport) MaxMessageSize() uint32 { return t.maxMsgSize }
 
-func (t *ParallelClientTransport) Connect(d Dialer, network, addr, usr, mnt string, A Authorizee, L Loggable) error {
+func (t *ParallelClientTransport) Connect(d Dialer, network, addr, usr, mnt string, A Authorizee, L *slog.Logger) error {
 	t.m.Lock()
 	defer t.m.Unlock()
 
-	t.Loggable = L
+	t.Logger = L
 
 	var err error
 	t.rwc, err = d.Dial(network, addr)
@@ -195,17 +196,23 @@ func (t *ParallelClientTransport) readLoop(ctx context.Context) {
 			res.reset()
 			err := res.readReply(t.rwc)
 			if err != nil {
-				t.Errorf("Error reading from server: %s", err)
+				if t.Logger != nil {
+					t.Logger.Error("ParallelClientTransport.readLoop.failed", slog.Any("error", err))
+				}
 				t.abortTransactions(err)
 				return
 			}
 
 			txn, ok := t.getTransaction(res.reqTag())
 			if !ok {
-				t.Errorf("Server returned unrecognized tag: %d", res.reqTag())
+				if t.Logger != nil {
+					t.Logger.Error("ParallelClientTransport.readLoop.failed.unrecognizedTag", slog.Uint64("tag", uint64(res.reqTag())))
+				}
 				continue
 			}
-			t.Tracef("Server tag: %d", res.Reply().Tag())
+			if t.Logger != nil {
+				t.Logger.Debug("ParallelClientTransport.readLoop.serverTag", slog.Uint64("tag", uint64(res.Reply().Tag())))
+			}
 			txn.res = res
 			t.putTransaction(res.reqTag(), txn)
 			txn.ch <- cltChResponse{res: res}
@@ -279,7 +286,7 @@ type SerialRetryClientTransport struct {
 	usr        string
 	mnt        string
 	authorizee Authorizee
-	Loggable
+	Logger     *slog.Logger
 }
 
 var _ ClientTransport = (*SerialRetryClientTransport)(nil)
@@ -290,7 +297,7 @@ func (t *SerialRetryClientTransport) MaxMessageSize() uint32 {
 	return t.maxMsgSize
 }
 
-func (t *SerialRetryClientTransport) Connect(d Dialer, network, addr, usr, mnt string, A Authorizee, L Loggable) error {
+func (t *SerialRetryClientTransport) Connect(d Dialer, network, addr, usr, mnt string, A Authorizee, L *slog.Logger) error {
 	t.mut.Lock()
 	t.fids = make(map[Fid]*fidState)
 	t.nextServerFid = 0
@@ -307,12 +314,12 @@ func (t *SerialRetryClientTransport) Connect(d Dialer, network, addr, usr, mnt s
 	t.usr = usr
 	t.mnt = mnt
 	t.authorizee = A
-	t.Loggable = L
+	t.Logger = L
 
 	return t.unsafeConnect(d, network, addr, usr, mnt, A, L)
 }
 
-func (t *SerialRetryClientTransport) unsafeConnect(d Dialer, network, addr, usr, mnt string, A Authorizee, L Loggable) error {
+func (t *SerialRetryClientTransport) unsafeConnect(d Dialer, network, addr, usr, mnt string, A Authorizee, L *slog.Logger) error {
 	var err error
 	t.rwc, err = d.Dial(network, addr)
 	if err != nil {
@@ -385,14 +392,18 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 		switch req.(type) {
 		case Tclunk:
 			fid := orig.(Tclunk).Fid()
-			t.Tracef("Save: Tclunk(%s, ..., ...)", fid)
+			if t.Logger != nil {
+				t.Logger.Debug("SerialRetryClientTransport.Request.Tclunk", slog.Uint64("fid", uint64(fid)))
+			}
 			// always clunk
 			t.mut.Lock()
 			delete(t.fids, fid)
 			t.mut.Unlock()
 		case Tremove:
 			fid := orig.(Tremove).Fid()
-			t.Tracef("Save: Tremove(%s, ..., ...)", fid)
+			if t.Logger != nil {
+				t.Logger.Debug("SerialRetryClientTransport.Request.Tremove", slog.Uint64("fid", uint64(fid)))
+			}
 			// always clunk
 			t.mut.Lock()
 			delete(t.fids, fid)
@@ -415,8 +426,10 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 					aname:     r.Aname(),
 					COMMENT:   "AUTH",
 				}
-				t.Tracef("Save: Rauth(%d, ..., ...)", r.Afid())
 				t.mut.Unlock()
+				if t.Logger != nil {
+					t.Logger.Debug("SerialRetryClientTransport.Request.Rauth", slog.Uint64("fid", uint64(r.Afid())))
+				}
 			case Rattach:
 				r := req.(Tattach)
 				t.mut.Lock()
@@ -430,8 +443,10 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 					aname:      r.Aname(),
 					COMMENT:    "ATTACH",
 				}
-				t.Tracef("Save: Rattach(%d, %d, ..., ...)", r.Fid(), r.Afid())
 				t.mut.Unlock()
+				if t.Logger != nil {
+					t.Logger.Debug("SerialRetryClientTransport.Request.Rattach", slog.Uint64("fid", uint64(r.Fid())), slog.Uint64("afid", uint64(r.Afid())))
+				}
 			case Rwalk:
 				r := req.(Twalk)
 				var qt QidType
@@ -445,7 +460,9 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 					serverFid:    r.Fid(),
 					serverNewFid: r.NewFid(),
 				}
-				t.Tracef("Save: Rwalk(%d, %d, ..., ...)", r.Fid(), r.NewFid())
+				if t.Logger != nil {
+					t.Logger.Debug("SerialRetryClientTransport.Request.Rwalk", slog.Uint64("fid", uint64(r.Fid())), slog.Uint64("newFid", uint64(r.NewFid())))
+				}
 				t.mut.Unlock()
 			case Ropen:
 				r := req.(Topen)
@@ -457,7 +474,9 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 					serverFid: r.Fid(),
 					opened:    true,
 				}
-				t.Tracef("Save: Ropen(%d, %s, ..., ...)", r.Fid(), r.Mode())
+				if t.Logger != nil {
+					t.Logger.Debug("SerialRetryClientTransport.Request.Ropen", slog.Uint64("fid", uint64(r.Fid())), slog.String("mode", string(r.Mode())))
+				}
 				t.mut.Unlock()
 			case Rcreate:
 				r := req.(Tcreate)
@@ -471,7 +490,9 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 					serverFid:    r.Fid(),
 					opened:       true,
 				}
-				t.Tracef("Save: Rcreate(%d, ..., ...)", r.Fid())
+				if t.Logger != nil {
+					t.Logger.Debug("SerialRetryClientTransport.Request.Rcreate", slog.Uint64("fid", uint64(r.Fid())))
+				}
 				t.mut.Unlock()
 			default:
 				// do nothing
@@ -486,7 +507,7 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 			if err != nil {
 				return nil, err
 			}
-			err = t.unsafeConnect(t.d, t.network, t.addr, t.usr, t.mnt, t.authorizee, t.Loggable)
+			err = t.unsafeConnect(t.d, t.network, t.addr, t.usr, t.mnt, t.authorizee, t.Logger)
 			if err != nil {
 				return nil, err
 			}
@@ -513,17 +534,23 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 			for _, fid := range sortedFids {
 				state, ok := t.fids[fid]
 				if !ok {
-					t.Tracef("Restore not found fid state: %s %#v", fid, state)
+					if t.Logger != nil {
+						t.Logger.Debug("SerialRetryClientTransport.Request.Restore.notFound", slog.Uint64("fid", uint64(fid)))
+					}
 					t.mut.Unlock()
 					continue
 				}
 
 				stateTxn.reset()
-				t.Tracef("Restore: %#v", state)
+				if t.Logger != nil {
+					t.Logger.Debug("SerialRetryClientTransport.Request.Restore", slog.Any("state", state))
+				}
 
 				state.m.Lock()
 				if state.mode&M_AUTH != 0 {
-					t.Tracef("Restore: Tauth(%d, ..., ...)", state.serverAfid)
+					if t.Logger != nil {
+						t.Logger.Debug("SerialRetryClientTransport.Request.Restore.Tauth", slog.Uint64("afid", uint64(state.serverAfid)))
+					}
 					stateTxn.req.Tauth(state.serverAfid, state.uname, state.aname)
 					m, err := stateTxn.sendAndReceive(t.rwc)
 					if err != nil {
@@ -545,7 +572,9 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 						}
 					}
 				} else if state.mode&M_MOUNT != 0 {
-					t.Tracef("Restore: Tattach(%d, %d, ..., ...)", state.serverFid, state.serverAfid)
+					if t.Logger != nil {
+						t.Logger.Debug("SerialRetryClientTransport.Request.Restore.Tattach", slog.Uint64("fid", uint64(state.serverFid)), slog.Uint64("afid", uint64(state.serverAfid)))
+					}
 					stateTxn.req.Tattach(state.serverFid, state.serverAfid, state.uname, state.aname)
 					m, err := stateTxn.sendAndReceive(t.rwc)
 					if err != nil {
@@ -561,7 +590,9 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 					}
 				} else {
 					for i := 0; i < numRetries; i++ {
-						t.Tracef("Restore: Twalk(%d, %d, ..., ...)", state.serverFid, state.serverAfid)
+						if t.Logger != nil {
+							t.Logger.Debug("SerialRetryClientTransport.Request.Restore.Twalk", slog.Uint64("fid", uint64(state.serverFid)), slog.Uint64("afid", uint64(state.serverAfid)))
+						}
 						stateTxn.req.Twalk(state.serverFid, state.serverNewFid, state.path)
 						m, err := stateTxn.sendAndReceive(t.rwc)
 						if err != nil {
@@ -583,7 +614,9 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 							// file was created in previous session
 							if len(state.path) > 0 {
 								stateTxn.reset()
-								t.Tracef("Restore: Tcreate(%d, %s, ..., ...) by walking", state.serverFid, state.flag)
+								if t.Logger != nil {
+									t.Logger.Debug("SerialRetryClientTransport.Request.Restore.Tcreate", slog.Uint64("fid", uint64(state.serverFid)), slog.String("mode", string(state.flag)))
+								}
 								stateTxn.req.Twalk(state.serverFid, state.serverNewFid, state.path)
 								m, err = stateTxn.sendAndReceive(t.rwc)
 								if err != nil {
@@ -609,7 +642,9 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 								}
 							}
 							stateTxn.reset()
-							t.Tracef("Restore: Topen(%d, %s, ..., ...)", state.serverFid, state.flag)
+							if t.Logger != nil {
+								t.Logger.Debug("SerialRetryClientTransport.Request.Restore.Topen", slog.Uint64("fid", uint64(state.serverFid)), slog.String("mode", string(state.flag)))
+							}
 							stateTxn.req.Topen(state.serverFid, state.flag)
 							m, err = stateTxn.sendAndReceive(t.rwc)
 							if err != nil {

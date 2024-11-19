@@ -4,6 +4,7 @@ import (
 	"context"
 	"io/fs"
 	"iter"
+	"log/slog"
 	"os"
 
 	ninep "github.com/jeffh/cfs/ninep"
@@ -15,7 +16,7 @@ import (
 // the loggable.
 //
 // Supports also walkable file systems.
-func TraceFs(fs ninep.FileSystem, l ninep.Loggable) ninep.FileSystem {
+func TraceFs(fs ninep.FileSystem, l *slog.Logger) ninep.FileSystem {
 	if f, ok := fs.(ninep.WalkableFileSystem); ok {
 		return &walkableTraceFileSystem{
 			traceFileSystem{fs, l},
@@ -27,51 +28,113 @@ func TraceFs(fs ninep.FileSystem, l ninep.Loggable) ninep.FileSystem {
 }
 
 type traceFileHandle struct {
-	H    ninep.FileHandle
-	Path string
-	ninep.Loggable
+	H      ninep.FileHandle
+	Path   string
+	Logger *slog.Logger
 }
 
 func (h *traceFileHandle) ReadAt(p []byte, offset int64) (int, error) {
+	if h.Logger != nil {
+		h.Logger.Debug(
+			"FileHandle.ReadAt.begin",
+			slog.String("path", h.Path),
+			slog.Int64("offset", offset),
+		)
+	}
 	n, err := h.H.ReadAt(p, offset)
 	if err != nil {
-		h.Tracef("File(%v).ReadAt(_, %v) => (%d, %s)", h.Path, offset, n, err)
-		h.Errorf("File(%v).ReadAt(_, %v) => (%d, %s)", h.Path, offset, n, err)
+		if h.Logger != nil {
+			h.Logger.Error(
+				"FileHandle.ReadAt",
+				slog.String("path", h.Path),
+				slog.Int64("offset", offset),
+				slog.Int("n", n),
+				slog.String("err", err.Error()),
+			)
+		}
 	} else {
-		h.Tracef("File(%v).ReadAt(_, %v) => (%d, nil)", h.Path, offset, n)
+		if h.Logger != nil {
+			h.Logger.Info(
+				"FileHandle.ReadAt",
+				slog.String("path", h.Path),
+				slog.Int64("offset", offset),
+				slog.Int("n", n),
+			)
+		}
 	}
 	return n, err
 }
 
 func (h *traceFileHandle) WriteAt(p []byte, offset int64) (int, error) {
+	if h.Logger != nil {
+		h.Logger.Debug(
+			"FileHandle.WriteAt.begin",
+			slog.String("path", h.Path),
+			slog.Int64("offset", offset),
+		)
+	}
 	n, err := h.H.WriteAt(p, offset)
 	if err != nil {
-		h.Tracef("File(%v).WriteAt(len(%d), %v) => (%d, %s)", h.Path, len(p), offset, n, err)
-		h.Errorf("File(%v).WriteAt(len(%d), %v) => (%d, %s)", h.Path, len(p), offset, n, err)
+		if h.Logger != nil {
+			h.Logger.Error(
+				"FileHandle.WriteAt",
+				slog.String("path", h.Path),
+				slog.Int64("offset", offset),
+				slog.Int("n", n),
+				slog.String("err", err.Error()),
+			)
+		}
 	} else {
-		h.Tracef("File(%v).WriteAt(len(%d), %v) => (%d, nil)", h.Path, len(p), offset, n)
+		if h.Logger != nil {
+			h.Logger.Info(
+				"FileHandle.WriteAt",
+				slog.String("path", h.Path),
+				slog.Int64("offset", offset),
+				slog.Int("n", n),
+			)
+		}
 	}
 	return n, err
 }
 
 func (h *traceFileHandle) Sync() error {
+	if h.Logger != nil {
+		h.Logger.Debug("FileHandle.Sync.begin", slog.String("path", h.Path))
+	}
 	err := h.H.Sync()
 	if err != nil {
-		h.Tracef("File(%v).Sync() => %s", h.Path, err)
-		h.Errorf("File(%v).Sync() => %s", h.Path, err)
+		if h.Logger != nil {
+			h.Logger.Error(
+				"FileHandle.Sync",
+				slog.String("path", h.Path),
+				slog.String("err", err.Error()),
+			)
+		}
 	} else {
-		h.Tracef("File(%v).Sync() => nil", h.Path)
+		if h.Logger != nil {
+			h.Logger.Info("FileHandle.Sync", slog.String("path", h.Path))
+		}
 	}
 	return err
 }
 
 func (h *traceFileHandle) Close() error {
+	if h.Logger != nil {
+		h.Logger.Debug("FileHandle.Close.begin", slog.String("path", h.Path))
+	}
 	err := h.H.Close()
 	if err != nil {
-		h.Tracef("File(%v).Close() => %s", h.Path, err)
-		h.Errorf("File(%v).Close() => %s", h.Path, err)
+		if h.Logger != nil {
+			h.Logger.Error(
+				"FileHandle.Close",
+				slog.String("path", h.Path),
+				slog.String("err", err.Error()),
+			)
+		}
 	} else {
-		h.Tracef("File(%v).Close() => nil", h.Path)
+		if h.Logger != nil {
+			h.Logger.Info("FileHandle.Close", slog.String("path", h.Path))
+		}
 	}
 	return err
 }
@@ -80,114 +143,261 @@ func (h *traceFileHandle) Close() error {
 
 // A file system that wraps another file system, logging all the operations it receives.
 type traceFileSystem struct {
-	Fs ninep.FileSystem
-	ninep.Loggable
+	Fs     ninep.FileSystem
+	Logger *slog.Logger
 }
 
 func (f traceFileSystem) MakeDir(ctx context.Context, path string, mode ninep.Mode) error {
+	if f.Logger != nil {
+		f.Logger.Debug("FS.MakeDir.begin", slog.String("path", path), slog.String("mode", mode.String()))
+	}
 	err := f.Fs.MakeDir(ctx, path, mode)
-	f.Tracef("FS.MakeDir(%v, %s) => %s", path, mode, err)
 	if err != nil {
-		f.Errorf("FS.MakeDir(%v, %s) => %s", path, mode, err)
+		if f.Logger != nil {
+			f.Logger.Error(
+				"FS.MakeDir",
+				slog.String("path", path),
+				slog.String("mode", mode.String()),
+				slog.String("err", err.Error()),
+			)
+		}
+	} else {
+		if f.Logger != nil {
+			f.Logger.Info(
+				"FS.MakeDir",
+				slog.String("path", path),
+				slog.String("mode", mode.String()),
+			)
+		}
 	}
 	return err
 }
 
 func (f traceFileSystem) CreateFile(ctx context.Context, path string, flag ninep.OpenMode, mode ninep.Mode) (ninep.FileHandle, error) {
+	if f.Logger != nil {
+		f.Logger.Debug("FS.CreateFile.begin", slog.String("path", path), slog.String("flag", flag.String()), slog.String("mode", mode.String()))
+	}
 	h, err := f.Fs.CreateFile(ctx, path, flag, mode)
-	f.Tracef("FS.CreateFile(%v, %s, %s) => (%v, %s)", path, flag, mode, h, err)
-	if err != nil || h == nil {
-		f.Errorf("FS.CreateFile(%v, %s, %s) => (%v, %s)", path, flag, mode, h, err)
+	if err != nil {
+		if f.Logger != nil {
+			f.Logger.Error(
+				"FS.CreateFile",
+				slog.String("path", path),
+				slog.String("flag", flag.String()),
+				slog.String("mode", mode.String()),
+				slog.String("err", err.Error()),
+			)
+		}
+	} else if h == nil {
+		if f.Logger != nil {
+			f.Logger.Error(
+				"FS.CreateFile",
+				slog.String("path", path),
+				slog.String("flag", flag.String()),
+				slog.String("mode", mode.String()),
+				slog.String("err", "returned handle is nil with no error"),
+			)
+		}
 	}
 	h = &traceFileHandle{
-		H:        h,
-		Path:     path,
-		Loggable: f.Loggable,
+		H:      h,
+		Path:   path,
+		Logger: f.Logger,
 	}
 	return h, err
 }
 
 func (f traceFileSystem) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (ninep.FileHandle, error) {
+	if f.Logger != nil {
+		f.Logger.Debug("FS.OpenFile.begin", slog.String("path", path), slog.String("flag", flag.String()))
+	}
 	h, err := f.Fs.OpenFile(ctx, path, flag)
-	f.Tracef("FS.OpenFile(%v, %s) => (%v, %s)", path, flag, h, err)
-	if err != nil || h == nil {
-		f.Errorf("FS.OpenFile(%v, %s) => (%v, %s)", path, flag, h, err)
+	if err != nil {
+		if f.Logger != nil {
+			f.Logger.Error(
+				"FS.OpenFile",
+				slog.String("path", path),
+				slog.String("flag", flag.String()),
+				slog.String("err", err.Error()),
+			)
+		}
+	} else if h == nil {
+		if f.Logger != nil {
+			f.Logger.Error(
+				"FS.OpenFile",
+				slog.String("path", path),
+				slog.String("flag", flag.String()),
+				slog.String("err", "returned handle is nil with no error"),
+			)
+		}
 	}
 	h = &traceFileHandle{
-		H:        h,
-		Path:     path,
-		Loggable: f.Loggable,
+		H:      h,
+		Path:   path,
+		Logger: f.Logger,
 	}
 	return h, err
 }
 
 func (f traceFileSystem) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, error] {
-	f.Tracef("FS.ListDir(%v)", path)
+	if f.Logger != nil {
+		f.Logger.Debug("FS.ListDir.begin", slog.String("path", path))
+	}
 	return func(yield func(fs.FileInfo, error) bool) {
 		i := 0
 		for info, err := range f.Fs.ListDir(ctx, path) {
 			if err != nil {
-				f.Errorf("FS.ListDir(%v)[%d] => (_, %s)", path, i, err)
+				if f.Logger != nil {
+					f.Logger.Error(
+						"FS.ListDir.returnItem",
+						slog.String("path", path),
+						slog.Int("i", i),
+						slog.String("err", err.Error()),
+					)
+				}
 			} else {
 				if info != nil {
-					f.Tracef("FS.ListDir(%v)[%d] => (%#v, nil)", path, i, info.Name())
+					if f.Logger != nil {
+						f.Logger.Info(
+							"FS.ListDir.returnItem",
+							slog.String("path", path),
+							slog.Int("i", i),
+							slog.String("name", info.Name()),
+						)
+					}
 				} else {
-					f.Errorf("FS.ListDir(%v)[%d] => (nil, nil) # WARNING: this is non-spec compliant!", path, i)
+					if f.Logger != nil {
+						f.Logger.Error(
+							"FS.ListDir.returnItem",
+							slog.String("path", path),
+							slog.Int("i", i),
+							slog.String("err", "returned info is nil with no error"),
+						)
+					}
 				}
 			}
 			if !yield(info, err) {
+				if f.Logger != nil {
+					f.Logger.Info("FS.ListDir.end.break", slog.String("path", path))
+				}
 				return
 			}
 			i++
+		}
+		if f.Logger != nil {
+			f.Logger.Info("FS.ListDir.end.finished", slog.String("path", path))
 		}
 	}
 }
 
 func (f traceFileSystem) Stat(ctx context.Context, path string) (os.FileInfo, error) {
-	info, err := f.Fs.Stat(ctx, path)
-	if info != nil {
-		f.Tracef("FS.Stat(%T, %v) => (os.FileInfo{name: %#v, size: %d, isDir: %v...}, %s)", f.Fs, path, info.Name(), info.Size(), info.IsDir(), err)
-	} else {
-		if err != nil {
-			f.Tracef("FS.Stat(%v) => (nil, %s)", path, err)
-		} else {
-			f.Tracef("FS.Stat(%v) => (nil, nil)", path)
-		}
+	if f.Logger != nil {
+		f.Logger.Debug("FS.Stat.begin", slog.String("path", path))
 	}
-	if err != nil {
-		f.Errorf("FS.Stat(%v) => (_, %s)", path, err)
+	info, err := f.Fs.Stat(ctx, path)
+	if f.Logger != nil {
+		if err != nil {
+			f.Logger.Error(
+				"FS.Stat",
+				slog.String("path", path),
+				slog.String("err", err.Error()),
+			)
+		} else if info == nil {
+			f.Logger.Error(
+				"FS.Stat",
+				slog.String("path", path),
+				slog.String("err", "returned info is nil with no error"),
+			)
+		} else {
+			f.Logger.Info(
+				"FS.Stat",
+				slog.String("path", path),
+				slog.String("name", info.Name()),
+				slog.Int64("size", info.Size()),
+				slog.Bool("isDir", info.IsDir()),
+			)
+		}
 	}
 	return info, err
 }
 
 func (f traceFileSystem) WriteStat(ctx context.Context, path string, s ninep.Stat) error {
-	f.Tracef("FS.WriteStat(%v, %s)", path, s)
+	if f.Logger != nil {
+		f.Logger.Debug("FS.WriteStat.begin", slog.String("path", path), slog.String("stat", s.String()))
+	}
 	err := f.Fs.WriteStat(ctx, path, s)
-	if err != nil {
-		f.Errorf("FS.WriteStat(%v, %s) => %s", path, s, err)
+	if f.Logger != nil {
+		if err != nil {
+			f.Logger.Error(
+				"FS.WriteStat",
+				slog.String("path", path),
+				slog.String("stat", s.String()),
+				slog.String("err", err.Error()),
+			)
+		}
 	}
 	return err
 }
 
 func (f traceFileSystem) Delete(ctx context.Context, path string) error {
-	f.Tracef("FS.Delete(%v)", path)
+	if f.Logger != nil {
+		f.Logger.Debug("FS.Delete.begin", slog.String("path", path))
+	}
 	err := f.Fs.Delete(ctx, path)
 	if err != nil {
-		f.Errorf("FS.Delete(%v) => %s", path, err)
+		if f.Logger != nil {
+			f.Logger.Error(
+				"FS.Delete",
+				slog.String("path", path),
+				slog.String("err", err.Error()),
+			)
+		}
 	}
 	return err
 }
 
 func (f traceFileSystem) DeleteWithMode(ctx context.Context, path string, mode ninep.Mode) error {
+	if f.Logger != nil {
+		f.Logger.Debug("FS.DeleteWithMode.begin", slog.String("path", path), slog.String("mode", mode.String()))
+	}
 	if fs, ok := f.Fs.(ninep.DeleteWithModeFileSystem); ok {
-		f.Tracef("FS.DeleteWithMode(%v, %s)", path, mode)
 		err := fs.DeleteWithMode(ctx, path, mode)
-		if err != nil {
-			f.Errorf("FS.DeleteWithMode(%v, %s) => %s", path, mode, err)
+		if f.Logger != nil {
+			if err != nil {
+				f.Logger.Error(
+					"FS.DeleteWithMode",
+					slog.String("path", path),
+					slog.String("mode", mode.String()),
+					slog.String("err", err.Error()),
+				)
+			} else {
+				f.Logger.Info(
+					"FS.DeleteWithMode",
+					slog.String("path", path),
+					slog.String("mode", mode.String()),
+				)
+			}
 		}
 		return err
 	} else {
-		return f.Delete(ctx, path)
+		err := f.Delete(ctx, path)
+		if f.Logger != nil {
+			if err != nil {
+				f.Logger.Error(
+					"FS.DeleteWithMode",
+					slog.String("path", path),
+					slog.String("mode", mode.String()),
+					slog.String("err", err.Error()),
+				)
+			} else {
+				f.Logger.Info(
+					"FS.DeleteWithMode",
+					slog.String("path", path),
+					slog.String("mode", mode.String()),
+				)
+			}
+		}
+		return err
 	}
 }
 
@@ -201,13 +411,30 @@ type walkableTraceFileSystem struct {
 var _ ninep.WalkableFileSystem = (*walkableTraceFileSystem)(nil)
 
 func (f *walkableTraceFileSystem) Walk(ctx context.Context, parts []string) ([]os.FileInfo, error) {
-	f.traceFileSystem.Tracef("FS.Walk(%v)", parts)
+	if f.Logger != nil {
+		f.Logger.Debug("FS.Walk.begin", slog.Any("parts", parts))
+	}
 	infos, err := f.Wfs.Walk(ctx, parts)
-	if err != nil {
-		f.traceFileSystem.Errorf("FS.Walk(%v) => %s", parts, err)
-	} else {
-		for i, info := range infos {
-			f.traceFileSystem.Tracef("FS.Walk(%v)[%d] => %#v", parts, i, info.Name())
+	if f.Logger != nil {
+		if err != nil {
+			f.Logger.Error(
+				"FS.Walk",
+				slog.Any("parts", parts),
+				slog.String("err", err.Error()),
+			)
+		} else {
+			if len(infos) > 0 {
+				for i, info := range infos {
+					f.Logger.Info(
+						"FS.Walk.returnItem",
+						slog.Any("parts", parts),
+						slog.Int("i", i),
+						slog.String("name", info.Name()),
+					)
+				}
+			} else {
+				f.Logger.Info("FS.Walk.returnItem", slog.Any("parts", parts))
+			}
 		}
 	}
 	return infos, err
