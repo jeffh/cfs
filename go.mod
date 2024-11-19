@@ -20,7 +20,7 @@ require (
 	github.com/secure-io/sio-go v0.3.1
 	github.com/smallfz/libnfs-go v0.0.6
 	golang.org/x/crypto v0.25.0
-	golang.org/x/image v0.19.0
+	golang.org/x/image v0.22.0
 	golang.org/x/sys v0.27.0
 	periph.io/x/conn/v3 v3.7.1
 	periph.io/x/devices/v3 v3.7.2
@@ -61,7 +61,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.24.0 // indirect
 	golang.org/x/net v0.27.0 // indirect
 	golang.org/x/term v0.22.0 // indirect
-	golang.org/x/text v0.17.0 // indirect
+	golang.org/x/text v0.20.0 // indirect
 	golang.org/x/time v0.5.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gotest.tools/v3 v3.0.3 // indirect
