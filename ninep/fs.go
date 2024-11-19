@@ -188,8 +188,8 @@ func FileInfoSliceFromIterator(itr iter.Seq2[fs.FileInfo, error], max int) ([]fs
 //
 // Context may optionally contain the following keys:
 //
-//   - "session"    *Session - The server's session, if available
-//   - "rawMessage" Message  - The message the server received, if available
+//   - SessionKey    *Session - The server's session, if available
+//   - RawMessageKey Message  - The message the server received, if available
 //
 // These keys are only populated if the FileSystem is running under a tcp
 // server context.

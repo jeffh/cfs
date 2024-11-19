@@ -250,10 +250,10 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 		}
 		return
 	}
-	connCtx = context.WithValue(connCtx, "session", session)
-	connCtx = context.WithValue(connCtx, "rawMessage", m)
-	ctx = context.WithValue(ctx, "session", session)
-	ctx = context.WithValue(ctx, "rawMessage", m)
+	connCtx = context.WithValue(connCtx, SessionKey, session)
+	connCtx = context.WithValue(connCtx, RawMessageKey, m)
+	ctx = context.WithValue(ctx, SessionKey, session)
+	ctx = context.WithValue(ctx, RawMessageKey, m)
 	switch m := m.(type) {
 	case Tauth:
 		if h.Auth == nil {
@@ -477,7 +477,12 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 			infos, err := wfs.Walk(ctx, parts)
 			if err != nil {
 				if h.Logger != nil {
-					h.Logger.Error("invalid file system walk for %s (%#v): %s", m.Fid(), filepath.Join(parts...), err)
+					h.Logger.Error(
+						"invalid file system walk",
+						slog.Uint64("fid", uint64(m.Fid())),
+						slog.String("path", filepath.Join(parts...)),
+						slog.Any("error", err),
+					)
 				}
 				w.Rerror(err)
 				return
@@ -967,7 +972,7 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 
 			if !stat.DevNoTouch() {
 				if h.Logger != nil {
-					h.Logger.Error("client failed: deny attempt to change dev (%d != %d)", stat.Dev(), NoTouchU32)
+					h.Logger.Error("client failed: deny attempt to change dev", slog.Uint64("dev", uint64(stat.Dev())), slog.Uint64("expected", uint64(NoTouchU32)))
 				}
 				w.Rerrorf("wstat: attempted to change dev")
 				return
@@ -975,7 +980,7 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 
 			if !stat.TypeNoTouch() {
 				if h.Logger != nil {
-					h.Logger.Error("client failed: deny attempt to change type (%d)", stat.Type())
+					h.Logger.Error("client failed: deny attempt to change type", slog.Uint64("type", uint64(stat.Type())))
 				}
 				w.Rerrorf("wstat: attempted to change type")
 				return
