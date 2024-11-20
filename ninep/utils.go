@@ -2,7 +2,6 @@ package ninep
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"log"
 	"log/slog"
@@ -84,7 +83,7 @@ func Basename(path string) string {
 
 func isClosedSocket(err error) bool {
 	return err != nil &&
-		(strings.Index(err.Error(), "use of closed network connection") != -1 ||
+		(strings.Contains(err.Error(), "use of closed network connection") ||
 			errors.Is(err, io.EOF) ||
 			errors.Is(err, syscall.EPIPE))
 }
@@ -191,8 +190,4 @@ func underlyingError(err error) string {
 		}
 	}
 	return err.Error()
-}
-
-func strFileInfo(fi os.FileInfo) string {
-	return fmt.Sprintf("%s (mode=%s, isDir=%v)", fi.Name(), fi.Mode(), fi.IsDir())
 }

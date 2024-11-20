@@ -17,7 +17,6 @@ package ninep
 import (
 	"encoding/binary"
 	"fmt"
-	"io"
 	"io/fs"
 	"math"
 	"os"
@@ -81,14 +80,14 @@ const (
 var DEFAULT_MAX_MESSAGE_SIZE uint32
 
 func init() {
-	s := uint32(os.Getpagesize())
+	s := uint64(os.Getpagesize())
 	if s > math.MaxUint32 {
 		s = math.MaxUint32
 	}
 	if uint32(s) < MIN_MESSAGE_SIZE {
-		s = MIN_MESSAGE_SIZE
+		s = uint64(MIN_MESSAGE_SIZE)
 	}
-	DEFAULT_MAX_MESSAGE_SIZE = s
+	DEFAULT_MAX_MESSAGE_SIZE = uint32(s)
 }
 
 // An opcode that represents each type of 9p message
@@ -186,7 +185,7 @@ func (t msgType) String() string {
 	case msgRwstat:
 		return "msgRwstat"
 	}
-	panic(fmt.Errorf("Unexpected message: %d", t))
+	panic(fmt.Errorf("unexpected message: %d", t))
 }
 
 type OpenMode byte
@@ -450,7 +449,7 @@ func (f Fid) String() string {
 
 /////////////////////////////////////
 
-// A slice of fids, for sorting
+// fidSlice is a slice of fids, for sorting
 type fidSlice []Fid
 
 func (s fidSlice) Len() int           { return len(s) }
@@ -459,18 +458,18 @@ func (s fidSlice) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 
 /////////////////////////////////////
 
-// Stores metadata of the current file descriptor
+// QidType stores metadata of the current file descriptor
 type QidType byte
 
 const (
 	QT_FILE    QidType = 0x00 // FD refers to a file
-	QT_LINK            = 0x01 // FD refers to a link
-	QT_SYMLINK         = 0x02 // FD refers to a symlink
-	QT_TMP             = 0x04 // FD refers to a temporary file that may go away
-	QT_AUTH            = 0x08 // FD refers to the special 9p auth file
-	QT_MOUNT           = 0x10 // FD refers to a mount point
-	QT_EXCL            = 0x20 // FD is exclusively held (locked)
-	QT_DIR             = 0x80 // FD refers to a directory
+	QT_LINK    QidType = 0x01 // FD refers to a link
+	QT_SYMLINK QidType = 0x02 // FD refers to a symlink
+	QT_TMP     QidType = 0x04 // FD refers to a temporary file that may go away
+	QT_AUTH    QidType = 0x08 // FD refers to the special 9p auth file
+	QT_MOUNT   QidType = 0x10 // FD refers to a mount point
+	QT_EXCL    QidType = 0x20 // FD is exclusively held (locked)
+	QT_DIR     QidType = 0x80 // FD refers to a directory
 )
 
 func (qt QidType) IsDir() bool       { return qt&QT_DIR != 0 }     // Returns true if FD is a directory
@@ -511,10 +510,11 @@ func (qt QidType) String() string {
 
 const QidSize = 13 // The number of bytes a Qid takes
 
-// The server's version of a file descriptor.
+// Qid is the server's version of a file descriptor.
 // Stores unique ids and some metadata about the file requested.
-type Qid []byte // always sized to QidSize
+type Qid []byte // always sized to QidSize, not an array to minimize copies
 
+// NoTouchQid is a Qid special value indicating that the field should not be touched when used with WriteStat
 var NoTouchQid Qid
 
 func init() {
@@ -524,6 +524,7 @@ func init() {
 	}
 }
 
+// NewQid creates a new zeroed Qid.
 func NewQid() Qid {
 	return Qid(make([]byte, QidSize))
 }
@@ -600,7 +601,7 @@ The stat transaction inquires about the file identified by fid. The reply will c
 	muid[s] name of the user who last modified the file
 */
 
-// The return value indication information about a file descriptor. Part of the 9p protocol.
+// Stat is metadata about a file descriptor. Part of the 9p protocol.
 type Stat []byte
 
 const (
@@ -657,10 +658,9 @@ func (s Stat) fill(name, uid, gid, muid string) {
 	// s.muid().SetStringAndLen(muid)
 }
 
-// An way to product a stat from a file info.
+// StatFromFileInfo creates a Stat from an fs.FileInfo.
 //
-// Note that Stat is a richer type that os.FileInfo, so the returned Stat may
-// be potentially inaccurate.
+// Note that Stat and fs.FileInfo are not perfect equivalents.
 func StatFromFileInfo(info fs.FileInfo) Stat {
 	if st, ok := info.Sys().(Stat); ok {
 		return st
@@ -684,10 +684,13 @@ func StatFromFileInfo(info fs.FileInfo) Stat {
 	return fileInfoToStat(qid, info)
 }
 
-// Useful for creating a WriteStat stat that only wants fsync.
+// SyncStat creates a zero-value Stat for writing stat updates. This provides a
+// good basis for creating updates. If left as is, this is considered an fsync.
 //
 // Due to the 9p2000 spec, SyncStat is the "zero-value" of Stat. Non-string
 // fields can be modified to only request that field to be modified.
+//
+// Non-string fields are set to NoTouch states.
 func SyncStat() Stat {
 	st := NewStat("", "", "", "")
 	st.SetType(NoTouchU16)
@@ -700,7 +703,7 @@ func SyncStat() Stat {
 	return st
 }
 
-// Like SyncStat(), but allows setting the file name.
+// SyncStatWithName creates a SyncStat with the given name.
 func SyncStatWithName(name string) Stat {
 	st := NewStat(name, "", "", "")
 	st.SetType(NoTouchU16)
@@ -713,7 +716,7 @@ func SyncStatWithName(name string) Stat {
 	return st
 }
 
-// Creates a new stat with the given name, uid, gid, and muid.
+// NewStat creates a new Stat with the given name, uid, gid, and muid.
 // Other fields can be set using setter methods
 func NewStat(name, uid, gid, muid string) Stat {
 	// TODO: error if strings are too large
@@ -723,6 +726,8 @@ func NewStat(name, uid, gid, muid string) Stat {
 	return s
 }
 
+// CopyFixedFieldsFrom copies the fixed fields from one Stat to another.
+// Only strings are excluded from this copy.
 func (s Stat) CopyFixedFieldsFrom(o Stat) {
 	s.SetSize(o.Size())
 	s.SetType(o.Type())
@@ -734,13 +739,18 @@ func (s Stat) CopyFixedFieldsFrom(o Stat) {
 	s.SetLength(o.Length())
 }
 
+// CopyWithNewName creates a new Stat with the same fields as s, but with the
+// given name.
 func (s Stat) CopyWithNewName(n string) Stat {
 	st := NewStat(n, s.Uid(), s.Gid(), s.Muid())
 	st.CopyFixedFieldsFrom(s)
 	return st
 }
 
-func (s Stat) Nbytes() int   { return int(s.Size() + 2) }
+// Nbytes returns the number of bytes in the Stat.
+func (s Stat) Nbytes() int { return int(s.Size() + 2) }
+
+// Bytes returns the bytes in the Stat.
 func (s Stat) Bytes() []byte { return s[:s.Size()+2] }
 
 func (s Stat) String() string {
@@ -762,68 +772,129 @@ func (s Stat) String() string {
 	)
 }
 
-func (s Stat) Size() uint16     { return bo.Uint16(s[:2]) }
+// Size returns the size of the Stat. This does not include the size field itself.
+func (s Stat) Size() uint16 { return bo.Uint16(s[:2]) }
+
+// SetSize sets the size of the Stat. This does not include the size field itself.
 func (s Stat) SetSize(v uint16) { bo.PutUint16(s[:2], v) }
 
+// TypeNoTouch returns true if the Type field is not set for WriteStat.
 func (s Stat) TypeNoTouch() bool { return s.Type() == NoTouchU16 }
-func (s Stat) Type() uint16      { return bo.Uint16(s[2:4]) }
-func (s Stat) SetType(v uint16)  { bo.PutUint16(s[2:4], v) }
 
+// Type returns the Type field of the Stat.
+func (s Stat) Type() uint16 { return bo.Uint16(s[2:4]) }
+
+// SetType sets the Type field of the Stat.
+func (s Stat) SetType(v uint16) { bo.PutUint16(s[2:4], v) }
+
+// DevNoTouch returns true if the Dev field is not set for WriteStat.
 func (s Stat) DevNoTouch() bool { return s.Dev() == NoTouchU32 }
-func (s Stat) Dev() uint32      { return bo.Uint32(s[4:8]) }
-func (s Stat) SetDev(v uint32)  { bo.PutUint32(s[4:8], v) }
 
-func (s Stat) Qid() Qid     { return Qid(s[8 : 8+QidSize]) }
+// Dev returns the Dev field of the Stat.
+func (s Stat) Dev() uint32 { return bo.Uint32(s[4:8]) }
+
+// SetDev sets the Dev field of the Stat.
+func (s Stat) SetDev(v uint32) { bo.PutUint32(s[4:8], v) }
+
+// Qid returns the Qid field of the Stat.
+func (s Stat) Qid() Qid { return Qid(s[8 : 8+QidSize]) }
+
+// SetQid sets the Qid field of the Stat.
 func (s Stat) SetQid(v Qid) { copy(s[8:8+QidSize], v.Bytes()) }
 
+// ModeNoTouch returns true if the Mode field is not set for WriteStat.
 func (s Stat) ModeNoTouch() bool { return s.Mode() == NoTouchMode }
-func (s Stat) Mode() Mode        { return Mode(bo.Uint32(s[8+QidSize : 8+QidSize+4])) }
-func (s Stat) SetMode(v Mode)    { bo.PutUint32(s[8+QidSize:8+QidSize+4], uint32(v)) }
 
+// Mode returns the Mode field of the Stat.
+func (s Stat) Mode() Mode { return Mode(bo.Uint32(s[8+QidSize : 8+QidSize+4])) }
+
+// SetMode sets the Mode field of the Stat.
+func (s Stat) SetMode(v Mode) { bo.PutUint32(s[8+QidSize:8+QidSize+4], uint32(v)) }
+
+// AtimeNoTouch returns true if the Atime field is not set for WriteStat.
 func (s Stat) AtimeNoTouch() bool { return s.Atime() == NoTouchU32 }
-func (s Stat) Atime() uint32      { return bo.Uint32(s[8+QidSize+4 : 8+QidSize+4+4]) }
-func (s Stat) SetAtime(v uint32)  { bo.PutUint32(s[8+QidSize+4:8+QidSize+4+4], v) }
 
+// Atime returns the Atime field of the Stat which indicates the last access time of the file.
+func (s Stat) Atime() uint32 { return bo.Uint32(s[8+QidSize+4 : 8+QidSize+4+4]) }
+
+// SetAtime sets the Atime field of the Stat which indicates the last access time of the file.
+func (s Stat) SetAtime(v uint32) { bo.PutUint32(s[8+QidSize+4:8+QidSize+4+4], v) }
+
+// MtimeNoTouch returns true if the Mtime field is not set for WriteStat.
 func (s Stat) MtimeNoTouch() bool { return s.Mtime() == NoTouchU32 }
-func (s Stat) Mtime() uint32      { return bo.Uint32(s[8+QidSize+4+4 : 8+QidSize+4+4+4]) }
-func (s Stat) SetMtime(v uint32)  { bo.PutUint32(s[8+QidSize+4+4:8+QidSize+4+4+4], v) }
 
+// Mtime returns the Mtime field of the Stat which indicates the last modification time of the file.
+func (s Stat) Mtime() uint32 { return bo.Uint32(s[8+QidSize+4+4 : 8+QidSize+4+4+4]) }
+
+// SetMtime sets the Mtime field of the Stat which indicates the last modification time of the file.
+func (s Stat) SetMtime(v uint32) { bo.PutUint32(s[8+QidSize+4+4:8+QidSize+4+4+4], v) }
+
+// LengthNoTouch returns true if the Length field is not set for WriteStat.
 func (s Stat) LengthNoTouch() bool { return s.Length() == NoTouchU64 }
-func (s Stat) Length() uint64      { return bo.Uint64(s[8+QidSize+4+4+4 : 8+QidSize+4+4+4+8]) }
-func (s Stat) SetLength(v uint64)  { bo.PutUint64(s[8+QidSize+4+4+4:8+QidSize+4+4+4+8], v) }
 
-func (s Stat) name() msgString   { return msgString(s[41:]) }
+// Length returns the Length field of the Stat which indicates the size of the file.
+func (s Stat) Length() uint64 { return bo.Uint64(s[8+QidSize+4+4+4 : 8+QidSize+4+4+4+8]) }
+
+// SetLength sets the Length field of the Stat which indicates the size of the file.
+func (s Stat) SetLength(v uint64) { bo.PutUint64(s[8+QidSize+4+4+4:8+QidSize+4+4+4+8], v) }
+
+func (s Stat) name() msgString { return msgString(s[41:]) }
+
+// NameNoTouch returns true if the Name field is not set for WriteStat.
 func (s Stat) NameNoTouch() bool { return len(s.NameBytes()) == 0 }
+
+// NameBytes returns the bytes of the Name field.
 func (s Stat) NameBytes() []byte { return s.name().Bytes() }
-func (s Stat) Name() string      { return s.name().String() }
 
-func (s Stat) uid() msgString   { return msgString(s[41+s.name().Nbytes():]) }
+// Name returns the Name field of the Stat.
+func (s Stat) Name() string { return s.name().String() }
+
+func (s Stat) uid() msgString { return msgString(s[41+s.name().Nbytes():]) }
+
+// UidNoTouch returns true if the Uid field is not set for WriteStat.
 func (s Stat) UidNoTouch() bool { return len(s.UidBytes()) == 0 }
-func (s Stat) UidBytes() []byte { return s.uid().Bytes() }
-func (s Stat) Uid() string      { return s.uid().String() }
 
-func (s Stat) gid() msgString   { return msgString(s[41+s.name().Nbytes()+s.uid().Nbytes():]) }
+// UidBytes returns the bytes of the Uid field.
+func (s Stat) UidBytes() []byte { return s.uid().Bytes() }
+
+// Uid returns the Uid field of the Stat.
+func (s Stat) Uid() string { return s.uid().String() }
+
+func (s Stat) gid() msgString { return msgString(s[41+s.name().Nbytes()+s.uid().Nbytes():]) }
+
+// GidNoTouch returns true if the Gid field is not set for WriteStat.
 func (s Stat) GidNoTouch() bool { return len(s.GidBytes()) == 0 }
+
+// GidBytes returns the bytes of the Gid field.
 func (s Stat) GidBytes() []byte { return s.gid().Bytes() }
-func (s Stat) Gid() string      { return s.gid().String() }
+
+// Gid returns the Gid field of the Stat.
+func (s Stat) Gid() string { return s.gid().String() }
 
 func (s Stat) muid() msgString {
 	return msgString(s[41+s.name().Nbytes()+s.uid().Nbytes()+s.gid().Nbytes():])
 }
-func (s Stat) MuidNoTouch() bool { return len(s.MuidBytes()) == 0 }
-func (s Stat) MuidBytes() []byte { return s.muid().Bytes() }
-func (s Stat) Muid() string      { return s.muid().String() }
 
-func (s Stat) IsZero() bool {
-	for _, v := range s.Bytes() {
-		if v != 0 {
-			return false
-		}
-	}
-	return true
+// MuidNoTouch returns true if the Muid field is not set for WriteStat.
+func (s Stat) MuidNoTouch() bool { return len(s.MuidBytes()) == 0 }
+
+// MuidBytes returns the bytes of the Muid field.
+func (s Stat) MuidBytes() []byte { return s.muid().Bytes() }
+
+// Muid returns the Muid field of the Stat.
+func (s Stat) Muid() string { return s.muid().String() }
+
+// IsNoTouch returns true if the Stat is equivalent to SyncStat.
+func (s Stat) IsNoTouch() bool {
+	return s.NameNoTouch() && s.UidNoTouch() && s.GidNoTouch() && s.MuidNoTouch() &&
+		s.TypeNoTouch() && s.DevNoTouch() && s.Qid().IsNoTouch() && s.ModeNoTouch() &&
+		s.AtimeNoTouch() && s.MtimeNoTouch() && s.LengthNoTouch()
 }
 
-func (s Stat) FileInfo() StatFileInfo { return StatFileInfo{s} }
+// FileInfo returns a StatFileInfo for the Stat. Sys of the returned FileInfo returns the Stat itself.
+func (s Stat) FileInfo() fs.FileInfo { return statFileInfo{s} }
+
+// Clone returns a copy of the Stat.
 func (s Stat) Clone() Stat {
 	st := make(Stat, len(s))
 	copy(st, s)
@@ -835,27 +906,18 @@ func (s Stat) fileUsers() (uid, gid, muid string, err error) {
 }
 
 // Adapter to map os.FileInfo for Stat type.
-type StatFileInfo struct {
+type statFileInfo struct {
 	Stat
 }
 
-var _ os.FileInfo = (*StatFileInfo)(nil)
+var _ os.FileInfo = (*statFileInfo)(nil)
 
-func (s StatFileInfo) Size() int64        { return int64(s.Stat.Length()) }
-func (s StatFileInfo) Name() string       { return s.Stat.Name() }
-func (s StatFileInfo) Mode() fs.FileMode  { return s.Stat.Mode().ToFsMode() }
-func (s StatFileInfo) ModTime() time.Time { return time.Unix(int64(s.Stat.Mtime()), 0) }
-func (s StatFileInfo) IsDir() bool        { return s.Stat.Mode()&M_DIR != 0 }
-func (s StatFileInfo) Sys() interface{}   { return s.Stat }
-func (s StatFileInfo) AsStat() Stat       { return s.Stat }
-
-func FileInfosFromStats(infos []Stat) []os.FileInfo {
-	sfi := make([]os.FileInfo, len(infos))
-	for i, info := range infos {
-		sfi[i] = info.FileInfo()
-	}
-	return sfi
-}
+func (s statFileInfo) Size() int64        { return int64(s.Stat.Length()) }
+func (s statFileInfo) Name() string       { return s.Stat.Name() }
+func (s statFileInfo) Mode() fs.FileMode  { return s.Stat.Mode().ToFsMode() }
+func (s statFileInfo) ModTime() time.Time { return time.Unix(int64(s.Stat.Mtime()), 0) }
+func (s statFileInfo) IsDir() bool        { return s.Stat.Mode()&M_DIR != 0 }
+func (s statFileInfo) Sys() interface{}   { return s.Stat }
 
 /////////////////////////////////////
 // size[4] Tversion tag[2] msize[4] version[s]
@@ -956,31 +1018,6 @@ func (r Rerror) Tag() Tag           { return MsgBase(r).Tag() }
 func (r Rerror) ename() msgString   { return msgString(r[msgOffset:]) }
 func (r Rerror) EnameBytes() []byte { return r.ename().Bytes() }
 func (r Rerror) Ename() string      { return r.ename().String() }
-
-var mappedErrors []error = []error{
-	fs.ErrInvalid,
-	fs.ErrPermission,
-	fs.ErrExist,
-	fs.ErrNotExist,
-	fs.ErrClosed,
-	os.ErrNoDeadline,
-	io.EOF,
-	io.ErrClosedPipe,
-	io.ErrNoProgress,
-	io.ErrShortBuffer,
-	io.ErrShortWrite,
-	io.ErrUnexpectedEOF,
-
-	ErrBadFormat,
-	ErrWriteNotAllowed,
-	ErrReadNotAllowed,
-	ErrSeekNotAllowed,
-	ErrUnsupported,
-	ErrNotImplemented,
-	ErrInvalidAccess,
-	ErrChangeUidNotAllowed,
-	ErrMissingIterator,
-}
 
 func (r Rerror) Error() error {
 	var underlyingErr error

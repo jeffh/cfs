@@ -164,6 +164,9 @@ func prepareFileInfoForStat(qid Qid, info os.FileInfo) (size int, name, uid, gid
 		name = info.Name()
 	}
 	size = statSize(name, uid, gid, muid)
+	if !ok {
+		return size, name, "", "", ""
+	}
 	return size, name, uid, gid, muid
 }
 
@@ -584,13 +587,8 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 					return
 				}
 
-				if err == nil {
-					q := session.PutQidInfo(path, info)
-					walkedQids = append(walkedQids, q)
-				} else {
-					q := session.PutQid(path, 0, versionFromFileInfo(info))
-					walkedQids = append(walkedQids, q)
-				}
+				q := session.PutQidInfo(path, info)
+				walkedQids = append(walkedQids, q)
 
 				if fil.H != nil {
 					fil.H.Close()
@@ -970,7 +968,7 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 		// committed to stable storage before the Rwstat message is returned.
 		// (Consider the message to mean, ``make the state of the file exactly what
 		// it claims to be.'')"
-		if stat.IsZero() {
+		if stat.IsNoTouch() {
 			if fil.H != nil {
 				if err := fil.H.Sync(); err != nil {
 					if h.Logger != nil {
@@ -1029,13 +1027,25 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 				return
 			}
 
-			if !stat.ModeNoTouch() && int(stat.Mode()&M_DIR>>24) != int(qid.Type()&QT_DIR) {
+			if !stat.LengthNoTouch() && qid.Type()&QT_DIR != 0 {
+				if h.Logger != nil {
+					h.Logger.ErrorContext(ctx, "client failed: deny attempt to change length of dir")
+				}
+				w.Rerrorf("wstat: attempted to change length of dir")
+				return
+			}
+
+			if !stat.ModeNoTouch() && int((stat.Mode()&M_DIR)>>24) != int(qid.Type()&QT_DIR) {
 				if h.Logger != nil {
 					h.Logger.ErrorContext(ctx, "client failed: deny attempt to change M_DIR bit on Mode")
 				}
 				w.Rerrorf("wstat: attempted to change Mode to M_DIR bit")
 				return
 			}
+
+			// other states that are not allowed, but are not covered for now:
+			// - modifying uid (aka the owner)
+			// - gid should only be modified by owner (if the owner is also part of the new group)
 
 			err := h.Fs.WriteStat(ctx, fullPath, stat)
 			if err != nil {

@@ -74,7 +74,7 @@ func (t *SerialClientTransport) AllocTransaction() (*cltTransaction, bool) {
 	t.txn.reset()
 	return &t.txn, true
 }
-func (_ *SerialClientTransport) ReleaseTransaction(t Tag) {}
+func (*SerialClientTransport) ReleaseTransaction(t Tag) {}
 func (t *SerialClientTransport) Request(txn *cltTransaction) (Message, error) {
 	t.m.Lock()
 	defer t.m.Unlock()
@@ -152,6 +152,7 @@ func (t *ParallelClientTransport) Connect(d Dialer, network, addr, usr, mnt stri
 
 func (t *ParallelClientTransport) abortTransactions(err error) {
 	t.mut.Lock()
+	defer t.mut.Unlock()
 	for _, txn := range t.tagToTxns {
 		select {
 		case txn.ch <- cltChResponse{err: err}:
@@ -160,8 +161,6 @@ func (t *ParallelClientTransport) abortTransactions(err error) {
 		close(txn.ch)
 	}
 	t.tagToTxns = make(map[Tag]cltTransaction)
-	t.mut.Unlock()
-	return
 }
 
 func (c *ParallelClientTransport) getTransaction(t Tag) (cltTransaction, bool) {
@@ -316,18 +315,18 @@ func (t *SerialRetryClientTransport) Connect(d Dialer, network, addr, usr, mnt s
 	t.authorizee = A
 	t.Logger = L
 
-	return t.unsafeConnect(d, network, addr, usr, mnt, A, L)
+	return t.unsafeConnect()
 }
 
-func (t *SerialRetryClientTransport) unsafeConnect(d Dialer, network, addr, usr, mnt string, A Authorizee, L *slog.Logger) error {
+func (t *SerialRetryClientTransport) unsafeConnect() error {
 	var err error
-	t.rwc, err = d.Dial(network, addr)
+	t.rwc, err = t.d.Dial(t.network, t.addr)
 	if err != nil {
 		return err
 	}
 
 	txn := createClientTransaction(NO_TAG, DEFAULT_MAX_MESSAGE_SIZE)
-	msgSize, err := acceptRversion(L, t.rwc, &txn, DEFAULT_MAX_MESSAGE_SIZE, 0)
+	msgSize, err := acceptRversion(t.Logger, t.rwc, &txn, DEFAULT_MAX_MESSAGE_SIZE, 0)
 	if err != nil {
 		t.rwc.Close()
 		return err
@@ -352,7 +351,7 @@ func (t *SerialRetryClientTransport) AllocTransaction() (*cltTransaction, bool) 
 	t.txn.reset()
 	return &t.txn, true
 }
-func (_ *SerialRetryClientTransport) ReleaseTransaction(t Tag) {}
+func (*SerialRetryClientTransport) ReleaseTransaction(t Tag) {}
 func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, error) {
 
 	const numRetries = 3
@@ -507,7 +506,7 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 			if err != nil {
 				return nil, err
 			}
-			err = t.unsafeConnect(t.d, t.network, t.addr, t.usr, t.mnt, t.authorizee, t.Logger)
+			err = t.unsafeConnect()
 			if err != nil {
 				return nil, err
 			}
@@ -554,21 +553,22 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 					stateTxn.req.Tauth(state.serverAfid, state.uname, state.aname)
 					m, err := stateTxn.sendAndReceive(t.rwc)
 					if err != nil {
+						state.m.Unlock()
 						t.mut.Unlock()
-						return nil, fmt.Errorf("Restore: Failed to reattach mount: %w", err)
+						return nil, fmt.Errorf("restore: failed to reattach mount: %w", err)
 					}
 					_, ok := m.(Rauth)
 					if !ok {
 						state.m.Unlock()
 						t.mut.Unlock()
-						return nil, fmt.Errorf("Restore: Expected Rauth from server, got %s", stateTxn.res.responseType())
+						return nil, fmt.Errorf("restore: expected Rauth from server, got %s", stateTxn.res.responseType())
 					}
 					if t.authorizee != nil {
 						err = t.authorizee.Prove(context.Background(), state.uname, state.aname)
 						if err != nil {
 							state.m.Unlock()
 							t.mut.Unlock()
-							return nil, fmt.Errorf("Restore: Error from Authorizee: %w", err)
+							return nil, fmt.Errorf("restore: error from Authorizee: %w", err)
 						}
 					}
 				} else if state.mode&M_MOUNT != 0 {
@@ -580,13 +580,13 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 					if err != nil {
 						state.m.Unlock()
 						t.mut.Unlock()
-						return nil, fmt.Errorf("Restore: Failed to reattach mount: %w", err)
+						return nil, fmt.Errorf("restore: failed to reattach mount: %w", err)
 					}
 					_, ok := m.(Rattach)
 					if !ok {
 						state.m.Unlock()
 						t.mut.Unlock()
-						return nil, fmt.Errorf("Restore: Expected Rattach from server, got %s", stateTxn.res.responseType())
+						return nil, fmt.Errorf("restore: expected Rattach from server, got %s", stateTxn.res.responseType())
 					}
 				} else {
 					for i := 0; i < numRetries; i++ {
@@ -608,7 +608,7 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 						if !ok {
 							state.m.Unlock()
 							t.mut.Unlock()
-							return nil, fmt.Errorf("Restore: Expected Rwalk from server, got %s", stateTxn.res.responseType())
+							return nil, fmt.Errorf("restore: expected Rwalk from server, got %s", stateTxn.res.responseType())
 						}
 						if state.opened {
 							// file was created in previous session
@@ -638,7 +638,7 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 								if !ok {
 									state.m.Unlock()
 									t.mut.Unlock()
-									return nil, fmt.Errorf("Restore: Failed to re-open file: expected Ropen, got %s", stateTxn.res.responseType())
+									return nil, fmt.Errorf("restore: failed to re-open file: expected Ropen, got %s", stateTxn.res.responseType())
 								}
 							}
 							stateTxn.reset()
@@ -664,17 +664,12 @@ func (t *SerialRetryClientTransport) Request(txn *cltTransaction) (Message, erro
 							if !ok {
 								state.m.Unlock()
 								t.mut.Unlock()
-								return nil, fmt.Errorf("Failed to re-open file: expected Ropen, got %s", stateTxn.res.responseType())
+								return nil, fmt.Errorf("failed to re-open file: expected Ropen, got %s", stateTxn.res.responseType())
 							}
 						}
 					}
 				}
 				state.m.Unlock()
-
-				if err != nil {
-					// failed
-					return nil, err
-				}
 			}
 
 			t.mut.Unlock()

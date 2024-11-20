@@ -207,7 +207,7 @@ func textHandle(state *internalState, flag ninep.OpenMode) (ninep.FileHandle, er
 	return h, nil
 }
 
-func ctlHandle(state *internalState, flag ninep.OpenMode) (ninep.FileHandle, error) {
+func ctlHandle(state *internalState, _ ninep.OpenMode) (ninep.FileHandle, error) {
 	h, r := ninep.WriteOnlyDeviceHandle()
 	if r != nil {
 		go func() {

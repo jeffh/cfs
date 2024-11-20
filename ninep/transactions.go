@@ -6,10 +6,8 @@ import (
 )
 
 func zero(b []byte) {
-	if b != nil {
-		for i := range b {
-			b[i] = 0
-		}
+	for i := range b {
+		b[i] = 0
 	}
 }
 
@@ -58,11 +56,11 @@ func (t *srvTransaction) readRequest(rdr io.Reader) error {
 	size := MsgBase(t.inMsg).Size()
 
 	if size > uint32(len(t.inMsg)) {
-		return fmt.Errorf("Srv: Message too large (%d > %d)", size, len(t.inMsg))
+		return fmt.Errorf("srv: Message too large (%d > %d)", size, len(t.inMsg))
 	}
 
 	if size < 4 {
-		return fmt.Errorf("Srv: Message too small (%d < 4)", size)
+		return fmt.Errorf("srv: Message too small (%d < 4)", size)
 	}
 
 	_, err = readUpTo(rdr, t.inMsg[4:size])
@@ -298,11 +296,11 @@ func (t *cltResponse) readReply(rdr io.Reader) error {
 	size := MsgBase(t.inMsg).Size()
 
 	if size > uint32(len(t.inMsg)) {
-		return fmt.Errorf("Clt: Message too large (%d > %d)", size, len(t.inMsg))
+		return fmt.Errorf("clt: Message too large (%d > %d)", size, len(t.inMsg))
 	}
 
 	if size < 4 {
-		return fmt.Errorf("Clt: Message size too short (%d < %d)", size, 4)
+		return fmt.Errorf("clt: Message size too short (%d < %d)", size, 4)
 	}
 
 	_, err = readUpTo(rdr, t.inMsg[4:size])

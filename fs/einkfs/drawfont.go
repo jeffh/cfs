@@ -151,11 +151,6 @@ func loadFont(f fs.FS, fontName string) ([]*sfnt.Font, *sfnt.Collection, error) 
 	}
 }
 
-func faceForFont(f *sfnt.Font) (font.Face, error) {
-	face, err := opentype.NewFace(f, &opentype.FaceOptions{Hinting: font.HintingFull})
-	return face, err
-}
-
 func (fonts FontSet) glphAdvance(r rune) (int, fixed.Int26_6, font.Face) {
 	for i, f := range fonts.Faces {
 		amt, ok := f.GlyphAdvance(r)
