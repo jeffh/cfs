@@ -22,9 +22,6 @@ import (
 	"github.com/jeffh/cfs/ninep"
 )
 
-const timeout = 0
-const timeoutMsec = 0
-
 // A helper function for starting a fuse mount point
 func MountAndServeFS(ctx context.Context, f ninep.FileSystem, prefix, level string, L *slog.Logger, mountpoint string, opts *fs.Options) error {
 	L = ninep.CreateLogger(level, "fuse", L)
