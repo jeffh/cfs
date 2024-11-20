@@ -4,7 +4,6 @@ go 1.23
 
 require (
 	github.com/aws/aws-sdk-go v1.43.17
-	github.com/disintegration/imaging v1.6.2
 	github.com/docker/docker v27.3.1+incompatible
 	github.com/docker/go-connections v0.5.0
 	github.com/fatih/color v1.13.0

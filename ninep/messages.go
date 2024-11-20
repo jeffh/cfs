@@ -81,7 +81,7 @@ const (
 var DEFAULT_MAX_MESSAGE_SIZE uint32
 
 func init() {
-	s := uint32(os.Getpagesize() * 4)
+	s := uint32(os.Getpagesize())
 	if s > math.MaxUint32 {
 		s = math.MaxUint32
 	}
@@ -301,7 +301,7 @@ func (m Mode) IsDir() bool { return m&M_DIR != 1 }
 
 func (m Mode) String() string {
 	res := []string{}
-	perm := os.FileMode(m & M_PERM)
+	perm := fs.FileMode(m & M_PERM)
 	res = append(res, perm.String())
 	if m&M_DIR != 0 {
 		res = append(res, "M_DIR")
@@ -337,21 +337,21 @@ func (m Mode) ToOsFlag(o OpenMode) int {
 	return flag
 }
 
-func (m Mode) ToOsMode() os.FileMode {
-	var mode os.FileMode
+func (m Mode) ToFsMode() fs.FileMode {
+	var mode fs.FileMode
 	if m&M_DIR != 0 {
-		mode = os.ModeDir
+		mode = fs.ModeDir
 	}
 	if m&M_APPEND != 0 {
-		mode |= os.ModeAppend
+		mode |= fs.ModeAppend
 	}
 	if m&M_EXCL != 0 {
-		mode |= os.ModeExclusive
+		mode |= fs.ModeExclusive
 	}
 	if m&M_TMP != 0 {
-		mode |= os.ModeTemporary
+		mode |= fs.ModeTemporary
 	}
-	mode |= (os.FileMode(m) & os.ModePerm)
+	mode |= (fs.FileMode(m) & fs.ModePerm)
 	return mode
 }
 
@@ -359,32 +359,32 @@ func (m Mode) QidType() QidType {
 	return QidType((m & M_TYPE) >> 24)
 }
 
-func versionFromFileInfo(info os.FileInfo) uint32 {
+func versionFromFileInfo(info fs.FileInfo) uint32 {
 	if i, ok := info.(FileInfoVersion); ok {
 		return i.Version()
 	}
 	return NoQidVersion
 }
 
-func ModeFromFileInfo(info os.FileInfo) Mode {
+func ModeFromFileInfo(info fs.FileInfo) Mode {
 	if in, ok := info.(FileInfoMode9P); ok {
 		return in.Mode9P()
 	}
-	return ModeFromOS(info.Mode())
+	return ModeFromFS(info.Mode())
 }
 
-func ModeFromOS(mode os.FileMode) Mode {
+func ModeFromFS(mode fs.FileMode) Mode {
 	perm := Mode(mode.Perm())
-	if mode&os.ModeDir != 0 {
+	if mode&fs.ModeDir != 0 {
 		perm |= M_DIR
 	}
-	if mode&os.ModeAppend != 0 {
+	if mode&fs.ModeAppend != 0 {
 		perm |= M_APPEND
 	}
-	if mode&os.ModeExclusive != 0 {
+	if mode&fs.ModeExclusive != 0 {
 		perm |= M_EXCL
 	}
-	if mode&os.ModeTemporary != 0 {
+	if mode&fs.ModeTemporary != 0 {
 		perm |= M_TMP
 	}
 	return perm
@@ -661,22 +661,22 @@ func (s Stat) fill(name, uid, gid, muid string) {
 //
 // Note that Stat is a richer type that os.FileInfo, so the returned Stat may
 // be potentially inaccurate.
-func StatFromFileInfo(info os.FileInfo) Stat {
+func StatFromFileInfo(info fs.FileInfo) Stat {
 	if st, ok := info.Sys().(Stat); ok {
 		return st
 	}
 	qt := QidType(0)
 	m := info.Mode()
-	if m&os.ModeDir != 0 {
+	if m&fs.ModeDir != 0 {
 		qt |= QT_DIR
 	}
-	if m&os.ModeExclusive != 0 {
+	if m&fs.ModeExclusive != 0 {
 		qt |= QT_EXCL
 	}
-	if m&os.ModeSymlink != 0 {
+	if m&fs.ModeSymlink != 0 {
 		qt |= QT_SYMLINK
 	}
-	if m&os.ModeTemporary != 0 {
+	if m&fs.ModeTemporary != 0 {
 		qt |= QT_TMP
 	}
 	qid := NewQid()
@@ -843,7 +843,7 @@ var _ os.FileInfo = (*StatFileInfo)(nil)
 
 func (s StatFileInfo) Size() int64        { return int64(s.Stat.Length()) }
 func (s StatFileInfo) Name() string       { return s.Stat.Name() }
-func (s StatFileInfo) Mode() os.FileMode  { return s.Stat.Mode().ToOsMode() }
+func (s StatFileInfo) Mode() fs.FileMode  { return s.Stat.Mode().ToFsMode() }
 func (s StatFileInfo) ModTime() time.Time { return time.Unix(int64(s.Stat.Mtime()), 0) }
 func (s StatFileInfo) IsDir() bool        { return s.Stat.Mode()&M_DIR != 0 }
 func (s StatFileInfo) Sys() interface{}   { return s.Stat }

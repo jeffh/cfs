@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"iter"
 	"maps"
-	"os"
 	"slices"
 	"sort"
 	"strconv"
@@ -220,7 +219,7 @@ func (f *fsys) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, 
 			for id := range f.feeds {
 				info := &ninep.SimpleFileInfo{
 					FIName: strconv.FormatUint(id, 10),
-					FIMode: os.ModeDir | 0555,
+					FIMode: fs.ModeDir | 0555,
 				}
 				if !yield(info, nil) {
 					return
@@ -260,7 +259,7 @@ func (f *fsys) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, 
 				info := &ninep.SimpleFileInfo{
 					FIName:    strconv.FormatUint(uint64(i), 10),
 					FIModTime: t,
-					FIMode:    os.ModeDir | 0555,
+					FIMode:    fs.ModeDir | 0555,
 				}
 				f.RUnlock()
 				if !yield(info, nil) {

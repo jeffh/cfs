@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 
@@ -35,14 +36,14 @@ func (fs *bfs) Create(filename string) (bill.File, error) {
 func (fs *bfs) Open(filename string) (bill.File, error) {
 	return fs.OpenFile(filename, os.O_RDONLY, 0)
 }
-func (fs *bfs) OpenFile(filename string, flag int, perm os.FileMode) (bill.File, error) {
+func (fs *bfs) OpenFile(filename string, flag int, perm fs.FileMode) (bill.File, error) {
 	if trace {
 		fmt.Printf("billy.FileSystem.OpenFile(%#v, %#v, %#v)\n", filename, flag, perm)
 	}
 	ctx := context.Background()
 	path := filepath.Join(fs.Prefix, filename)
 	if flag&os.O_CREATE != 0 {
-		h, err := fs.FS.CreateFile(ctx, path, ninep.OpenModeFromOS(flag), ninep.ModeFromOS(perm))
+		h, err := fs.FS.CreateFile(ctx, path, ninep.OpenModeFromOS(flag), ninep.ModeFromFS(perm))
 		if err != nil {
 			return nil, err
 		}
@@ -93,11 +94,11 @@ func (fs *bfs) ReadDir(path string) ([]os.FileInfo, error) {
 	it := fs.FS.ListDir(context.Background(), filepath.Join(fs.Prefix, path))
 	return ninep.FileInfoSliceFromIterator(it, -1)
 }
-func (fs *bfs) MkdirAll(filename string, perm os.FileMode) error {
+func (fs *bfs) MkdirAll(filename string, perm fs.FileMode) error {
 	if trace {
 		fmt.Printf("billy.FileSystem.ReadDir(%#v, %#v)\n", filename, perm)
 	}
-	return fs.FS.MakeDir(context.Background(), filepath.Join(fs.Prefix, filename), ninep.ModeFromOS(perm))
+	return fs.FS.MakeDir(context.Background(), filepath.Join(fs.Prefix, filename), ninep.ModeFromFS(perm))
 }
 
 func (fs *bfs) Lstat(filename string) (os.FileInfo, error) { return fs.Stat(filename) }

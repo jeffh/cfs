@@ -527,7 +527,7 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 				}
 				fil = serverFile{
 					Name: path,
-					Mode: ModeFromOS(info.Mode()),
+					Mode: ModeFromFS(info.Mode()),
 				}
 			}
 		} else {
@@ -586,7 +586,7 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 				}
 				fil = serverFile{
 					Name: path,
-					Mode: ModeFromOS(info.Mode()),
+					Mode: ModeFromFS(info.Mode()),
 				}
 			}
 		}
@@ -636,7 +636,7 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 		qid := session.PutQidInfo(fil.Name, info)
 		stat := fileInfoToStat(qid, info)
 		fil.User = stat.Uid()
-		fil.Mode = ModeFromOS(info.Mode())
+		fil.Mode = ModeFromFS(info.Mode())
 		session.PutFid(m.Fid(), fil)
 		if h.Logger != nil {
 			h.Logger.Info("stat result",
@@ -853,7 +853,7 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 			session.PutFileHandle(q, f)
 		}
 		if info != nil {
-			fil.Mode = ModeFromOS(info.Mode())
+			fil.Mode = ModeFromFS(info.Mode())
 		}
 		if h.Logger != nil {
 			h.Logger.Info("Tcreate", slog.Uint64("fid", uint64(m.Fid())), slog.String("file", fil.Name), slog.Bool("isDir", isDir), slog.String("mode", m.Mode().String()))

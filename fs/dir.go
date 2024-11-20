@@ -26,13 +26,13 @@ var _ ninep.FileSystem = Dir("")
 // MakeDir creates a local directory as subdirectory of the root directory of Dir
 func (d Dir) MakeDir(ctx context.Context, path string, mode ninep.Mode) error {
 	fullPath := filepath.Join(string(d), path)
-	return os.MkdirAll(fullPath, mode.ToOsMode()&os.ModePerm)
+	return os.MkdirAll(fullPath, mode.ToFsMode()&fs.ModePerm)
 }
 
 // CreateFile creates a new file as a descendent of the root directory of Dir
 func (d Dir) CreateFile(ctx context.Context, path string, flag ninep.OpenMode, mode ninep.Mode) (ninep.FileHandle, error) {
 	fullPath := filepath.Join(string(d), path)
-	return os.OpenFile(fullPath, flag.ToOsFlag()|os.O_CREATE, mode.ToOsMode())
+	return os.OpenFile(fullPath, flag.ToOsFlag()|os.O_CREATE, mode.ToFsMode())
 }
 
 // OpenFile opens an existing file that is a descendent of the root directory of Dir for reading/writing
@@ -117,7 +117,7 @@ func (d Dir) WriteStat(ctx context.Context, path string, s ninep.Stat) error {
 
 	if !s.ModeNoTouch() {
 		old := info.Mode()
-		err = os.Chmod(fullPath, s.Mode().ToOsMode())
+		err = os.Chmod(fullPath, s.Mode().ToFsMode())
 		if err != nil {
 			return err
 		}
@@ -281,7 +281,7 @@ func (i *lazyDirInfo) realize() os.FileInfo {
 }
 func (i *lazyDirInfo) Name() string       { return i.parts[len(i.parts)-1] }
 func (i *lazyDirInfo) Size() int64        { return i.realize().Size() }
-func (i *lazyDirInfo) Mode() os.FileMode  { return ninep.M_DIR | 0777 }
+func (i *lazyDirInfo) Mode() fs.FileMode  { return ninep.M_DIR | 0777 }
 func (i *lazyDirInfo) ModTime() time.Time { return i.realize().ModTime() }
 func (i *lazyDirInfo) IsDir() bool        { return true }
 func (i *lazyDirInfo) Sys() interface{}   { return i.realize().Sys() }

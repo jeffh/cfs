@@ -15,6 +15,8 @@ import (
 	"syscall"
 	"unsafe"
 
+	iofs "io/fs"
+
 	fs "github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"github.com/jeffh/cfs/ninep"
@@ -160,7 +162,7 @@ func (n *Dir) Setattr(ctx context.Context, f fs.FileHandle, in *fuse.SetAttrIn, 
 		st.SetMtime(uint32(mtime.Unix()))
 	}
 	if mode, ok := in.GetMode(); ok {
-		st.SetMode(ninep.ModeFromOS(os.FileMode(mode)))
+		st.SetMode(ninep.ModeFromFS(iofs.FileMode(mode)))
 	}
 	path := n.config.path(n.path)
 	errno := mapErr(n.fs.WriteStat(ctx, path, st), syscall.EINVAL) // TODO: what is the proper error here?
@@ -283,7 +285,7 @@ func (n *Dir) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.
 func (n *Dir) Mkdir(ctx context.Context, name string, mode uint32, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	path := n.config.path(n.path)
 	path = filepath.Join(path, name)
-	mod := flagModeToMode(0, os.FileMode(mode))
+	mod := flagModeToMode(0, iofs.FileMode(mode))
 	if n.config.L != nil {
 		n.config.L.DebugContext(ctx, "Dir.Mkdir", slog.String("path", path), slog.String("name", name), slog.String("mode", mod.String()))
 	}
@@ -332,7 +334,7 @@ func (n *Dir) Create(ctx context.Context, name string, flags uint32, mode uint32
 	}
 	path = filepath.Join(path, name)
 	flg := flagToOpenMode(flags)
-	mod := flagModeToMode(flags, os.FileMode(mode))
+	mod := flagModeToMode(flags, iofs.FileMode(mode))
 
 	if flags&syscall.O_CREAT == 0 {
 		if n.config.L != nil {
@@ -471,7 +473,7 @@ func (n *File) Setattr(ctx context.Context, f fs.FileHandle, in *fuse.SetAttrIn,
 		st.SetMtime(uint32(mtime.Unix()))
 	}
 	if mode, ok := in.GetMode(); ok {
-		st.SetMode(ninep.ModeFromOS(os.FileMode(mode)))
+		st.SetMode(ninep.ModeFromFS(iofs.FileMode(mode)))
 	}
 	path := n.config.path(n.path)
 	if n.config.L != nil {
@@ -618,8 +620,8 @@ func (h *FileHandle) Flush(ctx context.Context) syscall.Errno {
 
 func flagToOpenMode(flg uint32) ninep.OpenMode { return ninep.OpenModeFromOS(int(flg)) }
 
-func flagModeToMode(flg uint32, mode os.FileMode) ninep.Mode {
-	m := ninep.ModeFromOS(mode)
+func flagModeToMode(flg uint32, mode iofs.FileMode) ninep.Mode {
+	m := ninep.ModeFromFS(mode)
 
 	f := int(flg)
 
@@ -667,19 +669,19 @@ func mapErr(err error, defErr syscall.Errno) syscall.Errno {
 	return defErr
 }
 
-func fillMode(info os.FileInfo) uint32 {
+func fillMode(info iofs.FileInfo) uint32 {
 	mode := info.Mode()
-	dt := uint32(mode & os.ModePerm)
-	if mode&os.ModeDir != 0 {
+	dt := uint32(mode & iofs.ModePerm)
+	if mode&iofs.ModeDir != 0 {
 		dt |= fuse.S_IFDIR
-	} else if mode&os.ModeSymlink != 0 {
+	} else if mode&iofs.ModeSymlink != 0 {
 		dt |= fuse.S_IFLNK
-	} else if mode&os.ModeAppend != 0 {
+	} else if mode&iofs.ModeAppend != 0 {
 		dt |= fuse.S_IFIFO
-	} else if mode&os.ModeType == 0 {
+	} else if mode&iofs.ModeType == 0 {
 		dt |= fuse.S_IFREG
 	}
-	fmt.Printf("MODE: %#v (%s -> %s)\n", info.Name(), mode.String(), os.FileMode(dt).String())
+	fmt.Printf("MODE: %#v (%s -> %s)\n", info.Name(), mode.String(), iofs.FileMode(dt).String())
 	return dt
 }
 

@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"io/ioutil"
 	"log"
 	"net"
@@ -129,7 +130,7 @@ func runRequest() {
 	if err != nil {
 		log.Fatalf("Stdin error: %s", err)
 	}
-	if stat.Mode()&os.ModeCharDevice == 0 {
+	if stat.Mode()&fs.ModeCharDevice == 0 {
 		stdin = os.Stdin
 		defer os.Stdin.Close()
 	}
@@ -374,7 +375,7 @@ func runRemoteProgram() {
 	if err != nil {
 		log.Fatalf("Stdin error: %s", err)
 	}
-	if stat.Mode()&os.ModeCharDevice == 0 {
+	if stat.Mode()&fs.ModeCharDevice == 0 {
 		stdin = os.Stdin
 	}
 

@@ -16,7 +16,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/disintegration/imaging"
 	"github.com/jeffh/cfs/fs/muxfs"
 	"github.com/jeffh/cfs/ninep"
 	"github.com/jeffh/cfs/ninep/kvp"
@@ -107,9 +106,9 @@ func (f *internalState) textImage(txt string) image.Image {
 	f.fset.RenderText(img, txt, nil)
 	switch f.rotation {
 	case 1:
-		img = imaging.Rotate270(img)
+		img = rotate270(img)
 	case 3:
-		img = imaging.Rotate90(img)
+		img = rotate90(img)
 	default:
 	}
 	return img
@@ -163,11 +162,11 @@ func displayHandle(state *internalState, flag ninep.OpenMode) (ninep.FileHandle,
 			case 0:
 				// do nothing
 			case 1:
-				img = imaging.Rotate90(img)
+				img = rotate90(img)
 			case 2:
-				img = imaging.Rotate180(img)
+				img = rotate180(img)
 			case 3:
-				img = imaging.Rotate270(img)
+				img = rotate270(img)
 			}
 			state.mu.Lock()
 			defer state.mu.Unlock()

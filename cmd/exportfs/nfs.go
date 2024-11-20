@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	iofs "io/fs"
 	"net"
-	"os"
 
 	"github.com/jeffh/cfs/fs/proxy"
 	"github.com/smallfz/libnfs-go/auth"
@@ -28,12 +28,12 @@ func runServer(ctx context.Context, listen string, mnt proxy.FileSystemMount, mo
 	// If the file system would depend on SetCreds, make sure to generate a new fs.FS for each connection.
 	backend := backend.New(func() fs.FS { return mfs }, auth.Null)
 
-	mfs.MkdirAll("/mount", os.FileMode(0o755))
-	mfs.MkdirAll("/test", os.FileMode(0o755))
-	mfs.MkdirAll("/test2", os.FileMode(0o755))
-	mfs.MkdirAll("/many", os.FileMode(0o755))
+	mfs.MkdirAll("/mount", iofs.FileMode(0o755))
+	mfs.MkdirAll("/test", iofs.FileMode(0o755))
+	mfs.MkdirAll("/test2", iofs.FileMode(0o755))
+	mfs.MkdirAll("/many", iofs.FileMode(0o755))
 
-	perm := os.FileMode(0o755)
+	perm := iofs.FileMode(0o755)
 	for i := 0; i < 256; i++ {
 		mfs.MkdirAll(fmt.Sprintf("/many/sub-%d", i+1), perm)
 	}

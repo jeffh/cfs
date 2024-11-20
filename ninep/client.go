@@ -54,11 +54,11 @@ func (t *cltTransaction) sendAndReceive(rw net.Conn) (Message, error) {
 	rw.SetDeadline(time.Time{})
 	err := t.req.writeRequest(rw)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to write %s: %w", t.req.requestType(), err)
+		return nil, fmt.Errorf("failed to write %s: %w", t.req.requestType(), err)
 	}
 	err = t.res.readReply(rw)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to read reply to %s: %w", t.req.requestType(), err)
+		return nil, fmt.Errorf("failed to read reply to %s: %w", t.req.requestType(), err)
 	}
 	return t.res.Reply(), nil
 }

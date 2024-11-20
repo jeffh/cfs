@@ -20,6 +20,12 @@ func ParseAddr(addr string) (network, address string) {
 		network = "tcp"
 		address = tcpAddr
 	}
+	if address == "" {
+		address = "localhost:564"
+	}
+	if !strings.Contains(address, ":") {
+		address += ":564"
+	}
 	return
 }
 

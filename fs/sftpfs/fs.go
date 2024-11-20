@@ -61,7 +61,7 @@ func (fs *sftpFs) MakeDir(ctx context.Context, path string, mode ninep.Mode) err
 	fullPath := filepath.Join(fs.prefix, path)
 	err := fs.conn.MkdirAll(fullPath)
 	if err == nil {
-		err = fs.conn.Chmod(fullPath, mode.ToOsMode())
+		err = fs.conn.Chmod(fullPath, mode.ToFsMode())
 	}
 	return err
 }
@@ -72,7 +72,7 @@ func (fs *sftpFs) CreateFile(ctx context.Context, path string, flag ninep.OpenMo
 	if err != nil {
 		return nil, err
 	}
-	err = fs.conn.Chmod(fullPath, mode.ToOsMode())
+	err = fs.conn.Chmod(fullPath, mode.ToFsMode())
 	if err != nil {
 		return nil, err
 	}
@@ -145,7 +145,7 @@ func (fs *sftpFs) WriteStat(ctx context.Context, path string, s ninep.Stat) erro
 
 	if !s.ModeNoTouch() {
 		old := info.Mode()
-		err = fs.conn.Chmod(fullPath, s.Mode().ToOsMode())
+		err = fs.conn.Chmod(fullPath, s.Mode().ToFsMode())
 		if err != nil {
 			return err
 		}

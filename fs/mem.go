@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
 	"iter"
 	"os"
 	"sync"
@@ -21,16 +22,16 @@ import (
 type memFileInfo struct {
 	FIName    string
 	FISize    int64
-	FIMode    os.FileMode
+	FIMode    fs.FileMode
 	FIModTime time.Time
 	FISys     interface{}
 }
 
 func (f *memFileInfo) Name() string       { return f.FIName }
 func (f *memFileInfo) Size() int64        { return f.FISize }
-func (f *memFileInfo) Mode() os.FileMode  { return f.FIMode }
+func (f *memFileInfo) Mode() fs.FileMode  { return f.FIMode }
 func (f *memFileInfo) ModTime() time.Time { return f.FIModTime }
-func (f *memFileInfo) IsDir() bool        { return f.FIMode&os.ModeDir != 0 }
+func (f *memFileInfo) IsDir() bool        { return f.FIMode&fs.ModeDir != 0 }
 func (f *memFileInfo) Sys() interface{}   { return f.FISys }
 
 ////////////////////////////////////////////////
@@ -270,9 +271,9 @@ func (m *Mem) stat(n *memNode) *memFileInfo {
 	modTime := n.modTime
 	n.mut.RUnlock()
 
-	mode := os.ModePerm // TODO: support modes
+	mode := fs.ModePerm // TODO: support modes
 	if !n.isFile {
-		mode |= os.ModeDir
+		mode |= fs.ModeDir
 	}
 
 	return &memFileInfo{
