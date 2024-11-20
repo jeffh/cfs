@@ -11,7 +11,6 @@ import (
 	"github.com/jeffh/cfs/fs/proxy"
 	"github.com/jeffh/cfs/fs/unionfs"
 	"github.com/jeffh/cfs/ninep"
-	"github.com/kardianos/service"
 )
 
 func main() {
@@ -48,13 +47,7 @@ func main() {
 		}
 	}()
 
-	cfg := &service.Config{
-		Name:        "unionfs",
-		DisplayName: "Union File System Service",
-		Description: "Provides a 9p file system that merges several file systems into one",
-	}
-
-	cli.ServiceMain(cfg, func() ninep.FileSystem {
+	cli.ServiceMain(func() ninep.FileSystem {
 		fsmc := proxy.ParseMounts(flag.Args())
 		fsm := make([]proxy.FileSystemMount, 0, len(fsmc))
 		for _, c := range fsmc {

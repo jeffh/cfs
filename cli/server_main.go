@@ -14,7 +14,6 @@ import (
 
 	"github.com/jeffh/cfs/fs"
 	"github.com/jeffh/cfs/ninep"
-	"github.com/kardianos/service"
 )
 
 type ServerConfig struct {
@@ -116,14 +115,16 @@ func (c *ServerConfig) Close() {
 
 func (c *ServerConfig) ListenAndServe(srv *ninep.Server) error {
 	network, addr := ninep.ParseAddr(c.Addr)
-	var d ninep.Dialer = c.Dialer
-	var err error
-	if c.CertFile != "" && c.KeyFile != "" {
-		err = srv.ListenAndServeTLS(network, addr, c.CertFile, c.KeyFile, d)
-	} else {
-		err = srv.ListenAndServe(network, addr, d)
+	ln, err := srv.Listener(network, addr, c.Dialer)
+	if err != nil {
+		return err
 	}
-	return err
+	fmt.Fprintf(c.Stderr, "Listening on %s\n", ln.Addr())
+	if c.CertFile != "" && c.KeyFile != "" {
+		return srv.ServeTLS(ln, c.CertFile, c.KeyFile)
+	} else {
+		return srv.Serve(ln)
+	}
 }
 
 func (c *ServerConfig) CreateServerAndListen(createfs func() ninep.FileSystem) error {
@@ -131,8 +132,11 @@ func (c *ServerConfig) CreateServerAndListen(createfs func() ninep.FileSystem) e
 	return c.ListenAndServe(srv)
 }
 
-func BasicServerMain(createfs func() ninep.FileSystem) {
-	var cfg ServerConfig
+func ServiceMain(createfs func() ninep.FileSystem) {
+	cfg := ServerConfig{
+		Stdout: os.Stdout,
+		Stderr: os.Stderr,
+	}
 
 	cfg.SetFlags(nil)
 
@@ -146,109 +150,15 @@ func BasicServerMain(createfs func() ninep.FileSystem) {
 	err := cfg.CreateServerAndListen(createfs)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
+		os.Exit(1)
 	}
 }
 
-func ServiceMain(cfg *service.Config, createfs func() ninep.FileSystem) {
-	createcfg := func(stdout, stderr io.Writer) ServerConfig {
-		cfg := ServerConfig{
-			Stdout: stdout,
-			Stderr: stderr,
-		}
-
-		cfg.SetFlags(nil)
-		flag.Parse()
-
-		if cfg.PrintHelp {
-			flag.Usage()
-			os.Exit(1)
-		}
-
-		return cfg
-	}
-
-	ServiceMainWithFactory(cfg, createcfg, createfs)
-}
-
-func ServiceMainWithFactory(cfg *service.Config, createcfg func(stdout, stderr io.Writer) ServerConfig, createfs func() ninep.FileSystem) {
-	prg := &srv{}
-	s, err := service.New(prg, cfg)
+func ServiceMainWithFactory(createcfg func(stdout, stderr io.Writer) ServerConfig, createfs func() ninep.FileSystem) {
+	conf := createcfg(os.Stdout, os.Stderr)
+	srv := conf.CreateServer(createfs)
+	err := conf.ListenAndServe(srv)
 	if err != nil {
-		log.Fatal(err)
-	}
-	prg.logger, err = s.Logger(nil)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	prg.Main = srvMainWithCfg(
-		&proxyInfoLogger{prg.logger},
-		&proxyErrorLogger{prg.logger},
-		createcfg,
-		createfs,
-	)
-
-	if prg.Main == nil {
-		log.Fatal("Failed to service")
-	}
-
-	err = s.Run()
-	if err != nil {
-		prg.logger.Error(err)
-	}
-}
-
-type proxyInfoLogger struct{ logger service.Logger }
-
-func (l *proxyInfoLogger) Write(p []byte) (int, error) {
-	err := l.logger.Info(string(p))
-	return len(p), err
-}
-
-type proxyErrorLogger struct{ logger service.Logger }
-
-func (l *proxyErrorLogger) Write(p []byte) (int, error) {
-	err := l.logger.Error(string(p))
-	return len(p), err
-}
-
-type srv struct {
-	Main       func(context.Context)
-	logger     service.Logger
-	runningCtx context.Context
-	cancel     context.CancelFunc
-}
-
-func (p *srv) Start(s service.Service) error {
-	p.runningCtx, p.cancel = context.WithCancel(context.Background())
-	go p.run()
-	return nil
-}
-func (p *srv) Stop(s service.Service) error {
-	p.cancel()
-	time.Sleep(1 * time.Second)
-	return nil
-}
-func (p *srv) run() error {
-	p.Main(p.runningCtx)
-	<-p.runningCtx.Done()
-	return nil
-}
-
-func srvMainWithCfg(stdout, stderr io.Writer, mkCfg func(stdout, stderr io.Writer) ServerConfig, createfs func() ninep.FileSystem) (start func(ctx context.Context)) {
-	cfg := mkCfg(stdout, stderr)
-
-	srv := cfg.CreateServer(createfs)
-	return func(parentCtx context.Context) {
-		ctx, cancel := context.WithCancel(parentCtx)
-		go func() {
-			defer cancel()
-			err := cfg.ListenAndServe(srv)
-			if err != nil {
-				fmt.Fprintf(cfg.Stdout, "Error: %s\n", err)
-			}
-		}()
-		<-ctx.Done()
-		cfg.Close()
+		fmt.Fprintf(conf.Stdout, "Error: %s\n", err)
 	}
 }

@@ -13,7 +13,6 @@ import (
 	"github.com/jeffh/cfs/fs/encryptfs"
 	"github.com/jeffh/cfs/fs/proxy"
 	"github.com/jeffh/cfs/ninep"
-	"github.com/kardianos/service"
 )
 
 func main() {
@@ -96,11 +95,6 @@ func main() {
 		}
 	}
 
-	serviceCfg := &service.Config{
-		Name:        "encryptfs",
-		DisplayName: "Encrypted File System Service",
-		Description: "Provides a 9p file system that proxies to two 9p file systems, encrypting both its contents",
-	}
 	createsrvcfg := func(stdout, stderr io.Writer) cli.ServerConfig {
 		srvCfg.Stdout = stdout
 		srvCfg.Stderr = stderr
@@ -118,5 +112,5 @@ func main() {
 
 		return fs
 	}
-	cli.ServiceMainWithFactory(serviceCfg, createsrvcfg, createfs)
+	cli.ServiceMainWithFactory(createsrvcfg, createfs)
 }

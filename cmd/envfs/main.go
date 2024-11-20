@@ -8,19 +8,12 @@ import (
 	"github.com/jeffh/cfs/cli"
 	"github.com/jeffh/cfs/fs"
 	"github.com/jeffh/cfs/ninep"
-	"github.com/kardianos/service"
 )
 
 func main() {
 	var readOnly bool
 
 	flag.BoolVar(&readOnly, "ro", false, "Serve the file system in read-only mode.")
-
-	cfg := &service.Config{
-		Name:        "envfs",
-		DisplayName: "Environment Variables File System Service",
-		Description: "Provides a 9p file system that exposes environment variables",
-	}
 
 	flag.Usage = func() {
 		w := flag.CommandLine.Output()
@@ -30,7 +23,7 @@ func main() {
 		flag.PrintDefaults()
 	}
 
-	cli.ServiceMain(cfg, func() ninep.FileSystem {
+	cli.ServiceMain(func() ninep.FileSystem {
 		var fsys ninep.FileSystem = fs.Env()
 		if readOnly {
 			fsys = fs.ReadOnly(fsys)

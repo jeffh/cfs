@@ -11,7 +11,6 @@ import (
 	"github.com/jeffh/cfs/cli"
 	"github.com/jeffh/cfs/fs/sftpfs"
 	"github.com/jeffh/cfs/ninep"
-	"github.com/kardianos/service"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -40,13 +39,7 @@ func main() {
 		flag.PrintDefaults()
 	}
 
-	cfg := &service.Config{
-		Name:        "sftpfs",
-		DisplayName: "SSH File Transfer Protocol File System Service",
-		Description: "Provide a 9p file system that exposts an sftp server",
-	}
-
-	cli.ServiceMain(cfg, func() ninep.FileSystem {
+	cli.ServiceMain(func() ninep.FileSystem {
 		if flag.NArg() < 1 {
 			flag.Usage()
 			exitCode = 1

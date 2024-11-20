@@ -14,7 +14,6 @@ import (
 	"github.com/jeffh/cfs/cli"
 	"github.com/jeffh/cfs/fs/einkfs"
 	"github.com/jeffh/cfs/ninep"
-	"github.com/kardianos/service"
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/opentype"
 	"periph.io/x/host/v3"
@@ -24,11 +23,6 @@ import (
 var fontFiles embed.FS
 
 func main() {
-	cfg := &service.Config{
-		Name:        "einkfs",
-		DisplayName: "Eink File System Service",
-		Description: "Provides a 9p file system that exposes an eink display",
-	}
 	var nullDevice bool
 	var gifMode bool
 	var rotation int
@@ -54,7 +48,7 @@ func main() {
 		fmt.Fprintf(w, "OPTIONS:\n")
 		flag.PrintDefaults()
 	}
-	cli.ServiceMain(cfg, func() ninep.FileSystem {
+	cli.ServiceMain(func() ninep.FileSystem {
 		if _, err := host.Init(); err != nil {
 			log.Fatal(err)
 		}
