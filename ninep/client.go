@@ -85,6 +85,10 @@ type Client interface {
 	// Experimental: Implementation specific construction right now. Although may be better to unify
 	Fs() (*FileSystemProxy, error)
 
+	// MaxMessageSize returns the maximum message size that has been negotiated
+	// with the server.
+	MaxMessageSize() uint32
+
 	// Absent:
 	// Auth() - assumed the constructor will manage this
 	// Attach() - assumed the constructor will manage this
@@ -276,7 +280,7 @@ func (fp *FileProxy) eachStat(yield func(Stat, error) bool) {
 			if fs.Logger != nil {
 				fs.Logger.Error("FileProxy.eachStat.readStat.invalidFormat", slog.Int("wanted", int(size)), slog.Int("had", len(b)))
 			}
-			return nil, b, ErrBadFormat
+			return nil, b, ErrInvalidMessage
 		}
 		st = Stat(b[:size+2])
 		return st, b[2+size:], nil
@@ -355,30 +359,14 @@ func (f *FileProxy) ListDir() iter.Seq2[fs.FileInfo, error] {
 
 ///////////////////////
 
-// The contract that FileSystemProxy expects from the underlying 9p client
-// Also provides a higher-level API to use a 9p Client
+// A 9p client's access to a remote FileSystem. Unlike Client interface, this
+// attempts to keep track of fid usages.
 //
-// FileSystemProxyClient assumes complete ownership of Client since it
-// allocates and tracks it own Fids.
-//
-// Using most of the high-level APIs here has a high-churn of Fids, (since each
-// call presumes a 9p Walk). If you want to have higher performance, use
-// Traverse() and reuse the FileProxy references for repeated operations on the
-// same file and minimize repeated Walk-ing to the same file.
-type FileSystemProxyClient interface {
-	Client
-
-	// Extra - Max size the client uses for messaging. FS Proxy uses it for buffer sizes
-	MaxMessageSize() uint32
-}
-
-// A 9p client's representation a file on a remote FileSystem
-//
-// Using this can be more efficient that using paths all the time, otherwise
-// the client effectively cd-s to the given path each time which can be slower.
+// This isn't particularly efficient, since it walks the path each time to
+// produce a fid before each operation.
 type FileSystemProxy struct {
 	Logger *slog.Logger
-	c      FileSystemProxyClient
+	c      Client
 	rootF  Fid
 	rootQ  Qid
 

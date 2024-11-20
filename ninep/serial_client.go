@@ -23,7 +23,7 @@ type BasicClient struct {
 	Logger *slog.Logger
 }
 
-var _ FileSystemProxyClient = (*BasicClient)(nil)
+var _ Client = (*BasicClient)(nil)
 
 func (c *BasicClient) MaxMessageSize() uint32 { return c.transport().MaxMessageSize() }
 
@@ -134,7 +134,7 @@ func (c *BasicClient) Auth(afid Fid, user, mnt string) (Qid, error) {
 		if c.Logger != nil {
 			c.Logger.Error("Tauth.response.unexpected", slog.String("error", "expected Rauth from server"))
 		}
-		return nil, ErrBadFormat
+		return nil, ErrInvalidMessage
 	}
 }
 
@@ -174,7 +174,7 @@ func (c *BasicClient) Attach(fd, afid Fid, user, mnt string) (Qid, error) {
 		if c.Logger != nil {
 			c.Logger.Error("Tattach.response.unexpected", slog.String("error", "expected Rattach from server"))
 		}
-		return nil, ErrBadFormat
+		return nil, ErrInvalidMessage
 	}
 }
 
@@ -237,7 +237,7 @@ func (c *BasicClient) Walk(f, newF Fid, path []string) ([]Qid, error) {
 		if c.Logger != nil {
 			c.Logger.Error("Twalk.response.unexpected", slog.String("error", "expected Rwalk from server"))
 		}
-		return nil, ErrBadFormat
+		return nil, ErrInvalidMessage
 	}
 }
 
@@ -277,7 +277,7 @@ func (c *BasicClient) Stat(f Fid) (Stat, error) {
 		if c.Logger != nil {
 			c.Logger.Error("Tstat.response.unexpected", slog.Uint64("f", uint64(f)), slog.String("error", "expected Rstat from server"))
 		}
-		return nil, ErrBadFormat
+		return nil, ErrInvalidMessage
 	}
 }
 
@@ -316,7 +316,7 @@ func (c *BasicClient) WriteStat(f Fid, s Stat) error {
 		if c.Logger != nil {
 			c.Logger.Error("Twstat.response.unexpected", slog.Uint64("f", uint64(f)), slog.String("error", "expected Rwstat from server"))
 		}
-		return ErrBadFormat
+		return ErrInvalidMessage
 	}
 }
 
@@ -357,7 +357,7 @@ func (c *BasicClient) Read(f Fid, p []byte, offset uint64) (int, error) {
 		if c.Logger != nil {
 			c.Logger.Error("Tread.response.unexpected", slog.Uint64("f", uint64(f)), slog.String("error", "expected Rread from server"))
 		}
-		return 0, ErrBadFormat
+		return 0, ErrInvalidMessage
 	}
 }
 
@@ -393,7 +393,7 @@ func (c *BasicClient) Clunk(f Fid) error {
 		if c.Logger != nil {
 			c.Logger.Error("Tclunk.response.unexpected", slog.Uint64("f", uint64(f)), slog.String("error", "expected Rclunk from server"))
 		}
-		return ErrBadFormat
+		return ErrInvalidMessage
 	}
 }
 
@@ -429,7 +429,7 @@ func (c *BasicClient) Remove(f Fid) error {
 		if c.Logger != nil {
 			c.Logger.Error("Tremove.response.unexpected", slog.Uint64("f", uint64(f)), slog.String("error", "expected Rremove from server"))
 		}
-		return ErrBadFormat
+		return ErrInvalidMessage
 	}
 }
 
@@ -476,7 +476,7 @@ func (c *BasicClient) Write(f Fid, data []byte, offset uint64) (int, error) {
 			if c.Logger != nil {
 				c.Logger.Error("Twrite.response.unexpected", slog.Uint64("f", uint64(f)), slog.String("error", "expected Rwrite from server"))
 			}
-			return wrote, ErrBadFormat
+			return wrote, ErrInvalidMessage
 		}
 	}
 	return wrote, nil
@@ -524,7 +524,7 @@ func (c *BasicClient) WriteMsg(f Fid, data []byte, offset uint64) (uint32, error
 		if c.Logger != nil {
 			c.Logger.Error("Twrite.response.unexpected", slog.Uint64("f", uint64(f)), slog.String("error", "expected Rwrite from server"))
 		}
-		return 0, ErrBadFormat
+		return 0, ErrInvalidMessage
 	}
 }
 

@@ -122,43 +122,43 @@ func (f *subFileSystem) pathFor(path string) string {
 
 func (f *subFileSystem) MakeDir(ctx context.Context, path string, mode ninep.Mode) error {
 	if !fs.ValidPath(path) {
-		return ninep.ErrBadFormat
+		return fs.ErrNotExist
 	}
 	return f.Underlying.MakeDir(ctx, f.pathFor(path), mode)
 }
 func (f *subFileSystem) CreateFile(ctx context.Context, path string, flag ninep.OpenMode, mode ninep.Mode) (ninep.FileHandle, error) {
 	if !fs.ValidPath(path) {
-		return nil, ninep.ErrBadFormat
+		return nil, fs.ErrNotExist
 	}
 	return f.Underlying.CreateFile(ctx, f.pathFor(path), flag, mode)
 }
 func (f *subFileSystem) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (ninep.FileHandle, error) {
 	if !fs.ValidPath(path) {
-		return nil, ninep.ErrBadFormat
+		return nil, fs.ErrNotExist
 	}
 	return f.Underlying.OpenFile(ctx, f.pathFor(path), flag)
 }
 func (f *subFileSystem) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, error] {
 	if !fs.ValidPath(path) {
-		return ninep.FileInfoErrorIterator(ninep.ErrBadFormat)
+		return ninep.FileInfoErrorIterator(fs.ErrNotExist)
 	}
 	return f.Underlying.ListDir(ctx, f.pathFor(path))
 }
 func (f *subFileSystem) Stat(ctx context.Context, path string) (fs.FileInfo, error) {
 	if !fs.ValidPath(path) {
-		return nil, ninep.ErrBadFormat
+		return nil, fs.ErrNotExist
 	}
 	return f.Underlying.Stat(ctx, f.pathFor(path))
 }
 func (f *subFileSystem) WriteStat(ctx context.Context, path string, stat ninep.Stat) error {
 	if !fs.ValidPath(path) {
-		return ninep.ErrBadFormat
+		return fs.ErrNotExist
 	}
 	return f.Underlying.WriteStat(ctx, f.pathFor(path), stat)
 }
 func (f *subFileSystem) Delete(ctx context.Context, path string) error {
 	if !fs.ValidPath(path) {
-		return ninep.ErrBadFormat
+		return fs.ErrNotExist
 	}
 	return f.Underlying.Delete(ctx, f.pathFor(path))
 }

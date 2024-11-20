@@ -151,14 +151,14 @@ func acceptRversion(L *slog.Logger, rwc net.Conn, txn *cltTransaction, maxMsgSiz
 				slog.String("error", "expected Rversion from server"),
 			)
 		}
-		return 0, ErrBadFormat
+		return 0, ErrInvalidMessage
 	}
 
 	if !strings.HasPrefix(request.Version(), VERSION_9P) {
 		if L != nil {
 			L.Error("Tversion.response.failed.unsupported", slog.String("version", request.Version()))
 		}
-		return 0, ErrBadFormat
+		return 0, ErrInvalidMessage
 	}
 
 	size := request.MsgSize()
@@ -166,14 +166,14 @@ func acceptRversion(L *slog.Logger, rwc net.Conn, txn *cltTransaction, maxMsgSiz
 		if L != nil {
 			L.Error("Tversion.response.failed.msgSizeTooHigh", slog.Uint64("server", uint64(size)), slog.Uint64("client", uint64(maxMsgSize)))
 		}
-		return 0, ErrBadFormat
+		return 0, ErrInvalidMessage
 	}
 	maxMsgSize = request.MsgSize()
 	if minMsgSize > maxMsgSize {
 		if L != nil {
 			L.Error("Tversion.response.failed.msgSizeTooLow", slog.Uint64("server", uint64(size)), slog.Uint64("client", uint64(maxMsgSize)), slog.Uint64("min", uint64(minMsgSize)))
 		}
-		return 0, ErrBadFormat
+		return 0, ErrInvalidMessage
 	}
 
 	if L != nil {
