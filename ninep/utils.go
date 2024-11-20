@@ -14,7 +14,7 @@ import (
 )
 
 func CreateLogger(level string, prefix string, L *slog.Logger) *slog.Logger {
-	var minLevel slog.Level = slog.LevelError
+	var minLevel slog.Level
 	switch level {
 	case "debug":
 		minLevel = slog.LevelDebug
@@ -22,10 +22,10 @@ func CreateLogger(level string, prefix string, L *slog.Logger) *slog.Logger {
 		minLevel = slog.LevelInfo
 	case "warn":
 		minLevel = slog.LevelWarn
-	case "error":
+	case "error", "":
 		minLevel = slog.LevelError
 	default:
-		log.Fatalf("Invalid log level: %s", level)
+		log.Fatalf("Invalid log level: %q", level)
 	}
 
 	if L == nil {

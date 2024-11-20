@@ -236,7 +236,7 @@ func (h *defaultHandler) Connected(addr string) {
 // Invoked by the server when a client has been disconnected.
 func (h *defaultHandler) Disconnected(addr string) {
 	if h.Logger != nil {
-		h.Logger.Info("disconnect", slog.String("addr", addr))
+		h.Logger.DebugContext(context.Background(), "disconnect", slog.String("addr", addr))
 	}
 	h.st.Remove(addr)
 }
@@ -246,7 +246,7 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 	session := h.st.Lookup(w.RemoteAddr())
 	if session == nil {
 		if h.Logger != nil {
-			h.Logger.Error("no previous session for address", slog.String("addr", w.RemoteAddr()))
+			h.Logger.ErrorContext(ctx, "no previous session for address", slog.String("addr", w.RemoteAddr()))
 		}
 		return
 	}
@@ -258,14 +258,14 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 	case Tauth:
 		if h.Auth == nil {
 			if h.Logger != nil {
-				h.Logger.Error("Tattach: unsupported", slog.String("addr", w.RemoteAddr()))
+				h.Logger.ErrorContext(ctx, "Tattach: unsupported", slog.String("addr", w.RemoteAddr()))
 			}
 			w.Rerror(ErrUnsupported)
 		} else {
 			handle, err := h.Auth.Auth(ctx, w.RemoteAddr(), m.Uname(), m.Aname())
 			if err != nil {
 				if h.Logger != nil {
-					h.Logger.Warn("Tattach: reject auth request: authorizer error", slog.String("addr", w.RemoteAddr()), slog.String("error", err.Error()))
+					h.Logger.WarnContext(ctx, "Tattach: reject auth request: authorizer error", slog.String("addr", w.RemoteAddr()), slog.String("error", err.Error()))
 				}
 				w.Rerror(err)
 				return
@@ -284,7 +284,7 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 			qid := session.PutQid(fil.Name, fil.Mode.QidType(), NoQidVersion)
 
 			if h.Logger != nil {
-				h.Logger.Info("Tattach: offer auth file", slog.String("file", fil.Name))
+				h.Logger.DebugContext(ctx, "Tattach: offer auth file", slog.String("file", fil.Name))
 			}
 			w.Rauth(qid)
 		}
@@ -296,7 +296,7 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 				fil, found := session.FileForFid(m.Afid())
 				if !found {
 					if h.Logger != nil {
-						h.Logger.Error("Tattach: reject auth request", slog.String("addr", w.RemoteAddr()))
+						h.Logger.ErrorContext(ctx, "Tattach: reject auth request", slog.String("addr", w.RemoteAddr()))
 					}
 					w.Rerrorf("no authentication")
 					return
@@ -305,7 +305,7 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 				afid, ok := fil.H.(AuthFileHandle)
 				if !ok {
 					if h.Logger != nil {
-						h.Logger.Error("Tattach: invalid afid (not auth file)", slog.String("addr", w.RemoteAddr()))
+						h.Logger.ErrorContext(ctx, "Tattach: invalid afid (not auth file)", slog.String("addr", w.RemoteAddr()))
 					}
 					w.Rerrorf("unauthorized afid")
 					return
@@ -313,18 +313,18 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 
 				if !afid.Authorized(m.Uname(), m.Aname()) {
 					if h.Logger != nil {
-						h.Logger.Error("Tattach: invalid afid (not authorized yet)", slog.String("addr", w.RemoteAddr()))
+						h.Logger.ErrorContext(ctx, "Tattach: invalid afid (not authorized yet)", slog.String("addr", w.RemoteAddr()))
 					}
 					w.Rerrorf("unauthorized afid")
 					return
 				}
 
 				if h.Logger != nil {
-					h.Logger.Info("Tattach: authorized afid", slog.Uint64("afid", uint64(m.Afid())))
+					h.Logger.DebugContext(ctx, "Tattach: authorized afid", slog.Uint64("afid", uint64(m.Afid())))
 				}
 			} else {
 				if h.Logger != nil {
-					h.Logger.Error("Tattach: reject auth request", slog.String("addr", w.RemoteAddr()))
+					h.Logger.ErrorContext(ctx, "Tattach: reject auth request", slog.String("addr", w.RemoteAddr()))
 				}
 				w.Rerrorf("authentication required")
 				return
@@ -332,7 +332,7 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 		} else {
 			if m.Afid() != NO_FID {
 				if h.Logger != nil {
-					h.Logger.Error("Tattach: reject auth request", slog.String("addr", w.RemoteAddr()))
+					h.Logger.ErrorContext(ctx, "Tattach: reject auth request", slog.String("addr", w.RemoteAddr()))
 				}
 				w.Rerrorf("no authentication")
 				return
@@ -343,7 +343,9 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 
 		// associate fid to root
 		if h.Logger != nil {
-			h.Logger.Info("Tattach: associate fid to root", slog.String("addr", w.RemoteAddr()), slog.Uint64("fid", uint64(m.Fid())))
+			h.Logger.DebugContext(ctx, "Tattach: associate fid to root",
+				slog.String("addr", w.RemoteAddr()),
+				slog.Uint64("fid", uint64(m.Fid())))
 		}
 		session.PutFid(m.Fid(), serverFile{
 			Name: "/",
@@ -357,7 +359,9 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 		fil, ok := session.FileForFid(m.Fid())
 		if !ok {
 			if h.Logger != nil {
-				h.Logger.Error("Topen: unknown fid", slog.String("addr", w.RemoteAddr()), slog.Uint64("fid", uint64(m.Fid())))
+				h.Logger.ErrorContext(ctx, "Topen: unknown fid",
+					slog.String("addr", w.RemoteAddr()),
+					slog.Uint64("fid", uint64(m.Fid())))
 			}
 			w.Rerrorf("unknown fid %d", m.Fid())
 			return
@@ -367,7 +371,10 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 		info, err := h.Fs.Stat(ctx, fullPath)
 		if err != nil {
 			if h.Logger != nil {
-				h.Logger.Error("Topen: failed to call stat on %v", slog.String("addr", w.RemoteAddr()), slog.String("path", fullPath), slog.String("error", err.Error()))
+				h.Logger.ErrorContext(ctx, "Topen: failed to call stat on %v",
+					slog.String("addr", w.RemoteAddr()),
+					slog.String("path", fullPath),
+					slog.String("error", err.Error()))
 			}
 			w.Rerror(err)
 			return
@@ -379,13 +386,13 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 			//   "It is illegal to write a directory, truncate it, or attempt to remove it on close"
 			if m.Mode()&ORCLOSE != 0 {
 				if h.Logger != nil {
-					h.Logger.Warn("Topen: client error: requested dir with ORCLOSE", slog.String("addr", w.RemoteAddr()), slog.String("path", fullPath))
+					h.Logger.WarnContext(ctx, "Topen: client error: requested dir with ORCLOSE", slog.String("addr", w.RemoteAddr()), slog.String("path", fullPath))
 				}
 				w.Rerrorf("dir cannot have ORCLOSE set")
 				return
 			} else if m.Mode()&OTRUNC != 0 {
 				if h.Logger != nil {
-					h.Logger.Warn("Topen: client error: requested dir with OTRUNC", slog.String("addr", w.RemoteAddr()), slog.String("path", fullPath))
+					h.Logger.WarnContext(ctx, "Topen: client error: requested dir with OTRUNC", slog.String("addr", w.RemoteAddr()), slog.String("path", fullPath))
 				}
 				w.Rerrorf("dir cannot have OTRUNC set")
 				return
@@ -414,7 +421,10 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 			session.PutFileHandle(q, f)
 		}
 		if h.Logger != nil {
-			h.Logger.Info("Topen", slog.String("addr", w.RemoteAddr()), slog.String("path", fullPath), slog.String("qid", q.String()))
+			h.Logger.DebugContext(ctx, "Topen",
+				slog.String("addr", w.RemoteAddr()),
+				slog.String("path", fullPath),
+				slog.String("qid", q.String()))
 		}
 		session.PutFid(m.Fid(), fil)
 		w.Ropen(q, 0) // TODO: would be nice to support iounit
@@ -423,7 +433,9 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 		fil, ok := session.FileForFid(m.Fid())
 		if !ok {
 			if h.Logger != nil {
-				h.Logger.Error("unknown fid", slog.String("addr", w.RemoteAddr()), slog.Uint64("fid", uint64(m.Fid())))
+				h.Logger.ErrorContext(ctx, "unknown fid",
+					slog.String("addr", w.RemoteAddr()),
+					slog.Uint64("fid", uint64(m.Fid())))
 			}
 			w.Rerrorf("unknown fid %d", m.Fid())
 			return
@@ -431,7 +443,7 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 		if m.Fid() != m.NewFid() {
 			if _, found := session.FileForFid(m.NewFid()); found {
 				if h.Logger != nil {
-					h.Logger.Error("newfid already taken",
+					h.Logger.ErrorContext(ctx, "newfid already taken",
 						slog.Uint64("fid", uint64(m.Fid())),
 						slog.Uint64("newfid", uint64(m.NewFid())))
 				}
@@ -441,7 +453,7 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 		}
 		if fil.Mode&M_DIR == 0 && m.NumWname() > 0 {
 			if h.Logger != nil {
-				h.Logger.Error("walk in non-directory",
+				h.Logger.ErrorContext(ctx, "walk in non-directory",
 					slog.Uint64("fid", uint64(m.Fid())),
 					slog.String("name", fil.Name))
 			}
@@ -456,16 +468,16 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 			size := int(m.NumWname())
 			parts := make([]string, 0, size)
 			if h.Logger != nil {
-				h.Logger.Info("using WalkableFileSystem", slog.Int("size", size))
+				h.Logger.DebugContext(ctx, "using WalkableFileSystem", slog.Int("size", size))
 			}
 			for _, uncleanName := range m.Wnames() {
 				if h.Logger != nil {
-					h.Logger.Info("walk path", slog.String("path", uncleanName))
+					h.Logger.DebugContext(ctx, "walk path", slog.String("path", uncleanName))
 				}
 				name := cleanPath(uncleanName)
 				if strings.Contains(name, string(os.PathSeparator)) {
 					if h.Logger != nil {
-						h.Logger.Error("invalid walk element",
+						h.Logger.ErrorContext(ctx, "invalid walk element",
 							slog.Uint64("fid", uint64(m.Fid())),
 							slog.String("name", name))
 					}
@@ -477,12 +489,11 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 			infos, err := wfs.Walk(ctx, parts)
 			if err != nil {
 				if h.Logger != nil {
-					h.Logger.Error(
+					h.Logger.ErrorContext(ctx,
 						"invalid file system walk",
 						slog.Uint64("fid", uint64(m.Fid())),
 						slog.String("path", filepath.Join(parts...)),
-						slog.Any("error", err),
-					)
+						slog.Any("error", err))
 				}
 				w.Rerror(err)
 				return
@@ -506,14 +517,14 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 
 				if info != nil {
 					if h.Logger != nil {
-						h.Logger.Info("walk info",
+						h.Logger.DebugContext(ctx, "walk info",
 							slog.Uint64("fid", uint64(m.Fid())),
 							slog.String("path", path),
 							slog.Int("mode", int(info.Mode()&M_DIR>>24)))
 					}
 				} else {
 					if h.Logger != nil {
-						h.Logger.Error("implementation returned a nil info without an error; returning not found")
+						h.Logger.ErrorContext(ctx, "implementation returned a nil info without an error; returning not found")
 					}
 					w.Rerror(os.ErrNotExist)
 					return
@@ -532,7 +543,7 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 			}
 		} else {
 			if h.Logger != nil {
-				h.Logger.Info("not using WalkableFileSystem")
+				h.Logger.DebugContext(ctx, "not using WalkableFileSystem")
 			}
 			for _, uncleanName := range m.Wnames() {
 				name := cleanPath(uncleanName)
@@ -540,7 +551,7 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 					path = "/"
 				} else if strings.Contains(name, string(os.PathSeparator)) {
 					if h.Logger != nil {
-						h.Logger.Error("invalid walk element",
+						h.Logger.ErrorContext(ctx, "invalid walk element",
 							slog.Uint64("fid", uint64(m.Fid())),
 							slog.String("name", name))
 					}
@@ -553,21 +564,21 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 				info, err = h.Fs.Stat(ctx, path)
 				if err != nil {
 					if h.Logger != nil {
-						h.Logger.Error("failed to call stat on %v for %s", path, m.Fid())
+						h.Logger.ErrorContext(ctx, "failed to call stat on %v for %s", path, m.Fid())
 					}
 					break
 				}
 
 				if info != nil {
 					if h.Logger != nil {
-						h.Logger.Info("walk info",
+						h.Logger.DebugContext(ctx, "walk info",
 							slog.Uint64("fid", uint64(m.Fid())),
 							slog.String("path", path),
 							slog.Int("mode", int(info.Mode()&M_DIR>>24)))
 					}
 				} else {
 					if h.Logger != nil {
-						h.Logger.Error("implementation returned a nil info without an error; returning not found")
+						h.Logger.ErrorContext(ctx, "implementation returned a nil info without an error; returning not found")
 					}
 					w.Rerror(os.ErrNotExist)
 					return
@@ -598,7 +609,7 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 			session.PutFid(m.NewFid(), fil)
 		}
 		if h.Logger != nil {
-			h.Logger.Info("walk result",
+			h.Logger.DebugContext(ctx, "walk result",
 				slog.Uint64("fid", uint64(m.Fid())),
 				slog.Uint64("newfid", uint64(m.NewFid())),
 				slog.String("file", fil.Name),
@@ -607,7 +618,7 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 		}
 		if len(walkedQids) > 0 {
 			if h.Logger != nil {
-				h.Logger.Info("walk result",
+				h.Logger.DebugContext(ctx, "walk result",
 					slog.Uint64("fid", uint64(m.Fid())),
 					slog.Uint64("newfid", uint64(m.NewFid())),
 					slog.String("qid", walkedQids[len(walkedQids)-1].String()))
@@ -619,7 +630,9 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 		fil, ok := session.FileForFid(m.Fid())
 		if !ok {
 			if h.Logger != nil {
-				h.Logger.Error("unknown fid", slog.String("addr", w.RemoteAddr()), slog.Uint64("fid", uint64(m.Fid())))
+				h.Logger.ErrorContext(ctx, "unknown fid",
+					slog.String("addr", w.RemoteAddr()),
+					slog.Uint64("fid", uint64(m.Fid())))
 			}
 			w.Rerrorf("unknown fid %d", m.Fid())
 			return
@@ -639,7 +652,7 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 		fil.Mode = ModeFromFS(info.Mode())
 		session.PutFid(m.Fid(), fil)
 		if h.Logger != nil {
-			h.Logger.Info("stat result",
+			h.Logger.DebugContext(ctx, "stat result",
 				slog.Uint64("fid", uint64(m.Fid())),
 				slog.String("file", fil.Name),
 				slog.String("stat", stat.String()))
@@ -650,7 +663,9 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 		fil, ok := session.FileForFid(m.Fid())
 		if !ok {
 			if h.Logger != nil {
-				h.Logger.Error("unknown fid", slog.String("addr", w.RemoteAddr()), slog.Uint64("fid", uint64(m.Fid())))
+				h.Logger.ErrorContext(ctx, "unknown fid",
+					slog.String("addr", w.RemoteAddr()),
+					slog.Uint64("fid", uint64(m.Fid())))
 			}
 			w.Rerrorf("unknown fid %d", m.Fid())
 			return
@@ -658,7 +673,8 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 
 		if fil.Flag&3 != OREAD && fil.Flag&3 != ORDWR {
 			if h.Logger != nil {
-				h.Logger.Error("file opened with wrong flags", slog.Uint64("fid", uint64(m.Fid())))
+				h.Logger.ErrorContext(ctx, "file opened with wrong flags",
+					slog.Uint64("fid", uint64(m.Fid())))
 			}
 			w.Rerrorf("%s wasn't opened with read flag set", m.Fid())
 			return
@@ -666,7 +682,7 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 
 		if fil.H == nil {
 			if h.Logger != nil {
-				h.Logger.Error("file not opened",
+				h.Logger.ErrorContext(ctx, "file not opened",
 					slog.Uint64("fid", uint64(m.Fid())))
 			}
 			w.Rerrorf("%s wasn't opened", m.Fid())
@@ -688,22 +704,26 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 			if err == io.EOF || err == nil {
 				w.Rread(0)
 				if h.Logger != nil {
-					h.Logger.Info("read EOF", slog.Uint64("fid", uint64(m.Fid())))
+					h.Logger.DebugContext(ctx, "read EOF", slog.Uint64("fid", uint64(m.Fid())))
 				}
 				return
 			}
 			if h.Logger != nil {
-				h.Logger.Error("error", slog.Uint64("fid", uint64(m.Fid())), slog.String("error", err.Error()))
+				h.Logger.ErrorContext(ctx, "error",
+					slog.Uint64("fid", uint64(m.Fid())),
+					slog.String("error", err.Error()))
 			}
 			w.Rerror(err)
 			return
 		} else if err != nil && err != io.EOF {
 			if h.Logger != nil {
-				h.Logger.Error("warn", slog.Uint64("fid", uint64(m.Fid())), slog.String("error", err.Error()))
+				h.Logger.ErrorContext(ctx, "warn",
+					slog.Uint64("fid", uint64(m.Fid())),
+					slog.String("error", err.Error()))
 			}
 		}
 		if h.Logger != nil {
-			h.Logger.Info("read result",
+			h.Logger.DebugContext(ctx, "read result",
 				slog.Uint64("fid", uint64(m.Fid())),
 				slog.Uint64("offset", m.Offset()),
 				slog.Int("bytes", n))
@@ -730,7 +750,9 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 			}
 			if fil.Flag&ORCLOSE != 0 {
 				if h.Logger != nil {
-					h.Logger.Info("deleting", slog.Uint64("fid", uint64(m.Fid())), slog.String("file", fil.Name))
+					h.Logger.DebugContext(ctx, "deleting",
+						slog.Uint64("fid", uint64(m.Fid())),
+						slog.String("file", fil.Name))
 				}
 				if fsd, ok := h.Fs.(DeleteWithModeFileSystem); ok {
 					fsd.DeleteWithMode(ctx, fil.Name, fil.Mode)
@@ -742,7 +764,9 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 			session.MayDeleteQid(fil.Name) // not ideal, since there may be other active references! but this is better then leaking memory?
 			session.DeleteFid(m.Fid())
 			if h.Logger != nil {
-				h.Logger.Info("Tclunk", slog.Uint64("fid", uint64(m.Fid())), slog.String("file", fil.Name))
+				h.Logger.DebugContext(ctx, "Tclunk",
+					slog.Uint64("fid", uint64(m.Fid())),
+					slog.String("file", fil.Name))
 			}
 			w.Rclunk()
 		} else {
@@ -753,7 +777,9 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 		fil, ok := session.FileForFid(m.Fid())
 		if ok {
 			if h.Logger != nil {
-				h.Logger.Info("Tremove", slog.Uint64("fid", uint64(m.Fid())), slog.String("file", fil.Name))
+				h.Logger.DebugContext(ctx, "Tremove",
+					slog.Uint64("fid", uint64(m.Fid())),
+					slog.String("file", fil.Name))
 			}
 			err := Delete(ctx, h.Fs, fil.Name, fil.Mode)
 			session.DeleteFid(m.Fid())
@@ -890,7 +916,7 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 
 		data := m.Data()
 		if h.Logger != nil {
-			h.Logger.Info("write request",
+			h.Logger.DebugContext(ctx, "write request",
 				slog.Uint64("fid", uint64(m.Fid())),
 				slog.Uint64("offset", m.Offset()),
 				slog.Int("data_len", len(data)))
@@ -900,7 +926,9 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 		n, err := fil.H.WriteAt(data, int64(m.Offset()))
 		if n == 0 && err != nil {
 			if h.Logger != nil {
-				h.Logger.Error("error", slog.Uint64("fid", uint64(m.Fid())), slog.String("error", err.Error()))
+				h.Logger.ErrorContext(ctx, "error",
+					slog.Uint64("fid", uint64(m.Fid())),
+					slog.String("error", err.Error()))
 			}
 			w.Rerror(err)
 			return
@@ -908,9 +936,11 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 		session.TouchQid(fil.Name, fil.Mode.QidType())
 		if h.Logger != nil {
 			if err != nil {
-				h.Logger.Error("warn", slog.Uint64("fid", uint64(m.Fid())), slog.String("error", err.Error()))
+				h.Logger.ErrorContext(ctx, "warn",
+					slog.Uint64("fid", uint64(m.Fid())),
+					slog.String("error", err.Error()))
 			} else {
-				h.Logger.Info("write result",
+				h.Logger.DebugContext(ctx, "write result",
 					slog.Uint64("fid", uint64(m.Fid())),
 					slog.Uint64("offset", m.Offset()),
 					slog.Int("bytes", n))
@@ -922,7 +952,9 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 		fil, ok := session.FileForFid(m.Fid())
 		if !ok {
 			if h.Logger != nil {
-				h.Logger.Error("unknown fid", slog.String("addr", w.RemoteAddr()), slog.Uint64("fid", uint64(m.Fid())))
+				h.Logger.ErrorContext(ctx, "unknown fid",
+					slog.String("addr", w.RemoteAddr()),
+					slog.Uint64("fid", uint64(m.Fid())))
 			}
 			w.Rerrorf("unknown fid %d", m.Fid())
 			return
@@ -964,7 +996,7 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 
 			if !stat.MuidNoTouch() {
 				if h.Logger != nil {
-					h.Logger.Error("client failed: deny attempt to change Muid")
+					h.Logger.ErrorContext(ctx, "client failed: deny attempt to change Muid")
 				}
 				w.Rerrorf("wstat: attempted to change Muid")
 				return
@@ -972,7 +1004,9 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 
 			if !stat.DevNoTouch() {
 				if h.Logger != nil {
-					h.Logger.Error("client failed: deny attempt to change dev", slog.Uint64("dev", uint64(stat.Dev())), slog.Uint64("expected", uint64(NoTouchU32)))
+					h.Logger.ErrorContext(ctx, "client failed: deny attempt to change dev",
+						slog.Uint64("dev", uint64(stat.Dev())),
+						slog.Uint64("expected", uint64(NoTouchU32)))
 				}
 				w.Rerrorf("wstat: attempted to change dev")
 				return
@@ -980,7 +1014,8 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 
 			if !stat.TypeNoTouch() {
 				if h.Logger != nil {
-					h.Logger.Error("client failed: deny attempt to change type", slog.Uint64("type", uint64(stat.Type())))
+					h.Logger.ErrorContext(ctx, "client failed: deny attempt to change type",
+						slog.Uint64("type", uint64(stat.Type())))
 				}
 				w.Rerrorf("wstat: attempted to change type")
 				return
@@ -988,7 +1023,7 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 
 			if !stat.Qid().IsNoTouch() {
 				if h.Logger != nil {
-					h.Logger.Error("client failed: deny attempt to change qid")
+					h.Logger.ErrorContext(ctx, "client failed: deny attempt to change qid")
 				}
 				w.Rerrorf("wstat: attempted to change qid")
 				return
@@ -996,7 +1031,7 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 
 			if !stat.ModeNoTouch() && int(stat.Mode()&M_DIR>>24) != int(qid.Type()&QT_DIR) {
 				if h.Logger != nil {
-					h.Logger.Error("client failed: deny attempt to change M_DIR bit on Mode")
+					h.Logger.ErrorContext(ctx, "client failed: deny attempt to change M_DIR bit on Mode")
 				}
 				w.Rerrorf("wstat: attempted to change Mode to M_DIR bit")
 				return
@@ -1005,7 +1040,7 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 			err := h.Fs.WriteStat(ctx, fullPath, stat)
 			if err != nil {
 				if h.Logger != nil {
-					h.Logger.Error("failed for %v: %s", fullPath, err)
+					h.Logger.ErrorContext(ctx, "failed for %v: %s", fullPath, err)
 				}
 				w.Rerror(err)
 				return
@@ -1020,7 +1055,9 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 		// })
 		// qid := session.PutQid(fil.Name, ModeFromOS(m.Mode()).QidType())
 		if h.Logger != nil {
-			h.Logger.Info("Twstat ->Rwstat", slog.Uint64("fid", uint64(m.Fid())), slog.String("file", fil.Name))
+			h.Logger.DebugContext(ctx, "Twstat ->Rwstat",
+				slog.Uint64("fid", uint64(m.Fid())),
+				slog.String("file", fil.Name))
 		}
 		w.Rwstat()
 
