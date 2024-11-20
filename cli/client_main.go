@@ -14,6 +14,7 @@ import (
 	"github.com/jeffh/cfs/ninep"
 )
 
+// ClientConfig provides configuration for an easy cli client
 type ClientConfig struct {
 	LogLevel           string
 	PrintTraceMessages bool
@@ -140,7 +141,7 @@ func (c *ClientConfig) CreateClient(addr string) (ninep.Client, error) {
 	}
 
 	if err = clt.Connect(addr); err != nil {
-		return nil, fmt.Errorf("Failed to connect to 9p server: %s\n", err)
+		return nil, fmt.Errorf("failed to connect to 9p server: %w", err)
 	}
 	return &clt, nil
 }
@@ -153,7 +154,7 @@ func (c *ClientConfig) CreateFs(addr string) (ninep.Client, *ninep.FileSystemPro
 	fs, err := client.Fs()
 	if err != nil {
 		client.Close()
-		return nil, nil, fmt.Errorf("Failed to attach to 9p server: %s\n", err)
+		return nil, nil, fmt.Errorf("failed to attach to 9p server: %w", err)
 	}
 	return client, fs, nil
 }

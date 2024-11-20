@@ -2,6 +2,7 @@ package cexec
 
 import "io"
 
+// Cmd represents a command to execute
 type Cmd struct {
 	Cmd    string
 	Args   []string
@@ -22,19 +23,27 @@ type Cmd struct {
 	State *ProcessState
 }
 
+// ProcessState represents the state of a completed process
 type ProcessState struct {
 	Pid      int
 	ExitCode int
 	Exited   bool
 }
 
+// Success returns true if the process exited and the exit code was 0
 func (s *ProcessState) Success() bool { return s.Exited && s.ExitCode == 0 }
 
+// Executor is an interface for executing a command
 type Executor interface {
 	Run(c *Cmd) error
 	Name() string
 }
 
-func ForkExecutor() Executor           { return &forkExecutor{} }
-func ChrootExecutor() Executor         { return &chrootExecutor{} }
+// ForkExecutor returns an Executor that uses the traditional Unix exec
+func ForkExecutor() Executor { return &forkExecutor{} }
+
+// ChrootExecutor returns an Executor that chroots to the specified directory
+func ChrootExecutor() Executor { return &chrootExecutor{} }
+
+// LinuxContainerExecutor returns an Executor that runs a command in a container
 func LinuxContainerExecutor() Executor { return &linuxContainerExecutor{} }

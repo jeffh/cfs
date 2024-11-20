@@ -1,14 +1,13 @@
 package ninep
 
 import (
-	"io/ioutil"
 	"os"
 	"testing"
 	"time"
 )
 
 func TestStat(t *testing.T) {
-	f, err := ioutil.TempFile("", "")
+	f, err := os.CreateTemp("", "")
 	threshold := time.Now().Add(-time.Second)
 	if err != nil {
 		t.Error(err.Error())

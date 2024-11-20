@@ -14,7 +14,7 @@ func makeCmd(c *Cmd) *exec.Cmd {
 	return cmd
 }
 
-// Traditional Unix exec of a command
+// ForkExec is the traditional Unix exec of a command
 func ForkExec(c *Cmd) error {
 	cmd := makeCmd(c)
 	err := cmd.Run()

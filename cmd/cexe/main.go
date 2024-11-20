@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"io/ioutil"
 	"log"
 	"net"
 	"os"
@@ -242,7 +241,7 @@ func runRequest() {
 		if err != nil {
 			log.Fatalf("Failed to open binary to upload: %s", err)
 		}
-		data, err := ioutil.ReadAll(f)
+		data, err := io.ReadAll(f)
 		f.Close()
 		if err != nil {
 			log.Fatalf("Failed to read binary to upload: %s", err)
@@ -539,7 +538,7 @@ func handleConnection(rwc net.Conn, executor cexec.Executor) {
 	}
 
 	if req.ProgData != nil {
-		f, err := ioutil.TempFile("", "cexe-")
+		f, err := os.CreateTemp("", "cexe-")
 		name := f.Name()
 		if err != nil {
 			log.Printf("Failed to create temp file for %s: %s", rwc.RemoteAddr(), err)

@@ -6,7 +6,7 @@ import (
 	"crypto/sha512"
 	"crypto/x509"
 	"io"
-	"io/ioutil"
+	"os"
 
 	"github.com/jeffh/cfs/ninep"
 	"github.com/secure-io/sio-go"
@@ -17,11 +17,14 @@ const PrivateKeyBits = 4096
 
 func GeneratePrivateKey(path string, bits int) (*rsa.PrivateKey, error) {
 	privKey, err := rsa.GenerateKey(rand.Reader, bits)
+	if err != nil {
+		return nil, err
+	}
 	buf, err := x509.MarshalPKCS8PrivateKey(privKey)
 	if err != nil {
 		return nil, err
 	}
-	err = ioutil.WriteFile(path, buf, 0600)
+	err = os.WriteFile(path, buf, 0600)
 	if err != nil {
 		return nil, err
 	}
@@ -29,7 +32,7 @@ func GeneratePrivateKey(path string, bits int) (*rsa.PrivateKey, error) {
 }
 
 func LoadPrivateKey(path string) (*rsa.PrivateKey, error) {
-	buf, err := ioutil.ReadFile(path)
+	buf, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}

@@ -5,7 +5,7 @@ package procfs
 
 import (
 	"fmt"
-	"io/ioutil"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -71,7 +71,7 @@ func parseNet(buf []byte, kind string, netStates []netState) ([]netState, error)
 
 func pidFds(p Pid) ([]Fd, error) {
 	path := fmt.Sprintf("/proc/%d/fd", p)
-	infos, err := ioutil.ReadDir(path)
+	infos, err := os.ReadDir(path)
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +92,7 @@ func pidFds(p Pid) ([]Fd, error) {
 			if err != nil {
 				return nil, err
 			}
-			buf, err := ioutil.ReadAll(f)
+			buf, err := io.ReadAll(f)
 			f.Close()
 			if err != nil {
 				return nil, err
@@ -168,7 +168,7 @@ func pidEnv(p Pid) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	buf, err := ioutil.ReadAll(f)
+	buf, err := io.ReadAll(f)
 	f.Close()
 	if err != nil {
 		return nil, err
@@ -199,7 +199,7 @@ func pidArgs(p Pid) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	buf, err := ioutil.ReadAll(f)
+	buf, err := io.ReadAll(f)
 	f.Close()
 	if err != nil {
 		return nil, err
@@ -232,7 +232,7 @@ func pidInfo(p Pid) (ProcInfo, error) {
 	if err != nil {
 		return pi, err
 	}
-	buf, err := ioutil.ReadAll(f)
+	buf, err := io.ReadAll(f)
 	f.Close()
 	if err != nil {
 		return pi, err

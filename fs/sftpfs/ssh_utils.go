@@ -2,7 +2,6 @@ package sftpfs
 
 import (
 	"fmt"
-	"io/ioutil"
 	"log"
 	"net"
 	"os"
@@ -21,7 +20,7 @@ func publicKeyFile(file string) ssh.AuthMethod {
 		file = filepath.Join(usr.HomeDir, file[2:])
 	}
 
-	buffer, err := ioutil.ReadFile(file)
+	buffer, err := os.ReadFile(file)
 	if err != nil {
 		return nil
 	}

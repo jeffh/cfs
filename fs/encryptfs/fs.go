@@ -7,8 +7,8 @@ import (
 	"crypto/rsa"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
-	"io/ioutil"
 	"iter"
 	"os"
 	"path/filepath"
@@ -181,38 +181,38 @@ func (f *EncryptedFileSystem) OpenFile(ctx context.Context, path string, flag ni
 	if info.Size() == 0 {
 		key, err = generateChachaKey()
 		if err != nil {
-			return nil, fmt.Errorf("Failed to generate key: %w", err)
+			return nil, fmt.Errorf("failed to generate key: %w", err)
 		}
 		stream, err = sio.XChaCha20Poly1305.Stream(key)
 		if err != nil {
-			return nil, fmt.Errorf("Failed to open encrypted stream: %w", err)
+			return nil, fmt.Errorf("failed to open encrypted stream: %w", err)
 		}
 	} else {
-		cipher, err := ioutil.ReadAll(ninep.Reader(keyFile))
+		cipher, err := io.ReadAll(ninep.Reader(keyFile))
 		if err != nil {
-			return nil, fmt.Errorf("Failed to read encrypted cipher: %w", err)
+			return nil, fmt.Errorf("failed to read encrypted cipher: %w", err)
 		}
 
 		plaintext, err := PrivateKeyDecrypt(f.PrivKey, cipher)
 		if err != nil {
-			return nil, fmt.Errorf("Failed to write encrypted key: %w", err)
+			return nil, fmt.Errorf("failed to write encrypted key: %w", err)
 		}
 
 		// sio reserved 4 bits of the nonce for its use
 		expectedSize := 1 + chacha20poly1305.KeySize + chacha20poly1305.NonceSizeX - 4
 		if len(plaintext) < expectedSize {
-			return nil, fmt.Errorf("Unexpected key file size: %v < %v (actual vs expected)", len(plaintext), expectedSize)
+			return nil, fmt.Errorf("unexpected key file size: %v < %v (actual vs expected)", len(plaintext), expectedSize)
 		}
 
 		if plaintext[0] != '1' {
-			return nil, fmt.Errorf("Unexpected key file version: %v != 1", plaintext[0])
+			return nil, fmt.Errorf("unexpected key file version: %v != 1", plaintext[0])
 		}
 
 		key = plaintext[1 : 1+chacha20poly1305.KeySize]
 		nonce = plaintext[1+chacha20poly1305.KeySize:]
 		stream, err = sio.XChaCha20Poly1305.Stream(key)
 		if err != nil {
-			return nil, fmt.Errorf("Failed to open decryption stream: %w", err)
+			return nil, fmt.Errorf("failed to open decryption stream: %w", err)
 		}
 	}
 

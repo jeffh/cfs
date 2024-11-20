@@ -3,7 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"os"
 
 	"github.com/jeffh/cfs/cli"
@@ -25,7 +24,7 @@ func main() {
 		Description: "Provides a 9p file system that exposes a local directory. Defaults to temp directory",
 	}
 
-	dir, err := ioutil.TempDir(root, pattern)
+	dir, err := os.MkdirTemp(root, pattern)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create temp directory: %s", err)
 	}

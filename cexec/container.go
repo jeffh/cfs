@@ -14,7 +14,7 @@ func (e *linuxContainerExecutor) Run(c *Cmd) error {
 
 ////////////////////////////////////////////////////////
 
-// Runs exec, but chroots to Dir
+// ChrootExec runs exec, but chroots to Dir
 // Supports Cmd.Root
 func ChrootExec(c *Cmd) error {
 	cmd := makeCmd(c)

@@ -2,7 +2,7 @@ package cli
 
 import (
 	"flag"
-	"io/ioutil"
+	"io"
 	"os"
 
 	"github.com/google/shlex"
@@ -42,7 +42,7 @@ func (f *StdFlags) ReadFileConfig(filename string) error {
 	}
 	defer h.Close()
 
-	b, err := ioutil.ReadAll(h)
+	b, err := io.ReadAll(h)
 	if err != nil {
 		return err
 	}
