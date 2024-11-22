@@ -96,7 +96,7 @@ func (c *BasicClient) Close() error {
 	return c.transport().Disconnect()
 }
 
-func (c *BasicClient) asError(r Rerror) error { return r.Error() }
+func (c *BasicClient) asError(r Rerror) error { return r.ToError() }
 
 func (c *BasicClient) Auth(afid Fid, user, mnt string) (Qid, error) {
 	if c.Logger != nil {
@@ -199,7 +199,7 @@ func (c *BasicClient) Walk(f, newF Fid, path []string) ([]Qid, error) {
 	msg, err := t.Request(txn)
 	if err != nil {
 		if c.Logger != nil {
-			c.Logger.Error("Twalk.request.failed", slog.String("error", err.Error()))
+			c.Logger.Warn("Twalk.request.failed", slog.String("error", err.Error()))
 		}
 		return nil, err
 	}
@@ -372,7 +372,7 @@ func (c *BasicClient) Clunk(f Fid) error {
 	msg, err := t.Request(txn)
 	if err != nil {
 		if c.Logger != nil {
-			c.Logger.Error("Tclunk.request.failed", slog.Uint64("f", uint64(f)), slog.String("error", err.Error()))
+			c.Logger.Warn("Tclunk.request.failed", slog.Uint64("f", uint64(f)), slog.String("error", err.Error()))
 		}
 		return err
 	}

@@ -60,7 +60,11 @@ func (t *cltTransaction) sendAndReceive(rw net.Conn) (Message, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to read reply to %s: %w", t.req.requestType(), err)
 	}
-	return t.res.Reply(), nil
+	msg := t.res.Reply()
+	if rerr, ok := msg.(Rerror); ok {
+		return msg, rerr.ToError()
+	}
+	return msg, nil
 }
 
 type cltChResponse struct {

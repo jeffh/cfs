@@ -375,6 +375,22 @@ func (r *handleReaderWriter) Read(p []byte) (int, error) {
 	return n, err
 }
 
+func (r *handleReaderWriter) Seek(offset int64, whence int) (int64, error) {
+	switch whence {
+	case io.SeekStart:
+		r.Offset = offset
+	case io.SeekCurrent:
+		r.Offset += offset
+	case io.SeekEnd:
+		size, err := io.Copy(io.Discard, Reader(r.h))
+		if err != nil {
+			return 0, err
+		}
+		r.Offset = size - offset
+	}
+	return r.Offset, nil
+}
+
 func (r *handleReaderWriter) Write(p []byte) (int, error) {
 	n, err := r.h.WriteAt(p, r.Offset)
 	r.Offset += int64(n)
@@ -388,10 +404,11 @@ func ReaderStartingAt(h FileHandle, start int64) io.Reader { return &handleReade
 func WriterStartingAt(h FileHandle, start int64) io.Writer { return &handleReaderWriter{h, start} }
 
 // Returns an io.Reader interface around a FileHandle, starting at the beginning of the file
-func Reader(h FileHandle) io.Reader { return &handleReaderWriter{h, 0} }
+func Reader(h FileHandle) io.ReadSeeker { return &handleReaderWriter{h, 0} }
 
-// Returns an io.Writer interface around a FileHandle, starting at the beginning of the file
-func Writer(h FileHandle) io.Writer { return &handleReaderWriter{h, 0} }
+// Returns an io.Writer interface around a FileHandle, starting at the beginning of the file.
+// Note: the seeker requires the file handle to be Readable
+func Writer(h FileHandle) io.WriteSeeker { return &handleReaderWriter{h, 0} }
 
 /////////////////////////////////////////////////
 
@@ -557,7 +574,11 @@ func (h *ReadOnlyMemoryFileHandle) ReadAt(p []byte, off int64) (n int, err error
 	if off >= int64(len(h.Contents)) || off < 0 {
 		return 0, io.EOF
 	}
-	return copy(p, h.Contents[off:]), nil
+	n = copy(p, h.Contents[off:])
+	if n < len(p) {
+		err = io.EOF
+	}
+	return
 }
 func (h *ReadOnlyMemoryFileHandle) WriteAt(p []byte, off int64) (n int, err error) {
 	return 0, ErrUnsupported

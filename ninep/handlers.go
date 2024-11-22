@@ -374,7 +374,7 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 		info, err := h.Fs.Stat(ctx, fullPath)
 		if err != nil {
 			if h.Logger != nil {
-				h.Logger.ErrorContext(ctx, "Topen: failed to call stat on %v",
+				h.Logger.ErrorContext(ctx, "Topen: failed to call stat",
 					slog.String("addr", w.RemoteAddr()),
 					slog.String("path", fullPath),
 					slog.String("error", err.Error()))
@@ -567,7 +567,7 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 				info, err = h.Fs.Stat(ctx, path)
 				if err != nil {
 					if h.Logger != nil {
-						h.Logger.ErrorContext(ctx, "failed to call stat on %v for %s", path, m.Fid())
+						h.Logger.ErrorContext(ctx, "failed to call stat", "path", path, "fid", m.Fid(), "err", err)
 					}
 					break
 				}
@@ -639,7 +639,7 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 		info, err := h.Fs.Stat(ctx, fullPath)
 		if err != nil {
 			if h.Logger != nil {
-				h.Logger.Error("failed to call stat on %v: %s", fullPath, err)
+				h.Logger.Error("failed to call stat", "fullPath", fullPath, "err", err)
 			}
 			w.Rerror(err)
 			return

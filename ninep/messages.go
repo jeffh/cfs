@@ -16,6 +16,7 @@ package ninep
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io/fs"
 	"math"
@@ -330,9 +331,10 @@ func (m Mode) ToOsFlag(o OpenMode) int {
 	if m&M_EXCL != 0 {
 		flag |= os.O_EXCL
 	}
-	if m&M_APPEND != 0 {
-		flag |= os.O_APPEND
-	}
+	// M_APPEND is to for creating files that can only be appended to (no overwriting)
+	// if m&M_APPEND != 0 {
+	// 	flag |= os.O_APPEND
+	// }
 	return flag
 }
 
@@ -341,9 +343,10 @@ func (m Mode) ToFsMode() fs.FileMode {
 	if m&M_DIR != 0 {
 		mode = fs.ModeDir
 	}
-	if m&M_APPEND != 0 {
-		mode |= fs.ModeAppend
-	}
+	// M_APPEND is to for creating files that can only be appended to (no overwriting)
+	// if m&M_APPEND != 0 {
+	// 	mode |= fs.ModeAppend
+	// }
 	if m&M_EXCL != 0 {
 		mode |= fs.ModeExclusive
 	}
@@ -664,6 +667,28 @@ func (s Stat) fill(name, uid, gid, muid string) {
 func StatFromFileInfo(info fs.FileInfo) Stat {
 	if st, ok := info.Sys().(Stat); ok {
 		return st
+	}
+	qt := QidType(0)
+	m := info.Mode()
+	if m&fs.ModeDir != 0 {
+		qt |= QT_DIR
+	}
+	if m&fs.ModeExclusive != 0 {
+		qt |= QT_EXCL
+	}
+	if m&fs.ModeSymlink != 0 {
+		qt |= QT_SYMLINK
+	}
+	if m&fs.ModeTemporary != 0 {
+		qt |= QT_TMP
+	}
+	qid := NewQid()
+	qid.Fill(qt, 0, 0)
+	return fileInfoToStat(qid, info)
+}
+func StatFromFileInfoClone(info fs.FileInfo) Stat {
+	if st, ok := info.Sys().(Stat); ok {
+		return st.Clone()
 	}
 	qt := QidType(0)
 	m := info.Mode()
@@ -1019,27 +1044,17 @@ func (r Rerror) ename() msgString   { return msgString(r[msgOffset:]) }
 func (r Rerror) EnameBytes() []byte { return r.ename().Bytes() }
 func (r Rerror) Ename() string      { return r.ename().String() }
 
-func (r Rerror) Error() error {
-	var underlyingErr error
+func (r Rerror) ToError() error {
 	msg := r.Ename()
 	// we want to preserve equality of errors to native os-styled errors
 	for _, e := range mappedErrors {
 		if msg == e.Error() {
-			underlyingErr = e
-			break
+			return e
 		}
 	}
 	// else
-	return &RerrorType{msg, underlyingErr}
+	return errors.New(msg)
 }
-
-type RerrorType struct {
-	msg string
-	e   error
-}
-
-func (e RerrorType) Error() string { return e.msg }
-func (e RerrorType) Unwrap() error { return e.e }
 
 /////////////////////////////////////
 // size[4] Tclunk tag[2] fid[4]

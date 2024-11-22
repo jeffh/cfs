@@ -16,9 +16,11 @@ import (
 func main() {
 	var (
 		mode           int
+		append         bool
 		readAfterWrite bool
 	)
 	flag.IntVar(&mode, "mode", 0644, "The mode to set the file that gets created")
+	flag.BoolVar(&append, "append", false, "Append to the file instead of overwriting it")
 	flag.BoolVar(&readAfterWrite, "res", false, "Read the file after writing it (for device files)")
 
 	flag.Usage = func() {
@@ -40,10 +42,12 @@ func main() {
 		path := mnt.Prefix
 		_, err = mnt.FS.Stat(ctx, path)
 		flags := ninep.OpenMode(ninep.OWRITE)
-		if readAfterWrite {
+		if readAfterWrite || append {
 			flags = ninep.OpenMode(ninep.ORDWR)
 		}
-		flags |= ninep.OTRUNC
+		if !append {
+			flags |= ninep.OTRUNC
+		}
 
 		if os.IsNotExist(err) {
 			h, err = mnt.FS.CreateFile(ctx, path, flags, ninep.Mode(mode))
@@ -56,6 +60,12 @@ func main() {
 		defer h.Close()
 
 		wtr := ninep.Writer(h)
+		if append {
+			_, err := wtr.Seek(0, io.SeekEnd)
+			if err != nil {
+				return err
+			}
+		}
 		_, err = io.Copy(wtr, os.Stdin)
 		if err != nil && !errors.Is(err, io.EOF) {
 			return err
