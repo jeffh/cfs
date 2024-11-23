@@ -17,6 +17,13 @@ func main() {
 	flag.StringVar(&root, "dir", "", "The base where the temp dir is located")
 	flag.StringVar(&pattern, "pattern", "tmpfs-*", "The pattern which to create the temp directory name")
 
+	flag.Usage = func() {
+		out := flag.CommandLine.Output()
+		fmt.Fprintf(out, "Usage: %s [options]\n", os.Args[0])
+		fmt.Fprintf(out, "Serves a temporary directory over 9p.\n")
+		flag.PrintDefaults()
+	}
+
 	dir, err := os.MkdirTemp(root, pattern)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create temp directory: %s", err)
@@ -28,7 +35,7 @@ func main() {
 	}()
 
 	cli.ServiceMain(func() ninep.FileSystem {
-		fmt.Printf("Serving: %v\n", dir)
+		fmt.Printf("Serving: %s\n", dir)
 		return fs.Dir(dir)
 	})
 }
