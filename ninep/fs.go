@@ -387,6 +387,8 @@ func (r *handleReaderWriter) Seek(offset int64, whence int) (int64, error) {
 			return 0, err
 		}
 		r.Offset = size - offset
+	default:
+		return 0, fmt.Errorf("unsupported whence: %d", whence)
 	}
 	return r.Offset, nil
 }
