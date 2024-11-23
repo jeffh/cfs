@@ -5,8 +5,8 @@ Cloud File System.
 A cloud-abstraction for a file system. Provides a unified way of operating on
 files in the cloud.
 
-All programs talk to each over using the [9p protocol][9p2000]. The goal is the provide
-cloud infrastructure in a form that just looks like a collection of file
+All programs talk to each over using the [9p protocol][9p2000]. The goal is the
+provide cloud infrastructure in a form that just looks like a collection of file
 servers.
 
 [9p2000]: https://man.cat-v.org/plan_9/5/
@@ -32,8 +32,8 @@ unclear implementation details for each file server:
   the file server is utilizing?
 
 Plan 9 addressed these issues by having the Kernel proxy requests to servers.
-This allowed a centralized place to manage concurrent access and retries - akin to
-Plan 9 Port's 9pserve.
+This allowed a centralized place to manage concurrent access and retries - akin
+to Plan 9 Port's 9pserve.
 
 A better approach would probably be to simplify the protocol to an object store
 where:
@@ -45,8 +45,8 @@ where:
 - Moves away from disk-specific details (eg - block sizes, etc.)
 - Requires less state on protocol (which allows better scalability)
 
-The original object store (AWS S3), did make the cardinal sin of making keys look
-directory-like but not actual be directories.
+The original object store (AWS S3), did make the cardinal sin of making keys
+look directory-like but not actual be directories.
 
 Directory management can either be built on-top of a key-value / object store
 and can scale separately. But that is out of the scope of this project. This is
@@ -106,13 +106,15 @@ file server.
 
 # Protocol Limitations
 
- - Notification of file changes. Polling is the only way. (Jokingly,) you could
-   provide this as a file!
- - Errors are just text strings with no structure. This makes it harder for
-   programs to know how to handle special errors. In *cfs*' case, errors are
-   mapped back to `fs.Err*` or `os.Err*` errors when possible.
- - Unix modes feel like weird specifics to file systems as part of the
-   protocol. Permissions are bespoke to the file server.
+- Notification of file changes. Polling is the only way. (Jokingly,) you could
+  provide this as a file!
+- Errors are just text strings with no structure. This makes it harder for
+  programs to know how to handle special errors. In _cfs_' case, errors are
+  mapped back to `fs.Err*` or `os.Err*` errors when possible.
+- Unix modes feel like weird specifics to file systems as part of the protocol.
+  Permissions are bespoke to the file server.
+- Some identically named things are semantically different (eg - APPEND). This
+  makes a it lossy to translate between 9p and fs.FileMode.
 
 ## Musing on Improvements
 
@@ -193,5 +195,6 @@ type Storage interface {
 ```
 
 This interface does have a limitation of large files having to fit in memory
-unless some block-based structure is done. Using a block-structure (which
-upspin does do as I understand), would restrict what storage systems can do.
+unless some block-based structure is done. Using a block-structure (which upspin
+does do as I understand), would restrict what storage systems can do. In
+upspin's case, file storage is all that's wanted and no special files.
