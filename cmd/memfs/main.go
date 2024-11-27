@@ -4,6 +4,7 @@ import (
 	"github.com/jeffh/cfs/cli"
 	"github.com/jeffh/cfs/fs"
 	"github.com/jeffh/cfs/ninep"
+	_ "go.uber.org/automaxprocs"
 )
 
 func main() {

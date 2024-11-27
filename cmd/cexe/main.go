@@ -17,6 +17,7 @@ import (
 	"github.com/jeffh/cfs/cexec"
 	"github.com/jeffh/cfs/fs/sftpfs"
 	"github.com/pkg/sftp"
+	_ "go.uber.org/automaxprocs"
 	"golang.org/x/crypto/ssh"
 )
 

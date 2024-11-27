@@ -7,6 +7,7 @@ import (
 
 	"github.com/jeffh/cfs/cli"
 	"github.com/jeffh/cfs/fs/procfs"
+	_ "go.uber.org/automaxprocs"
 )
 
 func main() {

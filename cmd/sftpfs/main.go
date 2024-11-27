@@ -11,6 +11,7 @@ import (
 	"github.com/jeffh/cfs/cli"
 	"github.com/jeffh/cfs/fs/sftpfs"
 	"github.com/jeffh/cfs/ninep"
+	_ "go.uber.org/automaxprocs"
 	"golang.org/x/crypto/ssh"
 )
 

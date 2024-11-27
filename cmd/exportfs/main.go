@@ -13,6 +13,7 @@ import (
 	"github.com/jeffh/cfs/cli"
 	efuse "github.com/jeffh/cfs/exportfs/fuse"
 	"github.com/jeffh/cfs/fs/proxy"
+	_ "go.uber.org/automaxprocs"
 )
 
 func main() {

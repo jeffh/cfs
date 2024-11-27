@@ -12,6 +12,7 @@ import (
 	"github.com/jeffh/cfs/cli"
 	"github.com/jeffh/cfs/fs/proxy"
 	"github.com/jeffh/cfs/ninep"
+	_ "go.uber.org/automaxprocs"
 )
 
 var expr *regexp.Regexp

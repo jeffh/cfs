@@ -14,6 +14,7 @@ import (
 	"github.com/jeffh/cfs/cli"
 	"github.com/jeffh/cfs/fs/einkfs"
 	"github.com/jeffh/cfs/ninep"
+	_ "go.uber.org/automaxprocs"
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/opentype"
 	"periph.io/x/host/v3"

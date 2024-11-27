@@ -11,6 +11,7 @@ import (
 	"github.com/jeffh/cfs/fs"
 	"github.com/jeffh/cfs/fs/cachefs"
 	"github.com/jeffh/cfs/ninep"
+	_ "go.uber.org/automaxprocs"
 )
 
 func main() {
