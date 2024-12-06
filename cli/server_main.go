@@ -58,7 +58,7 @@ func (c *ServerConfig) SetFlags(f Flags) {
 	f.StringVar(&c.CpuProfile, "cpuprofile", "", "File to store cpu profile")
 }
 
-func (c *ServerConfig) CreateServer(createfs func() ninep.FileSystem) *ninep.Server {
+func (c *ServerConfig) CreateServer(createfs func(L *slog.Logger) ninep.FileSystem) *ninep.Server {
 	if c.CpuProfile != "" {
 		f, err := os.Create(c.CpuProfile)
 		if err != nil {
@@ -79,7 +79,7 @@ func (c *ServerConfig) CreateServer(createfs func() ninep.FileSystem) *ninep.Ser
 
 	c.Logger = ninep.CreateLogger(c.LogLevel, c.PrintPrefix, c.Logger)
 
-	var fsys ninep.FileSystem = createfs()
+	var fsys ninep.FileSystem = createfs(c.Logger)
 
 	if c.Logger.Enabled(context.Background(), slog.LevelDebug) {
 		fsys = fs.TraceFs(
@@ -127,12 +127,15 @@ func (c *ServerConfig) ListenAndServe(srv *ninep.Server) error {
 	}
 }
 
-func (c *ServerConfig) CreateServerAndListen(createfs func() ninep.FileSystem) error {
+func (c *ServerConfig) CreateServerAndListen(createfs func(L *slog.Logger) ninep.FileSystem) error {
 	srv := c.CreateServer(createfs)
 	return c.ListenAndServe(srv)
 }
 
-func ServiceMain(createfs func() ninep.FileSystem) {
+// ServiceMainWithLogger starts a ninep.Server from a constructor of a ninep.FileSystem.
+// The server takes responsibility for calling Close() on ninep.FileSystem on shutdown.
+// Logger is the configured logger available from cli args
+func ServiceMainWithLogger(createfs func(L *slog.Logger) ninep.FileSystem) {
 	cfg := ServerConfig{
 		Stdout: os.Stdout,
 		Stderr: os.Stderr,
@@ -154,9 +157,17 @@ func ServiceMain(createfs func() ninep.FileSystem) {
 	}
 }
 
+// ServiceMain starts a ninep.Server from a constructor of a ninep.FileSystem.
+// The server takes responsibility for calling Close() on ninep.FileSystem on shutdown.
+func ServiceMain(createfs func() ninep.FileSystem) {
+	ServiceMainWithLogger(func(L *slog.Logger) ninep.FileSystem {
+		return createfs()
+	})
+}
+
 func ServiceMainWithFactory(createcfg func(stdout, stderr io.Writer) ServerConfig, createfs func() ninep.FileSystem) {
 	conf := createcfg(os.Stdout, os.Stderr)
-	srv := conf.CreateServer(createfs)
+	srv := conf.CreateServer(func(*slog.Logger) ninep.FileSystem { return createfs() })
 	err := conf.ListenAndServe(srv)
 	if err != nil {
 		fmt.Fprintf(conf.Stdout, "Error: %s\n", err)

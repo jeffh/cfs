@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"log/slog"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/jeffh/cfs/cli"
@@ -28,11 +29,11 @@ func main() {
 	flag.StringVar(&endpoint, "endpoint", "", "The S3 endpoint to use, defaults to AWS S3's builtin endpoint.")
 	flag.BoolVar(&forceS3PathStyle, "s3-path-style", false, "If true, uses s3 path styles for buckets instead of domains; useful for some alternative s3 implementations")
 
-	cli.ServiceMain(func() ninep.FileSystem {
+	cli.ServiceMainWithLogger(func(L *slog.Logger) ninep.FileSystem {
 		cfg := &aws.Config{
 			Endpoint:         aws.String(endpoint),
 			S3ForcePathStyle: aws.Bool(forceS3PathStyle),
 		}
-		return s3fs.NewWithAwsConfig(cfg, flatten)
+		return s3fs.NewWithAwsConfig(cfg, s3fs.Options{Flatten: flatten, Logger: L})
 	})
 }

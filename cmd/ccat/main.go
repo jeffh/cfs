@@ -101,13 +101,6 @@ func main() {
 					return err
 				}
 				b = nil
-
-				if err != nil {
-					if err == io.EOF {
-						err = nil
-					}
-					return err
-				}
 			}
 		}
 

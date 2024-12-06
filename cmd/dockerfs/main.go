@@ -10,10 +10,11 @@ import (
 )
 
 func main() {
-	fs, err := dockerfs.NewFs()
-	if err != nil {
-		log.Fatalf("failed to create dockerfs: %s", err)
-	}
-	defer fs.Close()
-	cli.ServiceMain(func() ninep.FileSystem { return fs })
+	cli.ServiceMain(func() ninep.FileSystem {
+		fs, err := dockerfs.NewFs()
+		if err != nil {
+			log.Fatalf("failed to create dockerfs: %s", err)
+		}
+		return fs
+	})
 }

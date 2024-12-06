@@ -161,7 +161,7 @@ func main() {
 		}
 
 		stack := []stackNode{
-			stackNode{next, srcNode, dstNode},
+			{next, srcNode, dstNode},
 		}
 
 		for len(stack) > 0 {
