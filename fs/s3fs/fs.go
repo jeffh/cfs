@@ -13,7 +13,7 @@ import (
 	"io/fs"
 	"iter"
 	"log/slog"
-	"os"
+	"net/url"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -51,11 +51,13 @@ var mx = ninep.NewMuxWith[string]().
 	Define().Path("/buckets/{bucket}/sign/upload/url").As("signUploadUrl").
 	Define().Path("/buckets/{bucket}/acl").As("bucketAcl")
 
-func stringPtrOrNil(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
+type Options struct {
+	//  Flatten makes listing an object key prefix returns the full keys instead of
+	//  just the logical directory names. This can be more efficient to use S3
+	//  API at the cost of breaking some of the file system abstraction layer.
+	Flatten bool
+	// Logger to use. Default
+	Logger *slog.Logger
 }
 
 type S3Ctx struct {
@@ -63,18 +65,35 @@ type S3Ctx struct {
 	Client  *s3.S3
 }
 
-// Reasonable default configuration of NewFs(), an empty string of endpoint
-// defaults to AWS' S3 service
+func isB2Endpoint(endpoint string) bool {
+	uri, err := url.Parse(endpoint)
+	if err != nil {
+		return false
+	}
+	return strings.HasSuffix(uri.Host, ".backblazeb2.com") && strings.HasPrefix(uri.Host, "s3.")
+}
+
+// New returns a reasonable default configuration of an S3 FileSystem, an empty
+// string of endpoint defaults to AWS' S3 service.
 //
 // Parameters:
 //   - endpoint defaults to AWS' S3 service if it is an empty string.
-//   - flatten makes listing an object key prefix returns the full keys instead of
-//     just the logical directory names. This can be more efficient to use S3
-//     API at the cost of breaking some of the file system abstraction layer.
-func New(endpoint string, flatten bool) ninep.FileSystem {
+//   - opt contains options for configuring the Filesystem
+func New(endpoint string, opt Options) ninep.FileSystem {
+	isB2 := isB2Endpoint(endpoint)
 	cfg := &aws.Config{
-		Endpoint: stringPtrOrNil(endpoint),
+		Endpoint:         aws.String(endpoint),
+		S3ForcePathStyle: aws.Bool(isB2),
 	}
+	return NewWithAwsConfig(cfg, opt)
+}
+
+// NewWithAwsConfig returns a s3 FileSystem from a given s3 aws.Config object.
+//
+// Parameters:
+//   - cfg is the aws.Config used to configure the s3 client.
+//   - opt contains options for configuring the Filesystem
+func NewWithAwsConfig(cfg *aws.Config, opt Options) ninep.FileSystem {
 	sess := session.Must(session.NewSession())
 	svc := s3.New(sess, cfg)
 	ctx := S3Ctx{
@@ -82,17 +101,20 @@ func New(endpoint string, flatten bool) ninep.FileSystem {
 		Client:  svc,
 	}
 
-	return NewWithClient(&ctx, flatten)
+	return NewWithClient(&ctx, opt)
 }
 
-func NewWithClient(s3c *S3Ctx, flatten bool) ninep.FileSystem {
-	trace := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelDebug,
-	}))
+// NewWithClient returns a s3 FileSystem from a given s3 client and session.
+//
+// Parameters:
+//   - s3c is the configured s3 client and session. Both fields are required.
+//   - opt contains options for configuring the Filesystem
+func NewWithClient(s3c *S3Ctx, opt Options) ninep.FileSystem {
 	return newFs(s3c, fsysOptions{
-		Logger:          trace,
+		Logger:          opt.Logger,
 		BucketCacheSize: -1,
 		ObjectCacheSize: -1,
+		ListKeys:        opt.Flatten,
 	})
 }
 
@@ -210,7 +232,11 @@ func (f *fsys) MakeDir(ctx context.Context, path string, mode ninep.Mode) error 
 			Bucket: aws.String(bucket),
 		})
 		if f.logger != nil {
-			f.logger.InfoContext(ctx, "S3.CreateBucket", slog.String("bucket", bucket), slog.Any("err", err))
+			if err != nil {
+				f.logger.ErrorContext(ctx, "S3.CreateBucket", slog.String("bucket", bucket), slog.Any("err", err))
+			} else {
+				f.logger.InfoContext(ctx, "S3.CreateBucket", slog.String("bucket", bucket))
+			}
 		}
 		return mapAwsErrToNinep(err)
 	case "objectByKey":
@@ -253,7 +279,11 @@ func (f *fsys) CreateFile(ctx context.Context, path string, flag ninep.OpenMode,
 					Key:    aws.String(key),
 				})
 				if f.logger != nil {
-					f.logger.InfoContext(ctx, "S3.GetObject", slog.String("bucket", bucket), slog.String("key", key), slog.Any("err", err))
+					if err != nil {
+						f.logger.ErrorContext(ctx, "S3.GetObject", slog.String("bucket", bucket), slog.String("key", key), slog.Any("err", err))
+					} else {
+						f.logger.InfoContext(ctx, "S3.GetObject", slog.String("bucket", bucket), slog.String("key", key))
+					}
 				}
 				if err != nil {
 					if isNoSuchBucket(err) {
@@ -280,7 +310,11 @@ func (f *fsys) CreateFile(ctx context.Context, path string, flag ninep.OpenMode,
 					Body:   r,
 				})
 				if f.logger != nil {
-					f.logger.InfoContext(ctx, "S3.UploadObject", slog.String("bucket", bucket), slog.String("key", key), slog.Any("err", err))
+					if err != nil {
+						f.logger.ErrorContext(ctx, "S3.UploadObject", slog.String("bucket", bucket), slog.String("key", key), slog.Any("err", err))
+					} else {
+						f.logger.InfoContext(ctx, "S3.UploadObject", slog.String("bucket", bucket), slog.String("key", key))
+					}
 				}
 				w.CloseWithError(mapAwsErrToNinep(err))
 			}()
@@ -327,7 +361,11 @@ func (f *fsys) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (
 					Key:    aws.String(key),
 				})
 				if f.logger != nil {
-					f.logger.InfoContext(ctx, "S3.GetObject", slog.String("bucket", bucket), slog.String("key", key), slog.Any("err", err))
+					if err != nil {
+						f.logger.ErrorContext(ctx, "S3.GetObject", slog.String("bucket", bucket), slog.String("key", key), slog.Any("err", err))
+					} else {
+						f.logger.InfoContext(ctx, "S3.GetObject", slog.String("bucket", bucket), slog.String("key", key))
+					}
 				}
 				if err != nil {
 					if isNoSuchBucket(err) {
@@ -415,7 +453,11 @@ func (f *fsys) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (
 					}
 					_, err = f.s3c.Client.PutObject(&input)
 					if f.logger != nil {
-						f.logger.InfoContext(ctx, "S3.PutObject", slog.String("bucket", bucket), slog.String("key", key), slog.Any("modified", kv.SortedKeys()), slog.Any("err", err))
+						if err != nil {
+							f.logger.ErrorContext(ctx, "S3.PutObject", slog.String("bucket", bucket), slog.String("key", key), slog.Any("modified", kv.SortedKeys()), slog.Any("err", err))
+						} else {
+							f.logger.InfoContext(ctx, "S3.PutObject", slog.String("bucket", bucket), slog.String("key", key), slog.Any("modified", kv.SortedKeys()))
+						}
 					}
 					w.CloseWithError(mapAwsErrToNinep(err))
 				}
@@ -502,7 +544,11 @@ func (f *fsys) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (
 				}
 				_, err = f.s3c.Client.PutBucketCors(input)
 				if f.logger != nil {
-					f.logger.InfoContext(ctx, "S3.PutBucketCors", slog.String("bucket", bucket), slog.Any("err", err))
+					if err != nil {
+						f.logger.ErrorContext(ctx, "S3.PutBucketCors", slog.String("bucket", bucket), slog.Any("err", err))
+					} else {
+						f.logger.InfoContext(ctx, "S3.PutBucketCors", slog.String("bucket", bucket))
+					}
 				}
 				r.CloseWithError(mapAwsErrToNinep(err))
 			}()
@@ -514,6 +560,13 @@ func (f *fsys) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (
 					Bucket: aws.String(bucket),
 				}
 				out, err := f.s3c.Client.GetBucketCors(input)
+				if f.logger != nil {
+					if err != nil {
+						f.logger.ErrorContext(ctx, "S3.GetBucketCors", slog.String("bucket", bucket), slog.Any("err", err))
+					} else {
+						f.logger.InfoContext(ctx, "S3.GetBucketCors", slog.String("bucket", bucket))
+					}
+				}
 				if err != nil {
 					if awsErrCode(err) == "NoSuchCORSConfiguration" {
 						// No CORS configuration exists - return empty
@@ -955,7 +1008,11 @@ func (f *fsys) deleteBucket(ctx context.Context, bucket string) error {
 		Bucket: aws.String(bucket),
 	})
 	if f.logger != nil {
-		f.logger.InfoContext(ctx, "S3.DeleteBucket", slog.String("bucket", bucket), slog.Any("err", err))
+		if err != nil {
+			f.logger.ErrorContext(ctx, "S3.DeleteBucket", slog.String("bucket", bucket), slog.Any("err", err))
+		} else {
+			f.logger.InfoContext(ctx, "S3.DeleteBucket", slog.String("bucket", bucket))
+		}
 	}
 	if err == nil {
 		f.bucketCache.Remove(bucket)
@@ -994,6 +1051,13 @@ func (f *fsys) deleteObjectsByPrefix(ctx context.Context, bucket, prefix string)
 				Objects: objectKeys,
 			},
 		})
+		if f.logger != nil {
+			if err != nil {
+				f.logger.ErrorContext(ctx, "S3.DeleteObject", slog.String("bucket", bucket), slog.Any("keys", objectKeys), slog.Any("err", err))
+			} else {
+				f.logger.InfoContext(ctx, "S3.DeleteObject", slog.String("bucket", bucket), slog.Any("keys", objectKeys))
+			}
+		}
 		if err != nil {
 			return mapAwsErrToNinep(err)
 		}
@@ -1011,7 +1075,11 @@ func (f *fsys) deleteObject(ctx context.Context, bucket, key string) error {
 		Key:    aws.String(key),
 	})
 	if f.logger != nil {
-		f.logger.InfoContext(ctx, "S3.DeleteObject", slog.String("bucket", bucket), slog.String("key", key), slog.Any("err", err))
+		if err != nil {
+			f.logger.ErrorContext(ctx, "S3.DeleteObject", slog.String("bucket", bucket), slog.String("key", key), slog.Any("err", err))
+		} else {
+			f.logger.InfoContext(ctx, "S3.DeleteObject", slog.String("bucket", bucket), slog.String("key", key))
+		}
 	}
 	if err == nil {
 		f.evictCachedObject(bucket, key)
@@ -1049,7 +1117,11 @@ func (f *fsys) getBucketInfo(ctx context.Context, bucket string) (fs.FileInfo, e
 func (f *fsys) listBuckets(ctx context.Context) iter.Seq2[fs.FileInfo, error] {
 	resp, err := f.s3c.Client.ListBucketsWithContext(ctx, &s3.ListBucketsInput{})
 	if f.logger != nil {
-		f.logger.InfoContext(ctx, "S3.ListBuckets", slog.Int("count", len(resp.Buckets)), slog.Any("err", err))
+		if err != nil {
+			f.logger.ErrorContext(ctx, "S3.ListBuckets", slog.Int("count", len(resp.Buckets)), slog.Any("err", err))
+		} else {
+			f.logger.InfoContext(ctx, "S3.ListBuckets", slog.Int("count", len(resp.Buckets)))
+		}
 	}
 	if err != nil {
 		return ninep.FileInfoErrorIterator(mapAwsErrToNinep(err))
@@ -1091,7 +1163,11 @@ func (f *fsys) listObjects(ctx context.Context, bucket, prefix string, em fs.Fil
 			for {
 				res, err := f.s3c.Client.ListObjectsV2(&input)
 				if f.logger != nil {
-					f.logger.InfoContext(ctx, "S3.ListObjectsV2", slog.String("bucket", bucket), slog.String("prefix", prefix), slog.Int("count", len(res.Contents)), slog.Any("err", err))
+					if err != nil {
+						f.logger.ErrorContext(ctx, "S3.ListObjectsV2", slog.String("bucket", bucket), slog.String("prefix", prefix), slog.Int("count", len(res.Contents)), slog.Any("err", err))
+					} else {
+						f.logger.InfoContext(ctx, "S3.ListObjectsV2", slog.String("bucket", bucket), slog.String("prefix", prefix), slog.Int("count", len(res.Contents)))
+					}
 				}
 				// TODO: handle retries?
 				if err != nil {
@@ -1127,11 +1203,16 @@ func (f *fsys) listObjects(ctx context.Context, bucket, prefix string, em fs.Fil
 				}
 			}
 		} else {
+			// input.SetDelimiter("/")
 			seen := make(map[string]struct{})
 			for {
 				res, err := f.s3c.Client.ListObjectsV2(&input)
 				if f.logger != nil {
-					f.logger.InfoContext(ctx, "S3.ListObjectsV2", slog.String("bucket", bucket), slog.String("prefix", prefix), slog.Int("count", len(res.Contents)), slog.Any("err", err))
+					if err != nil {
+						f.logger.ErrorContext(ctx, "S3.ListObjectsV2", slog.String("bucket", bucket), slog.String("prefix", prefix), slog.Int("count", len(res.Contents)), slog.Any("err", err))
+					} else {
+						f.logger.InfoContext(ctx, "S3.ListObjectsV2", slog.String("bucket", bucket), slog.String("prefix", prefix), slog.Int("count", len(res.Contents)))
+					}
 				}
 				// TODO: handle retries?
 				if err != nil {
@@ -1221,7 +1302,11 @@ func (f *fsys) writeMetadata(ctx context.Context, bucket, key string, w *io.Pipe
 	}
 	resp, err := f.s3c.Client.HeadObjectWithContext(ctx, &input)
 	if f.logger != nil {
-		f.logger.InfoContext(ctx, "S3.HeadObject", slog.String("bucket", bucket), slog.String("key", key), slog.Any("err", err))
+		if err != nil {
+			f.logger.ErrorContext(ctx, "S3.HeadObject", slog.String("bucket", bucket), slog.String("key", key), slog.Any("err", err))
+		} else {
+			f.logger.InfoContext(ctx, "S3.HeadObject", slog.String("bucket", bucket), slog.String("key", key))
+		}
 	}
 	if err != nil {
 		w.CloseWithError(mapAwsErrToNinep(err))
@@ -1419,7 +1504,11 @@ func (f *fsys) bucketAclFile(ctx context.Context, bucket string, flag ninep.Open
 			}
 			_, err = f.s3c.Client.PutBucketAcl(&input)
 			if f.logger != nil {
-				f.logger.InfoContext(ctx, "S3.PutBucketAcl", slog.String("bucket", bucket), slog.Any("err", err))
+				if err != nil {
+					f.logger.ErrorContext(ctx, "S3.PutBucketAcl", slog.String("bucket", bucket), slog.Any("err", err))
+				} else {
+					f.logger.InfoContext(ctx, "S3.PutBucketAcl", slog.String("bucket", bucket))
+				}
 			}
 			r.CloseWithError(mapAwsErrToNinep(err))
 		}()
@@ -1459,6 +1548,13 @@ func (f *fsys) signedDownloadURL(bucket, key string, expires time.Duration) (str
 		Key:    aws.String(key),
 	})
 	url, err := req.Presign(expires)
+	if f.logger != nil {
+		if err != nil {
+			f.logger.Error("S3.Presign.GetObjectRequest", slog.String("bucket", bucket), slog.String("key", key), slog.Duration("expires", expires), slog.Any("err", err))
+		} else {
+			f.logger.Info("S3.Presign.GetObjectRequest", slog.String("bucket", bucket), slog.String("key", key), slog.Duration("expires", expires))
+		}
+	}
 	if err != nil {
 		return "", err
 	}
@@ -1471,6 +1567,11 @@ func (f *fsys) signedUploadURL(bucket, key string, expires time.Duration) (strin
 		Key:    aws.String(key),
 	})
 	url, err := req.Presign(expires)
+	if err != nil {
+		f.logger.Error("S3.Presign.PutObjectRequest", slog.String("bucket", bucket), slog.String("key", key), slog.Duration("expires", expires), slog.Any("err", err))
+	} else {
+		f.logger.Info("S3.Presign.PutObjectRequest", slog.String("bucket", bucket), slog.String("key", key), slog.Duration("expires", expires))
+	}
 	if err != nil {
 		return "", err
 	}

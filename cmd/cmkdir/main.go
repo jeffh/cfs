@@ -8,7 +8,6 @@ import (
 
 	"github.com/jeffh/cfs/cli"
 	"github.com/jeffh/cfs/fs/proxy"
-	_ "go.uber.org/automaxprocs"
 )
 
 func main() {

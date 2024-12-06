@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/jeffh/cfs/cli"
 	"github.com/jeffh/cfs/fs/s3fs"
 	"github.com/jeffh/cfs/ninep"
@@ -18,14 +19,20 @@ func stringPtrOrNil(s string) *string {
 
 func main() {
 	var (
-		endpoint string
-		flatten  bool
+		endpoint         string
+		flatten          bool
+		forceS3PathStyle bool
 	)
 
 	flag.BoolVar(&flatten, "flatten", false, "Truncate the directory listing to only show the first level of directories instead of key names")
 	flag.StringVar(&endpoint, "endpoint", "", "The S3 endpoint to use, defaults to AWS S3's builtin endpoint.")
+	flag.BoolVar(&forceS3PathStyle, "s3-path-style", false, "If true, uses s3 path styles for buckets instead of domains; useful for some alternative s3 implementations")
 
 	cli.ServiceMain(func() ninep.FileSystem {
-		return s3fs.New(endpoint, flatten)
+		cfg := &aws.Config{
+			Endpoint:         aws.String(endpoint),
+			S3ForcePathStyle: aws.Bool(forceS3PathStyle),
+		}
+		return s3fs.NewWithAwsConfig(cfg, flatten)
 	})
 }
