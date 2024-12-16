@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/jeffh/cfs/ninep"
 )
 
@@ -13,7 +13,7 @@ func keysMatch(objKey *string, wantedKey string) bool {
 	return objKey != nil && (*objKey == wantedKey || *objKey == wantedKey+"/")
 }
 
-func objectInfo(name string, object *s3.Object, fallbackKey string) fs.FileInfo {
+func objectInfo(name string, object *types.Object, fallbackKey string) fs.FileInfo {
 	var (
 		uid     string
 		key     string

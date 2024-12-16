@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log/slog"
 
-	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/jeffh/cfs/cli"
 	"github.com/jeffh/cfs/fs/s3fs"
 	"github.com/jeffh/cfs/ninep"
@@ -30,9 +32,16 @@ func main() {
 	flag.BoolVar(&forceS3PathStyle, "s3-path-style", false, "If true, uses s3 path styles for buckets instead of domains; useful for some alternative s3 implementations")
 
 	cli.ServiceMainWithLogger(func(L *slog.Logger) ninep.FileSystem {
-		cfg := &aws.Config{
-			Endpoint:         aws.String(endpoint),
-			S3ForcePathStyle: aws.Bool(forceS3PathStyle),
+		cfg, err := config.LoadDefaultConfig(context.Background(),
+			config.WithEndpointResolver(aws.EndpointResolverFunc(func(service, region string) (aws.Endpoint, error) {
+				return aws.Endpoint{
+					URL:           endpoint,
+					SigningRegion: region,
+				}, nil
+			})),
+		)
+		if err != nil {
+			panic(err)
 		}
 		return s3fs.NewWithAwsConfig(cfg, s3fs.Options{Flatten: flatten, Logger: L})
 	})

@@ -21,11 +21,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/awserr"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 	"github.com/hashicorp/golang-lru/v2/expirable"
 	"github.com/jeffh/cfs/ninep"
 	"github.com/jeffh/cfs/ninep/kvp"
@@ -61,8 +61,7 @@ type Options struct {
 }
 
 type S3Ctx struct {
-	Session *session.Session
-	Client  *s3.S3
+	Client *s3.Client
 }
 
 func isB2Endpoint(endpoint string) bool {
@@ -80,10 +79,16 @@ func isB2Endpoint(endpoint string) bool {
 //   - endpoint defaults to AWS' S3 service if it is an empty string.
 //   - opt contains options for configuring the Filesystem
 func New(endpoint string, opt Options) ninep.FileSystem {
-	isB2 := isB2Endpoint(endpoint)
-	cfg := &aws.Config{
-		Endpoint:         aws.String(endpoint),
-		S3ForcePathStyle: aws.Bool(isB2),
+	cfg, err := config.LoadDefaultConfig(context.Background(),
+		config.WithEndpointResolver(aws.EndpointResolverFunc(func(service, region string) (aws.Endpoint, error) {
+			return aws.Endpoint{
+				URL:           endpoint,
+				SigningRegion: region,
+			}, nil
+		})),
+	)
+	if err != nil {
+		panic(err)
 	}
 	return NewWithAwsConfig(cfg, opt)
 }
@@ -93,12 +98,10 @@ func New(endpoint string, opt Options) ninep.FileSystem {
 // Parameters:
 //   - cfg is the aws.Config used to configure the s3 client.
 //   - opt contains options for configuring the Filesystem
-func NewWithAwsConfig(cfg *aws.Config, opt Options) ninep.FileSystem {
-	sess := session.Must(session.NewSession())
-	svc := s3.New(sess, cfg)
+func NewWithAwsConfig(cfg aws.Config, opt Options) ninep.FileSystem {
+	svc := s3.NewFromConfig(cfg)
 	ctx := S3Ctx{
-		Session: sess,
-		Client:  svc,
+		Client: svc,
 	}
 
 	return NewWithClient(&ctx, opt)
@@ -228,7 +231,7 @@ func (f *fsys) MakeDir(ctx context.Context, path string, mode ninep.Mode) error 
 		return nil
 	case "bucket":
 		bucket := res.Vars[0]
-		_, err := f.s3c.Client.CreateBucket(&s3.CreateBucketInput{
+		_, err := f.s3c.Client.CreateBucket(ctx, &s3.CreateBucketInput{
 			Bucket: aws.String(bucket),
 		})
 		if f.logger != nil {
@@ -245,10 +248,12 @@ func (f *fsys) MakeDir(ctx context.Context, path string, mode ninep.Mode) error 
 		if !strings.HasSuffix(key, "/") {
 			key += "/"
 		}
-		_, err := f.s3c.Client.PutObject(&s3.PutObjectInput{
-			Bucket: aws.String(bucket),
-			Key:    aws.String(key),
-		})
+		input := s3.PutObjectInput{
+			Bucket:      aws.String(bucket),
+			Key:         aws.String(key),
+			IfNoneMatch: aws.String("*"),
+		}
+		_, err := f.s3c.Client.PutObject(ctx, &input)
 		return mapAwsErrToNinep(err)
 	// case "metadataByKey":
 	// 	return nil
@@ -274,7 +279,7 @@ func (f *fsys) CreateFile(ctx context.Context, path string, flag ninep.OpenMode,
 			r, w := io.Pipe()
 			go func() {
 				defer r.Close()
-				resp, err := f.s3c.Client.GetObject(&s3.GetObjectInput{
+				resp, err := f.s3c.Client.GetObject(ctx, &s3.GetObjectInput{
 					Bucket: aws.String(bucket),
 					Key:    aws.String(key),
 				})
@@ -303,12 +308,15 @@ func (f *fsys) CreateFile(ctx context.Context, path string, flag ninep.OpenMode,
 			r, w := io.Pipe()
 			go func() {
 				defer r.Close()
-				uploader := s3manager.NewUploader(f.s3c.Session)
-				_, err := uploader.Upload(&s3manager.UploadInput{
+				input := &s3.PutObjectInput{
 					Bucket: aws.String(bucket),
 					Key:    aws.String(key),
 					Body:   r,
-				})
+				}
+				if !flag.IsTruncate() {
+					input.IfNoneMatch = aws.String("*")
+				}
+				_, err := f.s3c.Client.PutObject(ctx, input)
 				if f.logger != nil {
 					if err != nil {
 						f.logger.ErrorContext(ctx, "S3.UploadObject", slog.String("bucket", bucket), slog.String("key", key), slog.Any("err", err))
@@ -334,7 +342,7 @@ func (f *fsys) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (
 	switch res.Id {
 	case "bucketCtl":
 		bucket := res.Vars[0]
-		return f.bucketCtlFile(bucket, flag)
+		return f.bucketCtlFile(ctx, bucket, flag)
 	case "bucketAcl":
 		bucket := res.Vars[0]
 		return f.bucketAclFile(ctx, bucket, flag)
@@ -346,7 +354,7 @@ func (f *fsys) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (
 		return f.signUploadKeyFile(bucket)
 	case "signUploadUrl":
 		bucket := res.Vars[0]
-		return f.signUploadUrlFile(bucket, flag)
+		return f.signUploadUrlFile(ctx, bucket, flag)
 	case "objectByKey":
 		bucket := res.Vars[0]
 		key := res.Vars[1]
@@ -356,7 +364,7 @@ func (f *fsys) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (
 			r, w := io.Pipe()
 			go func() {
 				defer r.Close()
-				resp, err := f.s3c.Client.GetObject(&s3.GetObjectInput{
+				resp, err := f.s3c.Client.GetObject(ctx, &s3.GetObjectInput{
 					Bucket: aws.String(bucket),
 					Key:    aws.String(key),
 				})
@@ -385,8 +393,7 @@ func (f *fsys) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (
 			r, w := io.Pipe()
 			go func() {
 				defer r.Close()
-				uploader := s3manager.NewUploader(f.s3c.Session)
-				_, err := uploader.Upload(&s3manager.UploadInput{
+				_, err := f.s3c.Client.PutObject(ctx, &s3.PutObjectInput{
 					Bucket: aws.String(bucket),
 					Key:    aws.String(key),
 					Body:   r,
@@ -425,7 +432,7 @@ func (f *fsys) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (
 						Bucket: aws.String(bucket),
 						Key:    aws.String(key),
 
-						ACL:                       stringPtrIfNotEmpty(kv.GetOne("acl")),
+						ACL:                       types.ObjectCannedACL(kv.GetOne("acl")),
 						CacheControl:              stringPtrIfNotEmpty(kv.GetOne("cache-control")),
 						ContentDisposition:        stringPtrIfNotEmpty(kv.GetOne("content-disposition")),
 						ContentEncoding:           stringPtrIfNotEmpty(kv.GetOne("content-encoding")),
@@ -437,21 +444,21 @@ func (f *fsys) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (
 						GrantRead:                 stringPtrIfNotEmpty(kv.GetOne("grant-read")),
 						GrantReadACP:              stringPtrIfNotEmpty(kv.GetOne("grant-read-acp")),
 						GrantWriteACP:             stringPtrIfNotEmpty(kv.GetOne("grant-write-acp")),
-						Metadata:                  mapPtrIfNotEmpty(kv.GetAllPrefix("metadata-")),
-						ObjectLockLegalHoldStatus: stringPtrIfNotEmpty(kv.GetOne("object-lock-legal-hold-status")),
-						ObjectLockMode:            stringPtrIfNotEmpty(kv.GetOne("object-lock-mode")),
+						Metadata:                  map[string]string(kv.GetOnePrefix("metadata-")),
+						ObjectLockLegalHoldStatus: types.ObjectLockLegalHoldStatus(kv.GetOne("object-lock-legal-hold-status")),
+						ObjectLockMode:            types.ObjectLockMode(kv.GetOne("object-lock-mode")),
 						ObjectLockRetainUntilDate: timePtrIfNotEmpty(kv.GetOne("object-lock-retain-until-date")),
 						SSECustomerAlgorithm:      stringPtrIfNotEmpty(kv.GetOne("sse-customer-algorithm")),
 						SSECustomerKey:            stringPtrIfNotEmpty(kv.GetOne("sse-customer-key")),
 						SSECustomerKeyMD5:         stringPtrIfNotEmpty(kv.GetOne("sse-customer-key-md5")),
 						SSEKMSEncryptionContext:   stringPtrIfNotEmpty(kv.GetOne("sse-kms-encryption-context")),
 						SSEKMSKeyId:               stringPtrIfNotEmpty(kv.GetOne("sse-kms-key-id")),
-						ServerSideEncryption:      stringPtrIfNotEmpty(kv.GetOne("server-side-encryption")),
-						StorageClass:              stringPtrIfNotEmpty(kv.GetOne("storage-class")),
+						ServerSideEncryption:      types.ServerSideEncryption(kv.GetOne("server-side-encryption")),
+						StorageClass:              types.StorageClass(kv.GetOne("storage-class")),
 						Tagging:                   stringPtrIfNotEmpty(kv.GetOne("tagging")),
 						WebsiteRedirectLocation:   stringPtrIfNotEmpty(kv.GetOne("website-redirect-location")),
 					}
-					_, err = f.s3c.Client.PutObject(&input)
+					_, err = f.s3c.Client.PutObject(ctx, &input)
 					if f.logger != nil {
 						if err != nil {
 							f.logger.ErrorContext(ctx, "S3.PutObject", slog.String("bucket", bucket), slog.String("key", key), slog.Any("modified", kv.SortedKeys()), slog.Any("err", err))
@@ -474,7 +481,7 @@ func (f *fsys) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (
 		}
 		if w != nil {
 			go func() {
-				url, err := f.signedDownloadURL(bucket, key, f.getSigningExpiry(bucket))
+				url, err := f.signedDownloadURL(ctx, bucket, key, f.getSigningExpiry(bucket))
 				if err != nil {
 					w.CloseWithError(err)
 				} else {
@@ -501,7 +508,7 @@ func (f *fsys) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (
 				}
 
 				// Parse CORS configuration from key-value pairs
-				var corsRules []*s3.CORSRule
+				var corsRules []types.CORSRule
 				for _, ruleStr := range kv.GetAll("rule") {
 					ruleKV, err := kvp.ParseKeyValues(ruleStr)
 					if err != nil {
@@ -509,30 +516,30 @@ func (f *fsys) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (
 						return
 					}
 
-					rule := &s3.CORSRule{}
+					rule := types.CORSRule{}
 					if maxAge := ruleKV.GetOne("max_age"); maxAge != "" {
-						if age, err := strconv.ParseInt(maxAge, 10, 64); err == nil {
-							rule.MaxAgeSeconds = aws.Int64(age)
+						if age, err := strconv.ParseInt(maxAge, 10, 32); err == nil {
+							rule.MaxAgeSeconds = aws.Int32(int32(age))
 						}
 					}
 					if methods := ruleKV.GetOne("allowed_methods"); methods != "" {
 						for _, m := range strings.Split(methods, ",") {
-							rule.AllowedMethods = append(rule.AllowedMethods, aws.String(strings.TrimSpace(m)))
+							rule.AllowedMethods = append(rule.AllowedMethods, strings.TrimSpace(m))
 						}
 					}
 					if headers := ruleKV.GetOne("allowed_headers"); headers != "" {
 						for _, h := range strings.Split(headers, ",") {
-							rule.AllowedHeaders = append(rule.AllowedHeaders, aws.String(strings.TrimSpace(h)))
+							rule.AllowedHeaders = append(rule.AllowedHeaders, strings.TrimSpace(h))
 						}
 					}
 					if origins := ruleKV.GetOne("allowed_origins"); origins != "" {
 						for _, o := range strings.Split(origins, ",") {
-							rule.AllowedOrigins = append(rule.AllowedOrigins, aws.String(strings.TrimSpace(o)))
+							rule.AllowedOrigins = append(rule.AllowedOrigins, strings.TrimSpace(o))
 						}
 					}
 					if headers := ruleKV.GetOne("expose_headers"); headers != "" {
 						for _, h := range strings.Split(headers, ",") {
-							rule.ExposeHeaders = append(rule.ExposeHeaders, aws.String(strings.TrimSpace(h)))
+							rule.ExposeHeaders = append(rule.ExposeHeaders, strings.TrimSpace(h))
 						}
 					}
 					corsRules = append(corsRules, rule)
@@ -540,9 +547,9 @@ func (f *fsys) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (
 
 				input := &s3.PutBucketCorsInput{
 					Bucket:            aws.String(bucket),
-					CORSConfiguration: &s3.CORSConfiguration{CORSRules: corsRules},
+					CORSConfiguration: &types.CORSConfiguration{CORSRules: corsRules},
 				}
-				_, err = f.s3c.Client.PutBucketCors(input)
+				_, err = f.s3c.Client.PutBucketCors(ctx, input)
 				if f.logger != nil {
 					if err != nil {
 						f.logger.ErrorContext(ctx, "S3.PutBucketCors", slog.String("bucket", bucket), slog.Any("err", err))
@@ -559,7 +566,7 @@ func (f *fsys) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (
 				input := &s3.GetBucketCorsInput{
 					Bucket: aws.String(bucket),
 				}
-				out, err := f.s3c.Client.GetBucketCors(input)
+				out, err := f.s3c.Client.GetBucketCors(ctx, input)
 				if f.logger != nil {
 					if err != nil {
 						f.logger.ErrorContext(ctx, "S3.GetBucketCors", slog.String("bucket", bucket), slog.Any("err", err))
@@ -578,39 +585,28 @@ func (f *fsys) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (
 
 				// Write each CORS rule as a separate key-value pair
 				for _, rule := range out.CORSRules {
-					if rule == nil {
-						continue
-					}
 					pairs := [][2]string{}
 					if rule.MaxAgeSeconds != nil {
 						pairs = append(pairs, [2]string{"max_age", fmt.Sprintf("%d", *rule.MaxAgeSeconds)})
 					}
 					if len(rule.AllowedMethods) > 0 {
 						methods := make([]string, len(rule.AllowedMethods))
-						for i, m := range rule.AllowedMethods {
-							methods[i] = aws.StringValue(m)
-						}
+						copy(methods, rule.AllowedMethods)
 						pairs = append(pairs, [2]string{"allowed_methods", strings.Join(methods, ",")})
 					}
 					if len(rule.AllowedHeaders) > 0 {
 						headers := make([]string, len(rule.AllowedHeaders))
-						for i, h := range rule.AllowedHeaders {
-							headers[i] = aws.StringValue(h)
-						}
+						copy(headers, rule.AllowedHeaders)
 						pairs = append(pairs, [2]string{"allowed_headers", strings.Join(headers, ",")})
 					}
 					if len(rule.AllowedOrigins) > 0 {
 						origins := make([]string, len(rule.AllowedOrigins))
-						for i, o := range rule.AllowedOrigins {
-							origins[i] = aws.StringValue(o)
-						}
+						copy(origins, rule.AllowedOrigins)
 						pairs = append(pairs, [2]string{"allowed_origins", strings.Join(origins, ",")})
 					}
 					if len(rule.ExposeHeaders) > 0 {
 						headers := make([]string, len(rule.ExposeHeaders))
-						for i, h := range rule.ExposeHeaders {
-							headers[i] = aws.StringValue(h)
-						}
+						copy(headers, rule.ExposeHeaders)
 						pairs = append(pairs, [2]string{"expose_headers", strings.Join(headers, ",")})
 					}
 					fmt.Fprintf(w, "rule=%s\n", kvp.NonEmptyKeyPairs(pairs))
@@ -729,9 +725,9 @@ func (f *fsys) Stat(ctx context.Context, path string) (fs.FileInfo, error) {
 			input := &s3.ListObjectsV2Input{
 				Bucket:  aws.String(bucket),
 				Prefix:  aws.String(key),
-				MaxKeys: aws.Int64(1),
+				MaxKeys: aws.Int32(1),
 			}
-			res, err := f.s3c.Client.ListObjectsV2(input)
+			res, err := f.s3c.Client.ListObjectsV2(ctx, input)
 			if f.logger != nil {
 				f.logger.InfoContext(ctx, "S3.ListObjectsV2", slog.String("bucket", bucket), slog.String("prefix", key), slog.Any("err", err))
 			}
@@ -741,11 +737,11 @@ func (f *fsys) Stat(ctx context.Context, path string) (fs.FileInfo, error) {
 			if len(res.Contents) == 0 {
 				return nil, fs.ErrNotExist
 			}
-			var object *s3.Object
+			var object *types.Object
 			if len(res.Contents) == 1 {
 				obj := res.Contents[0]
 				if keysMatch(obj.Key, key) {
-					object = obj
+					object = &obj
 				}
 			}
 			if object == nil {
@@ -1004,7 +1000,7 @@ func (f *fsys) Walk(ctx context.Context, parts []string) ([]fs.FileInfo, error) 
 }
 
 func (f *fsys) deleteBucket(ctx context.Context, bucket string) error {
-	_, err := f.s3c.Client.DeleteBucketWithContext(ctx, &s3.DeleteBucketInput{
+	_, err := f.s3c.Client.DeleteBucket(ctx, &s3.DeleteBucketInput{
 		Bucket: aws.String(bucket),
 	})
 	if f.logger != nil {
@@ -1027,7 +1023,7 @@ func (f *fsys) deleteObjectsByPrefix(ctx context.Context, bucket, prefix string)
 		Prefix: aws.String(prefix),
 	}
 	for {
-		resp, err := f.s3c.Client.ListObjectsV2WithContext(ctx, &input)
+		resp, err := f.s3c.Client.ListObjectsV2(ctx, &input)
 		if err != nil {
 			if isNoSuchBucket(err) {
 				f.bucketCache.Remove(bucket)
@@ -1039,15 +1035,15 @@ func (f *fsys) deleteObjectsByPrefix(ctx context.Context, bucket, prefix string)
 		if len(resp.Contents) == 0 {
 			return nil
 		}
-		var objectKeys []*s3.ObjectIdentifier
+		var objectKeys []types.ObjectIdentifier
 		for _, obj := range resp.Contents {
 			if obj.Key != nil {
-				objectKeys = append(objectKeys, &s3.ObjectIdentifier{Key: obj.Key})
+				objectKeys = append(objectKeys, types.ObjectIdentifier{Key: obj.Key})
 			}
 		}
-		_, err = f.s3c.Client.DeleteObjectsWithContext(ctx, &s3.DeleteObjectsInput{
+		_, err = f.s3c.Client.DeleteObjects(ctx, &s3.DeleteObjectsInput{
 			Bucket: aws.String(bucket),
-			Delete: &s3.Delete{
+			Delete: &types.Delete{
 				Objects: objectKeys,
 			},
 		})
@@ -1070,7 +1066,7 @@ func (f *fsys) deleteObjectsByPrefix(ctx context.Context, bucket, prefix string)
 }
 
 func (f *fsys) deleteObject(ctx context.Context, bucket, key string) error {
-	_, err := f.s3c.Client.DeleteObjectWithContext(ctx, &s3.DeleteObjectInput{
+	_, err := f.s3c.Client.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 	})
@@ -1094,7 +1090,7 @@ func (f *fsys) getBucketInfo(ctx context.Context, bucket string) (fs.FileInfo, e
 	// check with s3 to see if the bucket exists
 	// HeadBucket requires same permissions as ListBucket
 	// this allows us to shortcut if the bucket doesn't exist without altering the cache.
-	_, err := f.s3c.Client.HeadBucketWithContext(ctx, &s3.HeadBucketInput{
+	_, err := f.s3c.Client.HeadBucket(ctx, &s3.HeadBucketInput{
 		Bucket: aws.String(bucket),
 	})
 	if f.logger != nil {
@@ -1115,7 +1111,7 @@ func (f *fsys) getBucketInfo(ctx context.Context, bucket string) (fs.FileInfo, e
 }
 
 func (f *fsys) listBuckets(ctx context.Context) iter.Seq2[fs.FileInfo, error] {
-	resp, err := f.s3c.Client.ListBucketsWithContext(ctx, &s3.ListBucketsInput{})
+	resp, err := f.s3c.Client.ListBuckets(ctx, &s3.ListBucketsInput{})
 	if f.logger != nil {
 		if err != nil {
 			f.logger.ErrorContext(ctx, "S3.ListBuckets", slog.Int("count", len(resp.Buckets)), slog.Any("err", err))
@@ -1135,7 +1131,7 @@ func (f *fsys) listBuckets(ctx context.Context) iter.Seq2[fs.FileInfo, error] {
 	return func(yield func(fs.FileInfo, error) bool) {
 		now := time.Now()
 		for _, bucket := range resp.Buckets {
-			if bucket != nil && bucket.Name != nil {
+			if bucket.Name != nil {
 				var info fs.FileInfo = &ninep.SimpleFileInfo{
 					FIName:    *bucket.Name,
 					FIMode:    fs.ModeDir | 0777,
@@ -1161,7 +1157,7 @@ func (f *fsys) listObjects(ctx context.Context, bucket, prefix string, em fs.Fil
 	return func(yield func(fs.FileInfo, error) bool) {
 		if f.listKeys {
 			for {
-				res, err := f.s3c.Client.ListObjectsV2(&input)
+				res, err := f.s3c.Client.ListObjectsV2(ctx, &input)
 				if f.logger != nil {
 					if err != nil {
 						f.logger.ErrorContext(ctx, "S3.ListObjectsV2", slog.String("bucket", bucket), slog.String("prefix", prefix), slog.Int("count", len(res.Contents)), slog.Any("err", err))
@@ -1181,14 +1177,14 @@ func (f *fsys) listObjects(ctx context.Context, bucket, prefix string, em fs.Fil
 				input.ContinuationToken = res.NextContinuationToken
 
 				for _, obj := range res.Contents {
-					if obj == nil || obj.Key == nil {
+					if obj.Key == nil {
 						continue
 					}
 					key := *obj.Key
 					if !strings.HasPrefix(key, "/") {
 						key = "/" + key
 					}
-					info := objectInfo(filepath.Base(key), obj, key)
+					info := objectInfo(filepath.Base(key), &obj, key)
 					f.setCachedObject(bucket, key, info)
 					if em != 0 {
 						info = ninep.FileInfoWithMode(info, info.Mode()|em)
@@ -1206,7 +1202,7 @@ func (f *fsys) listObjects(ctx context.Context, bucket, prefix string, em fs.Fil
 			// input.SetDelimiter("/")
 			seen := make(map[string]struct{})
 			for {
-				res, err := f.s3c.Client.ListObjectsV2(&input)
+				res, err := f.s3c.Client.ListObjectsV2(ctx, &input)
 				if f.logger != nil {
 					if err != nil {
 						f.logger.ErrorContext(ctx, "S3.ListObjectsV2", slog.String("bucket", bucket), slog.String("prefix", prefix), slog.Int("count", len(res.Contents)), slog.Any("err", err))
@@ -1226,7 +1222,7 @@ func (f *fsys) listObjects(ctx context.Context, bucket, prefix string, em fs.Fil
 				input.ContinuationToken = res.NextContinuationToken
 
 				for _, obj := range res.Contents {
-					if obj == nil || obj.Key == nil {
+					if obj.Key == nil {
 						continue
 					}
 					key := *obj.Key
@@ -1248,7 +1244,7 @@ func (f *fsys) listObjects(ctx context.Context, bucket, prefix string, em fs.Fil
 								prefixSize = 0
 							}
 						}
-						info := objectInfo(key[prefixSize:], obj, key)
+						info := objectInfo(key[prefixSize:], &obj, key)
 						f.setCachedObject(bucket, key, info)
 						if em != 0 {
 							info = ninep.FileInfoWithMode(info, info.Mode()|em)
@@ -1258,7 +1254,7 @@ func (f *fsys) listObjects(ctx context.Context, bucket, prefix string, em fs.Fil
 						}
 						seen[key] = struct{}{}
 					case 1: // object is a direct child of the prefix
-						info := objectInfo(parts[0], obj, key)
+						info := objectInfo(parts[0], &obj, key)
 						f.setCachedObject(bucket, key, info)
 						if em != 0 {
 							info = ninep.FileInfoWithMode(info, info.Mode()|em)
@@ -1300,7 +1296,7 @@ func (f *fsys) writeMetadata(ctx context.Context, bucket, key string, w *io.Pipe
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 	}
-	resp, err := f.s3c.Client.HeadObjectWithContext(ctx, &input)
+	resp, err := f.s3c.Client.HeadObject(ctx, &input)
 	if f.logger != nil {
 		if err != nil {
 			f.logger.ErrorContext(ctx, "S3.HeadObject", slog.String("bucket", bucket), slog.String("key", key), slog.Any("err", err))
@@ -1408,18 +1404,18 @@ func writePairs(w io.Writer, pairs map[string]any) error {
 }
 
 func awsErrCode(err error) string {
-	var awsErr awserr.Error
+	var awsErr smithy.APIError
 	if errors.As(err, &awsErr) {
-		return awsErr.Code()
+		return awsErr.ErrorCode()
 	}
 	return ""
 }
 
 func isNoSuchBucket(err error) bool {
-	return awsErrCode(err) == s3.ErrCodeNoSuchBucket
+	return awsErrCode(err) == "NoSuchBucket"
 }
 
-func (f *fsys) bucketCtlFile(bucket string, flag ninep.OpenMode) (ninep.FileHandle, error) {
+func (f *fsys) bucketCtlFile(ctx context.Context, bucket string, flag ninep.OpenMode) (ninep.FileHandle, error) {
 	h, r, w := ninep.DeviceHandle(flag)
 	if r == nil || w == nil {
 		r.Close()
@@ -1452,7 +1448,7 @@ func (f *fsys) bucketCtlFile(bucket string, flag ninep.OpenMode) (ninep.FileHand
 					if d <= 0 {
 						d = f.getSigningExpiry(bucket)
 					}
-					url, err := f.signedUploadURL(bucket, key, d)
+					url, err := f.signedUploadURL(ctx, bucket, key, d)
 					if err != nil {
 						fmt.Fprintf(w, "ok=false error=s3_error reason=%q\n", err.Error())
 						continue
@@ -1485,7 +1481,7 @@ func (f *fsys) bucketAclFile(ctx context.Context, bucket string, flag ninep.Open
 				Bucket: aws.String(bucket),
 			}
 			if acl := kv.GetOne("acl"); acl != "" {
-				input.ACL = aws.String(acl)
+				input.ACL = types.BucketCannedACL(acl)
 			}
 			if grantFullControl := kv.GetOne("grant_full_control"); grantFullControl != "" {
 				input.GrantFullControl = aws.String(grantFullControl)
@@ -1502,7 +1498,7 @@ func (f *fsys) bucketAclFile(ctx context.Context, bucket string, flag ninep.Open
 			if grantWriteACP := kv.GetOne("grant_write_acp"); grantWriteACP != "" {
 				input.GrantWriteACP = aws.String(grantWriteACP)
 			}
-			_, err = f.s3c.Client.PutBucketAcl(&input)
+			_, err = f.s3c.Client.PutBucketAcl(ctx, &input)
 			if f.logger != nil {
 				if err != nil {
 					f.logger.ErrorContext(ctx, "S3.PutBucketAcl", slog.String("bucket", bucket), slog.Any("err", err))
@@ -1519,21 +1515,21 @@ func (f *fsys) bucketAclFile(ctx context.Context, bucket string, flag ninep.Open
 			input := s3.GetBucketAclInput{
 				Bucket: aws.String(bucket),
 			}
-			out, err := f.s3c.Client.GetBucketAcl(&input)
+			out, err := f.s3c.Client.GetBucketAcl(ctx, &input)
 			if err != nil {
 				fmt.Fprintf(w, "ok=false error=s3_error reason=%q\n", err.Error())
 				return
 			}
 			for _, grant := range out.Grants {
 				pairs := [][2]string{}
-				pairs = append(pairs, [2]string{"permission", aws.StringValue(grant.Permission)})
+				pairs = append(pairs, [2]string{"permission", string(grant.Permission)})
 
 				if g := grant.Grantee; g != nil {
-					pairs = append(pairs, [2]string{"id", aws.StringValue(g.ID)})
-					pairs = append(pairs, [2]string{"name", aws.StringValue(g.DisplayName)})
-					pairs = append(pairs, [2]string{"email", aws.StringValue(g.EmailAddress)})
-					pairs = append(pairs, [2]string{"type", aws.StringValue(g.Type)})
-					pairs = append(pairs, [2]string{"uri", aws.StringValue(g.URI)})
+					pairs = append(pairs, [2]string{"id", aws.ToString(g.ID)})
+					pairs = append(pairs, [2]string{"name", aws.ToString(g.DisplayName)})
+					pairs = append(pairs, [2]string{"email", aws.ToString(g.EmailAddress)})
+					pairs = append(pairs, [2]string{"type", string(g.Type)})
+					pairs = append(pairs, [2]string{"uri", aws.ToString(g.URI)})
 				}
 				fmt.Fprintf(w, "%s\n", kvp.NonEmptyKeyPairs(pairs))
 			}
@@ -1542,12 +1538,13 @@ func (f *fsys) bucketAclFile(ctx context.Context, bucket string, flag ninep.Open
 	return h, nil
 }
 
-func (f *fsys) signedDownloadURL(bucket, key string, expires time.Duration) (string, error) {
-	req, _ := f.s3c.Client.GetObjectRequest(&s3.GetObjectInput{
+func (f *fsys) signedDownloadURL(ctx context.Context, bucket, key string, expires time.Duration) (string, error) {
+	signer := s3.NewPresignClient(f.s3c.Client)
+	presignedRequest, err := signer.PresignGetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
-	})
-	url, err := req.Presign(expires)
+	}, s3.WithPresignExpires(expires))
+
 	if f.logger != nil {
 		if err != nil {
 			f.logger.Error("S3.Presign.GetObjectRequest", slog.String("bucket", bucket), slog.String("key", key), slog.Duration("expires", expires), slog.Any("err", err))
@@ -1558,24 +1555,26 @@ func (f *fsys) signedDownloadURL(bucket, key string, expires time.Duration) (str
 	if err != nil {
 		return "", err
 	}
-	return url, nil
+	return presignedRequest.URL, nil
 }
 
-func (f *fsys) signedUploadURL(bucket, key string, expires time.Duration) (string, error) {
-	req, _ := f.s3c.Client.PutObjectRequest(&s3.PutObjectInput{
+func (f *fsys) signedUploadURL(ctx context.Context, bucket, key string, expires time.Duration) (string, error) {
+	signer := s3.NewPresignClient(f.s3c.Client)
+	presignedRequest, err := signer.PresignPutObject(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
-	})
-	url, err := req.Presign(expires)
-	if err != nil {
-		f.logger.Error("S3.Presign.PutObjectRequest", slog.String("bucket", bucket), slog.String("key", key), slog.Duration("expires", expires), slog.Any("err", err))
-	} else {
-		f.logger.Info("S3.Presign.PutObjectRequest", slog.String("bucket", bucket), slog.String("key", key), slog.Duration("expires", expires))
+	}, s3.WithPresignExpires(expires))
+	if f.logger != nil {
+		if err != nil {
+			f.logger.Error("S3.Presign.PutObjectRequest", slog.String("bucket", bucket), slog.String("key", key), slog.Duration("expires", expires), slog.Any("err", err))
+		} else {
+			f.logger.Info("S3.Presign.PutObjectRequest", slog.String("bucket", bucket), slog.String("key", key), slog.Duration("expires", expires))
+		}
 	}
 	if err != nil {
 		return "", err
 	}
-	return url, nil
+	return presignedRequest.URL, nil
 }
 
 func (f *fsys) signExpiresFile(bucket string) (ninep.FileHandle, error) {
@@ -1618,7 +1617,7 @@ func (f *fsys) signUploadKeyFile(bucket string) (ninep.FileHandle, error) {
 	return h, nil
 }
 
-func (f *fsys) signUploadUrlFile(bucket string, flag ninep.OpenMode) (ninep.FileHandle, error) {
+func (f *fsys) signUploadUrlFile(ctx context.Context, bucket string, flag ninep.OpenMode) (ninep.FileHandle, error) {
 	if flag.IsWriteable() {
 		return nil, fmt.Errorf("signUploadUrlFile is not writeable")
 	}
@@ -1627,7 +1626,7 @@ func (f *fsys) signUploadUrlFile(bucket string, flag ninep.OpenMode) (ninep.File
 		return nil, fmt.Errorf("no upload key for bucket %q", bucket)
 	}
 	d := f.getSigningExpiry(bucket)
-	url, err := f.signedUploadURL(bucket, key, d)
+	url, err := f.signedUploadURL(ctx, bucket, key, d)
 	if err != nil {
 		return nil, err
 	}

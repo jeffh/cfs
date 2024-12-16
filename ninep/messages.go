@@ -217,6 +217,10 @@ func (m OpenMode) IsWriteable() bool {
 	return m.IsWriteOnly() || m.IsReadWrite()
 }
 
+func (m OpenMode) IsTruncate() bool {
+	return m&OTRUNC != 0
+}
+
 func (m OpenMode) RequestsMutation() bool {
 	return m.IsWriteable() || m&(OTRUNC|ORCLOSE) != 0
 }

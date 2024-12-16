@@ -1,20 +1,22 @@
 package s3fs
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/awserr"
-	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/smithy-go"
 	"github.com/jeffh/cfs/ninep"
 	"github.com/jeffh/cfs/ninep/kvp"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
 
-func bucketCorsFile(s3c *S3Ctx, bucketName string) *ninep.SimpleFile {
+func bucketCorsFile(ctx context.Context, s3c *S3Ctx, bucketName string) *ninep.SimpleFile {
 	return &ninep.SimpleFile{
 		FileInfo: &ninep.SimpleFileInfo{
 			FIName: "cors",
@@ -30,11 +32,12 @@ func bucketCorsFile(s3c *S3Ctx, bucketName string) *ninep.SimpleFile {
 				input := s3.GetBucketCorsInput{
 					Bucket: aws.String(bucketName),
 				}
-				out, err := s3c.Client.GetBucketCors(&input)
+				out, err := s3c.Client.GetBucketCors(ctx, &input)
 
 				canRead := true
-				if e, ok := err.(awserr.Error); ok {
-					if e.Code() == "NoSuchCORSConfiguration" {
+				var awsErr smithy.APIError
+				if errors.As(err, &awsErr) {
+					if awsErr.ErrorCode() == "NoSuchCORSConfiguration" {
 						rw.Close()
 						canRead = false
 						err = nil
@@ -49,37 +52,34 @@ func bucketCorsFile(s3c *S3Ctx, bucketName string) *ninep.SimpleFile {
 					go func() {
 						defer rw.Close()
 						for _, rule := range out.CORSRules {
-							if rule == nil {
-								continue
-							}
 							pairs := [][2]string{}
-							pairs = append(pairs, [2]string{"max_age", fmt.Sprintf("%d", aws.Int64Value(rule.MaxAgeSeconds))})
+							pairs = append(pairs, [2]string{"max_age", fmt.Sprintf("%d", aws.ToInt32(rule.MaxAgeSeconds))})
 
 							values := make([]string, 0, 64)
 							{
 								for _, h := range rule.AllowedHeaders {
-									values = append(values, aws.StringValue(h))
+									values = append(values, h)
 								}
 								pairs = append(pairs, [2]string{"allowed_headers", strings.Join(values, ",")})
 								values = values[:0]
 							}
 							{
 								for _, h := range rule.AllowedMethods {
-									values = append(values, aws.StringValue(h))
+									values = append(values, h)
 								}
 								pairs = append(pairs, [2]string{"allowed_methods", strings.Join(values, ",")})
 								values = values[:0]
 							}
 							{
 								for _, h := range rule.AllowedOrigins {
-									values = append(values, aws.StringValue(h))
+									values = append(values, h)
 								}
 								pairs = append(pairs, [2]string{"allowed_origins", strings.Join(values, ",")})
 								values = values[:0]
 							}
 							{
 								for _, h := range rule.ExposeHeaders {
-									values = append(values, aws.StringValue(h))
+									values = append(values, h)
 								}
 								pairs = append(pairs, [2]string{"expose_headers", strings.Join(values, ",")})
 								values = values[:0]

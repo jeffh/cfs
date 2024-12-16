@@ -4,8 +4,7 @@ import (
 	"errors"
 	"io/fs"
 
-	"github.com/aws/aws-sdk-go/aws/awserr"
-	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/smithy-go"
 	"github.com/jeffh/cfs/ninep"
 )
 
@@ -15,22 +14,18 @@ var (
 )
 
 func mapAwsErrToNinep(err error) error {
-	switch e := err.(type) {
-	case awserr.Error:
-		switch e.Code() {
+	var ae smithy.APIError
+	if errors.As(err, &ae) {
+		switch ae.ErrorCode() {
 		case "AccessDenied", "AllAccessDisabled":
 			return ninep.ErrInvalidAccess
-		case s3.ErrCodeBucketAlreadyExists:
-			return ninep.ErrInvalidAccess
-		case s3.ErrCodeNoSuchKey:
+		case "BucketAlreadyExists":
+			return fs.ErrExist
+		case "NoSuchKey":
 			return fs.ErrNotExist
-		case s3.ErrCodeNoSuchBucket:
+		case "NoSuchBucket":
 			return fs.ErrNotExist
-		default:
-			break
 		}
-		return e
-	default:
-		return err
 	}
+	return err
 }
