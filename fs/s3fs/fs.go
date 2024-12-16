@@ -13,7 +13,6 @@ import (
 	"io/fs"
 	"iter"
 	"log/slog"
-	"net/url"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -52,6 +51,7 @@ var mx = ninep.NewMuxWith[string]().
 	Define().Path("/buckets/{bucket}/acl").As("bucketAcl")
 
 type Options struct {
+	Endpoint string
 	//  Flatten makes listing an object key prefix returns the full keys instead of
 	//  just the logical directory names. This can be more efficient to use S3
 	//  API at the cost of breaking some of the file system abstraction layer.
@@ -64,14 +64,6 @@ type S3Ctx struct {
 	Client *s3.Client
 }
 
-func isB2Endpoint(endpoint string) bool {
-	uri, err := url.Parse(endpoint)
-	if err != nil {
-		return false
-	}
-	return strings.HasSuffix(uri.Host, ".backblazeb2.com") && strings.HasPrefix(uri.Host, "s3.")
-}
-
 // New returns a reasonable default configuration of an S3 FileSystem, an empty
 // string of endpoint defaults to AWS' S3 service.
 //
@@ -79,13 +71,9 @@ func isB2Endpoint(endpoint string) bool {
 //   - endpoint defaults to AWS' S3 service if it is an empty string.
 //   - opt contains options for configuring the Filesystem
 func New(endpoint string, opt Options) ninep.FileSystem {
-	cfg, err := config.LoadDefaultConfig(context.Background(),
-		config.WithEndpointResolver(aws.EndpointResolverFunc(func(service, region string) (aws.Endpoint, error) {
-			return aws.Endpoint{
-				URL:           endpoint,
-				SigningRegion: region,
-			}, nil
-		})),
+	cfg, err := config.LoadDefaultConfig(
+		context.Background(),
+		config.WithBaseEndpoint(endpoint),
 	)
 	if err != nil {
 		panic(err)
