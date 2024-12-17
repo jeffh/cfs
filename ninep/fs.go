@@ -99,13 +99,27 @@ func statToFileInfo(it iter.Seq2[Stat, error]) iter.Seq2[fs.FileInfo, error] {
 	}
 }
 
-func MapFileInfoIterator(itr iter.Seq2[fs.FileInfo, error], f func(fs.FileInfo) fs.FileInfo) iter.Seq2[fs.FileInfo, error] {
-	return func(yield func(fs.FileInfo, error) bool) {
-		for fi, err := range itr {
-			if fi != nil {
-				fi = f(fi)
+func Map2[X, Y any](itr iter.Seq2[X, error], f func(X) Y) iter.Seq2[Y, error] {
+	return func(yield func(Y, error) bool) {
+		for x, err := range itr {
+			if !yield(f(x), err) {
+				return
 			}
-			if !yield(fi, err) {
+		}
+	}
+}
+
+func errorIterator[X any](err error) iter.Seq2[X, error] {
+	return func(yield func(X, error) bool) {
+		var empty X
+		yield(empty, err)
+	}
+}
+
+func sliceIterator[X any](slice []X) iter.Seq2[X, error] {
+	return func(yield func(X, error) bool) {
+		for _, x := range slice {
+			if !yield(x, nil) {
 				return
 			}
 		}
@@ -113,19 +127,11 @@ func MapFileInfoIterator(itr iter.Seq2[fs.FileInfo, error], f func(fs.FileInfo) 
 }
 
 func FileInfoErrorIterator(err error) iter.Seq2[fs.FileInfo, error] {
-	return func(yield func(fs.FileInfo, error) bool) {
-		yield(nil, err)
-	}
+	return errorIterator[fs.FileInfo](err)
 }
 
 func FileInfoSliceIterator(fi []fs.FileInfo) iter.Seq2[fs.FileInfo, error] {
-	return func(yield func(fs.FileInfo, error) bool) {
-		for _, f := range fi {
-			if !yield(f, nil) {
-				return
-			}
-		}
-	}
+	return sliceIterator(fi)
 }
 
 func FileInfoSliceIteratorWithUsers(fi []fs.FileInfo, uid, gid, muid string) iter.Seq2[fs.FileInfo, error] {

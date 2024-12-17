@@ -99,7 +99,7 @@ func (fsm *FileSystemMount) OpenFile(ctx context.Context, path string, flag nine
 }
 func (fsm *FileSystemMount) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, error] {
 	it := fsm.FS.ListDir(ctx, fsm.Join(path))
-	return ninep.MapFileInfoIterator(it, func(fi os.FileInfo) os.FileInfo {
+	return ninep.Map2(it, func(fi fs.FileInfo) fs.FileInfo {
 		name := fi.Name()
 		if strings.HasPrefix(fsm.Prefix, name) {
 			name = "/" + name[len(fsm.Prefix):]

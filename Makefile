@@ -6,6 +6,7 @@ OPS := $(shell which ops)
 
 # Example goargs
 # GOARGS=-race for race condition checking
+GOARGS=-trimpath
 
 all: $(CMDS)
 

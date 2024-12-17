@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"iter"
+	"log/slog"
 	"slices"
 	"strconv"
 	"time"
@@ -104,10 +105,17 @@ func (n *Ndb) readFile(fileToRead string, lastSeen time.Time) ([]byte, time.Time
 	ctx := context.Background()
 	fi, err := n.sys.Stat(ctx, fileToRead)
 	if err != nil {
+		slog.Warn("ndb: file not found", "file", fileToRead, "error", err)
 		return nil, time.Time{}, err
 	}
 	modTime := fi.ModTime()
+	// this check is to incase the underlying filesystem doesn't support modtime,
+	// then we should read at least once
+	if modTime.IsZero() {
+		modTime = time.Now()
+	}
 	if !modTime.After(lastSeen) {
+		slog.Debug("ndb: file remains unchanged", "file", fileToRead)
 		return nil, lastSeen, nil
 	}
 
@@ -115,6 +123,7 @@ func (n *Ndb) readFile(fileToRead string, lastSeen time.Time) ([]byte, time.Time
 	if err != nil {
 		return nil, modTime, err
 	}
+	slog.Debug("ndb: load", "file", fileToRead)
 	buf, err := io.ReadAll(ninep.Reader(f))
 	f.Close()
 	if err != nil {
@@ -137,6 +146,7 @@ func (n *Ndb) readFiles(skip int) (int, error) {
 			return count, err
 		}
 		if buf == nil {
+			count++
 			continue
 		}
 		n.data[i] = buf

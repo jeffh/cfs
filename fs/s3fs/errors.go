@@ -13,6 +13,17 @@ var (
 	ErrMustOpenForReading     = errors.New("must open for reading results")
 )
 
+func isFatalAwsErr(err error) bool {
+	var ae smithy.APIError
+	if errors.As(err, &ae) {
+		switch ae.ErrorCode() {
+		case "AccessDenied", "AllAccessDisabled":
+			return true
+		}
+	}
+	return false
+}
+
 func mapAwsErrToNinep(err error) error {
 	var ae smithy.APIError
 	if errors.As(err, &ae) {

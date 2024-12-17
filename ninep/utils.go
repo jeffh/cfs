@@ -28,7 +28,7 @@ func CreateLogger(level string, prefix string, L *slog.Logger) *slog.Logger {
 	}
 
 	if L == nil {
-		L = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		L = slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 			Level: minLevel,
 		})).WithGroup(prefix)
 	} else {

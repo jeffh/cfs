@@ -1,31 +1,26 @@
 package ndb
 
 import (
-	"context"
-	"io/fs"
+	"embed"
 	"testing"
-	"time"
 
+	"github.com/jeffh/cfs/fs"
 	nfs "github.com/jeffh/cfs/fs"
 	"github.com/jeffh/cfs/ninep"
 )
 
-type memSys struct {
-	tree map[string]string
-}
+//go:embed example
+var exampleFiles embed.FS
 
-func (m *memSys) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (ninep.FileHandle, error) {
-	if s, ok := m.tree[path]; ok {
-		return &ninep.ReadOnlyMemoryFileHandle{Contents: []byte(s)}, nil
-	}
-	return nil, fs.ErrNotExist
-}
-
-func (m *memSys) Stat(ctx context.Context, path string) (fs.FileInfo, error) {
-	if _, ok := m.tree[path]; ok {
-		return &ninep.SimpleFileInfo{FIName: path, FIModTime: time.Now()}, nil
-	}
-	return nil, fs.ErrNotExist
+func TestReadingFromEmbedFS(t *testing.T) {
+	m := fs.ReadOnlyFS(exampleFiles)
+	t.Run("Open properly opens recursively", func(t *testing.T) {
+		db := mustOpen(t, m, "example/start.ndb")
+		records := db.SearchSlice("givenName", "John")
+		if len(records) != 1 {
+			t.Fatalf("expected 1 record, got %d (%#v)", len(records), db.AllSlice())
+		}
+	})
 }
 
 func TestSimpleParse(t *testing.T) {
@@ -126,6 +121,7 @@ givenName=Jane familyName=Doe`,
 		t.Fatalf("expected givenName to be John, got %s", records[0].Get("givenName"))
 	}
 }
+
 func mustOpen(t *testing.T, sys ninep.FileSystem, path string) *Ndb {
 	t.Helper()
 	db, err := Open(sys, path)

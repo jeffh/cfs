@@ -941,6 +941,12 @@ func (f *fsys) Walk(ctx context.Context, parts []string) ([]fs.FileInfo, error) 
 			if err != nil {
 				return nil, err
 			}
+			if !f.listKeys {
+				subdirs := strings.Split(key, "/")
+				for _, subdir := range subdirs[:len(subdirs)-1] {
+					infos = append(infos, ninep.DirFileInfo(subdir))
+				}
+			}
 			infos = append(infos, info)
 			found = true
 			break
@@ -964,6 +970,12 @@ func (f *fsys) Walk(ctx context.Context, parts []string) ([]fs.FileInfo, error) 
 		for info, err := range f.listObjects(ctx, bucket, key, fs.ModeDevice) {
 			if err != nil {
 				return nil, err
+			}
+			if !f.listKeys {
+				subdirs := strings.Split(key, "/")
+				for _, subdir := range subdirs[:len(subdirs)-1] {
+					infos = append(infos, ninep.DirFileInfo(subdir))
+				}
 			}
 			infos = append(infos, info)
 			found = true
@@ -1085,7 +1097,9 @@ func (f *fsys) getBucketInfo(ctx context.Context, bucket string) (fs.FileInfo, e
 		f.logger.InfoContext(ctx, "S3.HeadBucket", slog.String("bucket", bucket), slog.Any("err", err))
 	}
 	if err != nil {
-		return nil, mapAwsErrToNinep(err)
+		if isFatalAwsErr(err) {
+			return nil, mapAwsErrToNinep(err)
+		}
 	}
 	for info, err := range f.listBuckets(ctx) {
 		if err != nil {
@@ -1138,17 +1152,21 @@ func (f *fsys) listBuckets(ctx context.Context) iter.Seq2[fs.FileInfo, error] {
 }
 
 func (f *fsys) listObjects(ctx context.Context, bucket, prefix string, em fs.FileMode) iter.Seq2[fs.FileInfo, error] {
-	input := s3.ListObjectsV2Input{
-		Bucket: aws.String(bucket),
-		Prefix: aws.String(prefix),
-	}
 	return func(yield func(fs.FileInfo, error) bool) {
+		input := s3.ListObjectsV2Input{
+			Bucket: aws.String(bucket),
+			Prefix: aws.String(prefix),
+		}
 		if f.listKeys {
 			for {
 				res, err := f.s3c.Client.ListObjectsV2(ctx, &input)
 				if f.logger != nil {
 					if err != nil {
-						f.logger.ErrorContext(ctx, "S3.ListObjectsV2", slog.String("bucket", bucket), slog.String("prefix", prefix), slog.Int("count", len(res.Contents)), slog.Any("err", err))
+						if isNoSuchBucket(err) {
+							f.logger.ErrorContext(ctx, "S3.ListObjectsV2", slog.String("bucket", bucket), slog.String("prefix", prefix), slog.Int("count", len(res.Contents)), slog.Any("err", err))
+						} else {
+							f.logger.WarnContext(ctx, "S3.ListObjectsV2", slog.String("bucket", bucket), slog.String("prefix", prefix), slog.Int("count", len(res.Contents)), slog.Any("err", err))
+						}
 					} else {
 						f.logger.InfoContext(ctx, "S3.ListObjectsV2", slog.String("bucket", bucket), slog.String("prefix", prefix), slog.Int("count", len(res.Contents)))
 					}
@@ -1193,7 +1211,11 @@ func (f *fsys) listObjects(ctx context.Context, bucket, prefix string, em fs.Fil
 				res, err := f.s3c.Client.ListObjectsV2(ctx, &input)
 				if f.logger != nil {
 					if err != nil {
-						f.logger.ErrorContext(ctx, "S3.ListObjectsV2", slog.String("bucket", bucket), slog.String("prefix", prefix), slog.Int("count", len(res.Contents)), slog.Any("err", err))
+						if isNoSuchBucket(err) {
+							f.logger.ErrorContext(ctx, "S3.ListObjectsV2", slog.String("bucket", bucket), slog.String("prefix", prefix), slog.String("err", err.Error()))
+						} else {
+							f.logger.WarnContext(ctx, "S3.ListObjectsV2", slog.String("bucket", bucket), slog.String("prefix", prefix), slog.String("err", err.Error()))
+						}
 					} else {
 						f.logger.InfoContext(ctx, "S3.ListObjectsV2", slog.String("bucket", bucket), slog.String("prefix", prefix), slog.Int("count", len(res.Contents)))
 					}

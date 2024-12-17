@@ -49,6 +49,9 @@ func (h *directoryHandle) ReadAt(p []byte, offset int64) (int, error) {
 	}
 	if h.next == nil {
 		it := h.fs.ListDir(h.ctx, h.path)
+		if it == nil {
+			panic("nil iterator")
+		}
 		h.next, h.stop = iter.Pull2(it)
 		h.buffer = make([]Stat, 32)
 		h.rem = h.buffer[:0]

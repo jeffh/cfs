@@ -427,7 +427,7 @@ func (f *walkableTraceFileSystem) Walk(ctx context.Context, parts []string) ([]o
 				for i, info := range infos {
 					f.Logger.Info(
 						"FS.Walk.returnItem",
-						slog.Any("parts", parts),
+						slog.Any("parts", parts[:i+1]),
 						slog.Int("i", i),
 						slog.String("name", info.Name()),
 					)
