@@ -242,6 +242,7 @@ func (n *Ndb) byPredicate(allow func(rec []byte) bool) iter.Seq[Record] {
 				}
 				first, _ := utf8.DecodeRune(line)
 
+				// is this line a new record?
 				if !unicode.IsSpace(first) {
 					if len(recBytes) > 0 {
 						if allow(recBytes) {
@@ -251,16 +252,20 @@ func (n *Ndb) byPredicate(allow func(rec []byte) bool) iter.Seq[Record] {
 								continue
 							}
 							if !yield(results) {
+								recBytes = recBytes[:0]
 								break loop
 							}
-							recBytes = recBytes[:0]
 						}
 					}
+					results.zero()
 					recBytes = recBytes[:0]
 				}
+				// append attributes as one line for parsing
 				line = bytes.TrimSpace(line)
 				if len(line) > 0 {
-					recBytes = append(recBytes, ' ')
+					if len(recBytes) == 0 {
+						recBytes = append(recBytes, ' ')
+					}
 					recBytes = append(recBytes, line...)
 					recBytes = append(recBytes, ' ')
 				}
@@ -269,7 +274,10 @@ func (n *Ndb) byPredicate(allow func(rec []byte) bool) iter.Seq[Record] {
 				if allow(recBytes) {
 					err := parseRecord(recBytes, &results)
 					if err == nil {
-						yield(results)
+						if !yield(results) {
+							recBytes = recBytes[:0]
+							break
+						}
 					} else {
 						// fmt.Printf("parseRecord error: %v\n", err)
 					}

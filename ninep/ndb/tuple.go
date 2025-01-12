@@ -13,6 +13,8 @@ type Tuple struct {
 
 type Record []Tuple
 
+func (r *Record) zero() { *r = (*r)[:0] }
+
 // MapToRecord converts a map of strings to a Record. The keys of the map are the attributes and the values are the values.
 // Ordering is by sorted keys.
 func MapToRecord(m map[string]string) Record {

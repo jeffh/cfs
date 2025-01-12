@@ -34,6 +34,13 @@ givenName=Jane familyName=Doe`,
 givenName=Jane familyName=Doe`,
 			"noValue.ndb": `givenName=John familyName=Doe person`,
 			"quoted.mdb":  `person name="John Doe"`,
+			"similar.mdb": `
+provider=openai model=gpt-4o
+    price_input=2.500
+
+provider=openai model=gpt-4o tokens
+    max_input_tokens=128000
+`,
 		},
 	)
 	t.Run("test.ndb", func(t *testing.T) {
@@ -101,6 +108,21 @@ givenName=Jane familyName=Doe`,
 		}
 		if records[0].Get("name") != "John Doe" {
 			t.Fatalf("expected name to be John Doe, got %s (%#v)", records[0].Get("name"), records[0])
+		}
+	})
+
+	t.Run("similar.mdb", func(t *testing.T) {
+		db := mustOpenOne(t, m, "similar.mdb")
+		values := []string{
+			"provider=openai model=gpt-4o price_input=2.500",
+			"provider=openai model=gpt-4o tokens= max_input_tokens=128000",
+		}
+		i := 0
+		for record := range db.Search("provider", "openai") {
+			if record.String() != values[i] {
+				t.Fatalf("expected %q, got %q", values[i], record.String())
+			}
+			i++
 		}
 	})
 }
