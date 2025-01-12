@@ -60,6 +60,11 @@ givenName=Jane familyName=Doe`,
 		if len(records) != 2 {
 			t.Fatalf("expected 2 records, got %d", len(records))
 		}
+
+		records = db.SearchKeySlice("givenName")
+		if len(records) != 2 {
+			t.Fatalf("expected 2 records, got %d", len(records))
+		}
 	})
 
 	t.Run("multiline.ndb", func(t *testing.T) {

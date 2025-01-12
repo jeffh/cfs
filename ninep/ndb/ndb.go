@@ -200,9 +200,29 @@ func (n *Ndb) First(attr, val string) Record {
 //	person name="John Doe"
 func (n *Ndb) Search(attr, val string) iter.Seq[Record] {
 	return n.byPredicate(func(rec []byte) bool {
-		return hasAttr(rec, attr, val)
+		return hasAttrVal(rec, attr, val)
 	})
 }
+
+// SearchKey returns an iterator that yields records with the given attribute.
+//
+// Example:
+//
+//	for rec := range db.Search("name") {
+//	   rec.Get("name")
+//	}
+//
+// This will yield all records with the attribute "person" like:
+//
+//	person name="John Doe"
+func (n *Ndb) SearchKey(attr string) iter.Seq[Record] {
+	return n.byPredicate(func(rec []byte) bool {
+		return hasAttr(rec, attr)
+	})
+}
+
+// SearchKeySlice returns a slice of records matching the given attribute and value.
+func (n *Ndb) SearchKeySlice(attr string) []Record { return toSlice(n.SearchKey(attr)) }
 
 func (n *Ndb) byPredicate(allow func(rec []byte) bool) iter.Seq[Record] {
 	var results Record
@@ -260,7 +280,21 @@ func (n *Ndb) byPredicate(allow func(rec []byte) bool) iter.Seq[Record] {
 	}
 }
 
-func hasAttr(recBytes []byte, attr, value string) bool {
+func hasAttr(recBytes []byte, attr string) bool {
+	attrKey := []byte(" " + attr + "=")
+	off := 0
+	for off < len(recBytes) {
+		idx := bytes.Index(recBytes[off:], attrKey)
+		if idx == -1 {
+			return bytes.Index(recBytes, []byte(" "+attr+" ")) != -1
+		}
+
+		return true
+	}
+	return false
+}
+
+func hasAttrVal(recBytes []byte, attr, value string) bool {
 	attrKey := []byte(" " + attr + "=")
 	off := 0
 	for off < len(recBytes) {
