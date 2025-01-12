@@ -251,9 +251,9 @@ func (n *Ndb) byPredicate(allow func(rec []byte) bool) iter.Seq[Record] {
 								continue
 							}
 							if !yield(results) {
-								recBytes = recBytes[:0]
 								break loop
 							}
+							recBytes = recBytes[:0]
 						}
 					}
 					recBytes = recBytes[:0]
