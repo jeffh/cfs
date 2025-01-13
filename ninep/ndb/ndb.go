@@ -14,7 +14,6 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	nfs "github.com/jeffh/cfs/fs"
 	"github.com/jeffh/cfs/ninep"
 )
 
@@ -38,7 +37,7 @@ type Ndb struct {
 // Search resolves follows the ordering of files as they are specified.
 func Open(sys ninep.FileSystem, filepath string) (*Ndb, error) {
 	if sys == nil {
-		sys = nfs.Dir("/")
+		panic("sys is required")
 	}
 	db := &Ndb{
 		files: []string{filepath},
@@ -73,7 +72,7 @@ func Open(sys ninep.FileSystem, filepath string) (*Ndb, error) {
 // open other database references.
 func OpenOne(sys ninep.FileSystem, filepath string) (*Ndb, error) {
 	if sys == nil {
-		sys = nfs.Dir("/")
+		panic("sys is required")
 	}
 	db := &Ndb{
 		files: []string{filepath},
