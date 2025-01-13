@@ -56,7 +56,7 @@ func Open(sys ninep.FileSystem, filepath string) (*Ndb, error) {
 			break
 		}
 		count += n
-		for record := range db.Search("database", "") {
+		for record := range db.Search(HasAttrValue("database", "")) {
 			for _, file := range record.GetAll("file") {
 				if !slices.Contains(db.files, file) {
 					db.files = append(db.files, file)
@@ -180,11 +180,11 @@ func (n *Ndb) All() iter.Seq[Record] {
 func (n *Ndb) AllSlice() []Record { return toSlice(n.All()) }
 
 // SearchSlice returns a slice of records matching the given attribute and value.
-func (n *Ndb) SearchSlice(attr, val string) []Record { return toSlice(n.Search(attr, val)) }
+func (n *Ndb) SearchSlice(preds ...SearchPredicate) []Record { return toSlice(n.Search(preds...)) }
 
 // First returns the first record that matches the given attribute and value.
 func (n *Ndb) First(attr, val string) Record {
-	return first(n.Search(attr, val))
+	return first(n.Search(HasAttrValue(attr, val)))
 }
 
 // Search returns an iterator that yields records matching the given attribute and value.
@@ -198,31 +198,35 @@ func (n *Ndb) First(attr, val string) Record {
 // This will yield all records with the attribute "person" like:
 //
 //	person name="John Doe"
-func (n *Ndb) Search(attr, val string) iter.Seq[Record] {
+func (n *Ndb) Search(preds ...SearchPredicate) iter.Seq[Record] {
 	return n.byPredicate(func(rec []byte) bool {
-		return hasAttrVal(rec, attr, val)
+		for _, pred := range preds {
+			if !pred.match(rec) {
+				return false
+			}
+		}
+		return true
 	})
 }
 
-// SearchKey returns an iterator that yields records with the given attribute.
-//
-// Example:
-//
-//	for rec := range db.Search("name") {
-//	   rec.Get("name")
-//	}
-//
-// This will yield all records with the attribute "person" like:
-//
-//	person name="John Doe"
-func (n *Ndb) SearchKey(attr string) iter.Seq[Record] {
-	return n.byPredicate(func(rec []byte) bool {
+type SearchPredicate interface{ match(rec []byte) bool }
+type searchPredicate func(rec []byte) bool
+
+func (sp searchPredicate) match(rec []byte) bool { return sp(rec) }
+
+// HasAttr returns a predicate that matches records with the given attribute.
+func HasAttr(attr string) SearchPredicate {
+	return searchPredicate(func(rec []byte) bool {
 		return hasAttr(rec, attr)
 	})
 }
 
-// SearchKeySlice returns a slice of records matching the given attribute and value.
-func (n *Ndb) SearchKeySlice(attr string) []Record { return toSlice(n.SearchKey(attr)) }
+// HasAttrValue returns a predicate that matches records with the given attribute and value.
+func HasAttrValue(attr, value string) SearchPredicate {
+	return searchPredicate(func(rec []byte) bool {
+		return hasAttrVal(rec, attr, value)
+	})
+}
 
 func (n *Ndb) byPredicate(allow func(rec []byte) bool) iter.Seq[Record] {
 	var results Record

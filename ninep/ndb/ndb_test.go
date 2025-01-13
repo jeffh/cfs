@@ -16,7 +16,7 @@ func TestReadingFromEmbedFS(t *testing.T) {
 	m := fs.ReadOnlyFS(exampleFiles)
 	t.Run("Open properly opens recursively", func(t *testing.T) {
 		db := mustOpen(t, m, "example/start.ndb")
-		records := db.SearchSlice("givenName", "John")
+		records := db.SearchSlice(HasAttrValue("givenName", "John"))
 		if len(records) != 1 {
 			t.Fatalf("expected 1 record, got %d (%#v)", len(records), db.AllSlice())
 		}
@@ -45,7 +45,7 @@ provider=openai model=gpt-4o tokens
 	)
 	t.Run("test.ndb", func(t *testing.T) {
 		db := mustOpenOne(t, m, "test.ndb")
-		records := db.SearchSlice("givenName", "John")
+		records := db.SearchSlice(HasAttrValue("givenName", "John"))
 		if len(records) != 1 {
 			t.Fatalf("expected 1 record, got %d", len(records))
 		}
@@ -59,16 +59,16 @@ provider=openai model=gpt-4o tokens
 
 	t.Run("multiple.ndb", func(t *testing.T) {
 		db := mustOpenOne(t, m, "multiple.ndb")
-		records := db.SearchSlice("givenName", "Jane")
+		records := db.SearchSlice(HasAttrValue("givenName", "Jane"))
 		if len(records) != 1 {
 			t.Fatalf("expected 1 record, got %d", len(records))
 		}
-		records = db.SearchSlice("familyName", "Doe")
+		records = db.SearchSlice(HasAttrValue("familyName", "Doe"))
 		if len(records) != 2 {
 			t.Fatalf("expected 2 records, got %d", len(records))
 		}
 
-		records = db.SearchKeySlice("givenName")
+		records = db.SearchSlice(HasAttr("givenName"))
 		if len(records) != 2 {
 			t.Fatalf("expected 2 records, got %d", len(records))
 		}
@@ -76,14 +76,14 @@ provider=openai model=gpt-4o tokens
 
 	t.Run("multiline.ndb", func(t *testing.T) {
 		db := mustOpenOne(t, m, "multiline.ndb")
-		records := db.SearchSlice("givenName", "John")
+		records := db.SearchSlice(HasAttrValue("givenName", "John"))
 		if len(records) != 1 {
 			t.Fatalf("expected 1 record, got %d", len(records))
 		}
 		if records[0].Get("familyName") != "Doe" {
 			t.Fatalf("expected familyName to be Doe, got %s (%#v)", records[0].Get("familyName"), records)
 		}
-		records = db.SearchSlice("familyName", "Doe")
+		records = db.SearchSlice(HasAttrValue("familyName", "Doe"))
 		if len(records) != 2 {
 			t.Fatalf("expected 2 records, got %d", len(records))
 		}
@@ -91,7 +91,7 @@ provider=openai model=gpt-4o tokens
 
 	t.Run("noValue.ndb", func(t *testing.T) {
 		db := mustOpenOne(t, m, "noValue.ndb")
-		records := db.SearchSlice("person", "")
+		records := db.SearchSlice(HasAttrValue("person", ""))
 		if len(records) != 1 {
 			t.Fatalf("expected 1 record, got %d", len(records))
 		}
@@ -102,7 +102,7 @@ provider=openai model=gpt-4o tokens
 
 	t.Run("quoted.mdb", func(t *testing.T) {
 		db := mustOpenOne(t, m, "quoted.mdb")
-		records := db.SearchSlice("name", "John Doe")
+		records := db.SearchSlice(HasAttrValue("name", "John Doe"))
 		if len(records) != 1 {
 			t.Fatalf("expected 1 record, got %d", len(records))
 		}
@@ -118,7 +118,7 @@ provider=openai model=gpt-4o tokens
 			"provider=openai model=gpt-4o tokens= max_input_tokens=128000",
 		}
 		i := 0
-		for record := range db.Search("provider", "openai") {
+		for record := range db.Search(HasAttrValue("provider", "openai")) {
 			if record.String() != values[i] {
 				t.Fatalf("expected %q, got %q", values[i], record.String())
 			}
@@ -137,7 +137,7 @@ givenName=Jane familyName=Doe`,
 		"appleseed.ndb": `givenName=John familyName=Appleseed`,
 	})
 	db := mustOpen(t, m, "start.ndb")
-	records := db.SearchSlice("givenName", "John")
+	records := db.SearchSlice(HasAttrValue("givenName", "John"))
 	if len(records) != 2 {
 		t.Fatalf("expected 2 record, got %d", len(records))
 	}
