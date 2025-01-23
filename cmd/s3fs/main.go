@@ -38,6 +38,10 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		return s3fs.NewWithAwsConfig(cfg, s3fs.Options{Flatten: flatten, Logger: L})
+		return s3fs.NewWithAwsConfig(cfg, s3fs.Options{
+			Flatten:     flatten,
+			Logger:      L,
+			S3PathStyle: forceS3PathStyle,
+		})
 	})
 }

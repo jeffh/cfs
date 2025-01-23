@@ -56,6 +56,8 @@ type Options struct {
 	//  just the logical directory names. This can be more efficient to use S3
 	//  API at the cost of breaking some of the file system abstraction layer.
 	Flatten bool
+
+	S3PathStyle bool
 	// Logger to use. Default
 	Logger *slog.Logger
 }
@@ -87,11 +89,12 @@ func New(endpoint string, opt Options) ninep.FileSystem {
 //   - cfg is the aws.Config used to configure the s3 client.
 //   - opt contains options for configuring the Filesystem
 func NewWithAwsConfig(cfg aws.Config, opt Options) ninep.FileSystem {
-	svc := s3.NewFromConfig(cfg)
+	svc := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.UsePathStyle = opt.S3PathStyle
+	})
 	ctx := S3Ctx{
 		Client: svc,
 	}
-
 	return NewWithClient(&ctx, opt)
 }
 
@@ -1116,7 +1119,7 @@ func (f *fsys) listBuckets(ctx context.Context) iter.Seq2[fs.FileInfo, error] {
 	resp, err := f.s3c.Client.ListBuckets(ctx, &s3.ListBucketsInput{})
 	if f.logger != nil {
 		if err != nil {
-			f.logger.ErrorContext(ctx, "S3.ListBuckets", slog.Int("count", len(resp.Buckets)), slog.Any("err", err))
+			f.logger.ErrorContext(ctx, "S3.ListBuckets", slog.Any("err", err))
 		} else {
 			f.logger.InfoContext(ctx, "S3.ListBuckets", slog.Int("count", len(resp.Buckets)))
 		}
