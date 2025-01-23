@@ -990,7 +990,7 @@ func (f *fsys) Walk(ctx context.Context, parts []string) ([]fs.FileInfo, error) 
 	default:
 		return nil, fs.ErrNotExist
 	}
-	if parts[len(parts)-1] == "." && len(parts) > len(infos) && len(infos) > 0 {
+	if len(parts) > len(infos) && len(infos) > 0 && parts[len(parts)-1] == "." {
 		infos = append(infos, infos[len(infos)-1])
 	}
 	// for i, info := range infos {
