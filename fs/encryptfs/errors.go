@@ -2,5 +2,5 @@ package encryptfs
 
 import "errors"
 
-var ErrInvalidKey = errors.New("Invalid key")
-var ErrMissingKey = errors.New("Missing encryption key")
+var ErrInvalidKey = errors.New("invalid key")
+var ErrMissingKey = errors.New("missing encryption key")

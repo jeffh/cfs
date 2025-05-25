@@ -67,7 +67,7 @@ func printInfo(w io.Writer, info os.FileInfo, replacedName string, namePrefix st
 		n = namePrefix + n
 	}
 
-	fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t %s\n", info.Mode(), usr, gid, muid, sizeStr, info.ModTime().Format(time.RFC822), n)
+	_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t %s\n", info.Mode(), usr, gid, muid, sizeStr, info.ModTime().Format(time.RFC822), n)
 }
 
 func main() {
@@ -87,9 +87,9 @@ func main() {
 
 	flag.Usage = func() {
 		w := flag.CommandLine.Output()
-		fmt.Fprintf(w, "Usage: %s [OPTIONS] ADDR/PATH\n\n", os.Args[0])
-		fmt.Fprintf(w, "ls for CFS\n\n")
-		fmt.Fprintf(w, "OPTIONS:\n")
+		_, _ = fmt.Fprintf(w, "Usage: %s [OPTIONS] ADDR/PATH\n\n", os.Args[0])
+		_, _ = fmt.Fprintf(w, "ls for CFS\n\n")
+		_, _ = fmt.Fprintf(w, "OPTIONS:\n")
 		flag.PrintDefaults()
 	}
 
@@ -105,7 +105,7 @@ func main() {
 				w = os.Stdout
 			} else {
 				tw := tabwriter.NewWriter(os.Stdout, 2, 1, 1, ' ', tabwriter.AlignRight|tabwriter.DiscardEmptyColumns)
-				defer tw.Flush()
+				defer func() { _ = tw.Flush() }()
 				w = tw
 			}
 			if all {

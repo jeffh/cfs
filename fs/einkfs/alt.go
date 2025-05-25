@@ -85,7 +85,7 @@ func (f *internalState) unsafeBlit(img image.Image) {
 	zero := image.Point{}
 	draw.Draw(f.display, f.display.Bounds(), img, zero, draw.Src)
 	if time.Since(f.lastUpdated) >= 24*time.Hour {
-		f.dev.Clear(image.White)
+		_ = f.dev.Clear(image.White)
 		f.lastUpdated = time.Now()
 	}
 	err := f.dev.Draw(f.dev.Bounds(), f.display, zero)
@@ -129,8 +129,8 @@ func (f *internalState) clear() {
 	f.text = ""
 	draw.Draw(f.display, f.display.Bounds(), &image.Uniform{image1bit.On}, image.Point{}, draw.Src)
 	f.lastUpdated = time.Now()
-	f.dev.Clear(image.White)
-	f.dev.Draw(f.dev.Bounds(), f.display, image.Point{})
+	_ = f.dev.Clear(image.White)
+	_ = f.dev.Draw(f.dev.Bounds(), f.display, image.Point{})
 }
 
 func displayHandle(state *internalState, flag ninep.OpenMode) (ninep.FileHandle, error) {
@@ -145,7 +145,7 @@ func displayHandle(state *internalState, flag ninep.OpenMode) (ninep.FileHandle,
 				w.CloseWithError(err)
 				return
 			}
-			w.Close()
+			_ = w.Close()
 		}()
 	}
 	if r != nil {
@@ -188,7 +188,7 @@ func textHandle(state *internalState, flag ninep.OpenMode) (ninep.FileHandle, er
 			if err != nil {
 				w.CloseWithError(err)
 			}
-			w.Close()
+			_ = w.Close()
 		}()
 	}
 	if r != nil {
@@ -198,7 +198,7 @@ func textHandle(state *internalState, flag ninep.OpenMode) (ninep.FileHandle, er
 				r.CloseWithError(err)
 				return
 			}
-			defer r.Close()
+			defer func() { _ = r.Close() }()
 			txt := buf.String()
 			txt = strings.TrimSpace(txt)
 			state.drawText(txt)
@@ -211,7 +211,7 @@ func ctlHandle(state *internalState, _ ninep.OpenMode) (ninep.FileHandle, error)
 	h, r := ninep.WriteOnlyDeviceHandle()
 	if r != nil {
 		go func() {
-			defer r.Close()
+			defer func() { _ = r.Close() }()
 			scanner := bufio.NewScanner(r)
 			for scanner.Scan() {
 				kv, err := kvp.ParseKeyValues(scanner.Text())
@@ -265,9 +265,9 @@ func rotateHandle(state *internalState, flag ninep.OpenMode) (ninep.FileHandle, 
 	h, r, w := ninep.DeviceHandle(flag)
 	if r != nil {
 		go func() {
-			defer r.Close()
+			defer func() { _ = r.Close() }()
 			var buf bytes.Buffer
-			io.Copy(&buf, r)
+			_, _ = io.Copy(&buf, r)
 			rotate, err := strconv.Atoi(strings.TrimSpace(buf.String()))
 			if err != nil || rotate < 0 || rotate > 3 {
 				r.CloseWithError(fmt.Errorf("invalid rotation value: must be 0-3"))
@@ -283,12 +283,12 @@ func rotateHandle(state *internalState, flag ninep.OpenMode) (ninep.FileHandle, 
 	}
 	if w != nil {
 		go func() {
-			defer w.Close()
+			defer func() { _ = w.Close() }()
 			state.mu.Lock()
 			rotation := state.rotation
 			state.mu.Unlock()
-			fmt.Fprintf(w, "%d\n", rotation)
-			w.Close()
+			_, _ = fmt.Fprintf(w, "%d\n", rotation)
+			_ = w.Close()
 		}()
 	}
 	return h, nil

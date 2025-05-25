@@ -12,13 +12,6 @@ import (
 	_ "go.uber.org/automaxprocs"
 )
 
-func stringPtrOrNil(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
-}
-
 func main() {
 	var (
 		endpoint         string

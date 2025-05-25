@@ -43,15 +43,15 @@ func NewWaveshare2in13v2FS(fset FontSet, logger *log.Logger, rotation int) (f ni
 	}
 	dev, err := waveshare2in13v2.NewHat(b, &waveshare2in13v2.EPD2in13v2)
 	if err != nil {
-		b.Close()
+		_ = b.Close()
 		return nil, nil, err
 	}
 	err = dev.Init()
 	if err != nil {
-		b.Close()
+		_ = b.Close()
 		return nil, nil, err
 	}
-	dev.SetUpdateMode(waveshare2in13v2.Partial)
-	closer := func() { b.Close() }
+	_ = dev.SetUpdateMode(waveshare2in13v2.Partial)
+	closer := func() { _ = b.Close() }
 	return NewFS(dev, NewImage1bitVerticalLSB, logger, fset, rotation), closer, nil
 }

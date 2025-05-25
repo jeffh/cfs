@@ -127,11 +127,11 @@ func (f *fsys) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (
 		h, r, w := ninep.DeviceHandle(flag)
 		if r != nil {
 			if w != nil {
-				defer w.Close()
+				defer func() { _ = w.Close() }()
 			}
 			go func() {
 				if r != nil {
-					defer r.Close()
+					defer func() { _ = r.Close() }()
 				}
 				scanner := bufio.NewScanner(r)
 				for scanner.Scan() {

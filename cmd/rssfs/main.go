@@ -14,11 +14,11 @@ import (
 func main() {
 	flag.Usage = func() {
 		w := flag.CommandLine.Output()
-		fmt.Fprintf(w, "Usage: %s [OPTIONS]\n\n", os.Args[0])
-		fmt.Fprintf(w, "Exposes RSS feeds as a 9p file server.\n\n")
-		fmt.Fprintf(w, "Control file commands (write to /ctl):\n")
-		fmt.Fprintf(w, "  add_feed url=<url>    Add a new RSS feed to monitor. Creates a new directory with the feeds' results\n\n")
-		fmt.Fprintf(w, "OPTIONS:\n")
+		_, _ = fmt.Fprintf(w, "Usage: %s [OPTIONS]\n\n", os.Args[0])
+		_, _ = fmt.Fprintf(w, "Exposes RSS feeds as a 9p file server.\n\n")
+		_, _ = fmt.Fprintf(w, "Control file commands (write to /ctl):\n")
+		_, _ = fmt.Fprintf(w, "  add_feed url=<url>    Add a new RSS feed to monitor. Creates a new directory with the feeds' results\n\n")
+		_, _ = fmt.Fprintf(w, "OPTIONS:\n")
 		flag.PrintDefaults()
 	}
 	cli.ServiceMain(func() ninep.FileSystem {

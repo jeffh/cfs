@@ -32,9 +32,9 @@ func main() {
 
 	flag.Usage = func() {
 		w := flag.CommandLine.Output()
-		fmt.Fprintf(w, "Usage: %s [OPTIONS] SRC_HOST/SRC_PATH DEST_HOST/DEST_PATH\n\n", os.Args[0])
-		fmt.Fprintf(w, "cp for CFS - Copy files and directories\n\n")
-		fmt.Fprintf(w, "OPTIONS:\n")
+		_, _ = fmt.Fprintf(w, "Usage: %s [OPTIONS] SRC_HOST/SRC_PATH DEST_HOST/DEST_PATH\n\n", os.Args[0])
+		_, _ = fmt.Fprintf(w, "cp for CFS - Copy files and directories\n\n")
+		_, _ = fmt.Fprintf(w, "OPTIONS:\n")
 		flag.PrintDefaults()
 	}
 
@@ -73,7 +73,7 @@ func main() {
 		exitCode = 2
 		runtime.Goexit()
 	}
-	defer srcMnt.Close()
+	defer func() { _ = srcMnt.Close() }()
 
 	cfg.PrintPrefix = "[dst] "
 	dstMnt, err := cfg.FSMount(&dstMntCfg)
@@ -82,7 +82,7 @@ func main() {
 		exitCode = 3
 		runtime.Goexit()
 	}
-	defer dstMnt.Close()
+	defer func() { _ = dstMnt.Close() }()
 
 	srcNode, err := srcMnt.FS.Traverse(ctx, srcMnt.Prefix)
 	{
@@ -99,13 +99,13 @@ func main() {
 		}
 
 		if srcNode.Type().IsDir() && !recursive {
-			srcNode.Close()
+			_ = srcNode.Close()
 			fmt.Fprintf(os.Stderr, "Use -r to copy directories\n")
 			exitCode = 2
 			runtime.Goexit()
 		}
 	}
-	defer srcNode.Close()
+	defer func() { _ = srcNode.Close() }()
 
 	dstNode, err := dstMnt.FS.Traverse(ctx, dstMnt.Prefix)
 	dstIsParent := false
@@ -122,7 +122,7 @@ func main() {
 			runtime.Goexit()
 		}
 	}
-	defer dstNode.Close()
+	defer func() { _ = dstNode.Close() }()
 
 	// technically '-r' is not very plan9 like, but we don't have the luxury of being the host os' file system
 	// plan9 systems would normally do `(cd DIR && tar c .) | (cd DIR && tar x)` aliased as `dircp`.
@@ -178,12 +178,9 @@ func main() {
 				continue
 			}
 
-			if src.Type().IsDir() {
-			} else {
-				// dst, err := last.dst.Traverse(name)
-				// if errors.Is(err, fs.ErrNotExist) {
-				// 	dst, err := last.dst.Traverse(ninep.Dirname(name))
-				// }
+			if !src.Type().IsDir() {
+				// TODO: implement file copy logic
+				_ = src.Type() // placeholder
 			}
 
 			if !more {
@@ -226,7 +223,7 @@ func main() {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error while copying: %s", err)
 			if dstIsParent {
-				err = dstNode.Delete()
+				_ = dstNode.Delete()
 				fmt.Fprintf(os.Stderr, "Failed to delete file since copying failed: %s/%s\n", dstMntCfg.Addr, dstMnt.Prefix)
 			}
 

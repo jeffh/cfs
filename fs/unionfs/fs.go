@@ -726,7 +726,7 @@ func (ufs *unionFS) CtlHandle(ctx context.Context, flag ninep.OpenMode) (ninep.F
 	h, r, w := ninep.DeviceHandle(flag)
 	if w != nil {
 		go func() {
-			defer w.Close()
+			defer func() { _ = w.Close() }()
 			ufs.mu.RLock()
 			mounts := make([]string, 0, len(ufs.mounts))
 			for i, m := range ufs.mounts {
@@ -744,18 +744,18 @@ func (ufs *unionFS) CtlHandle(ctx context.Context, flag ninep.OpenMode) (ninep.F
 			}
 			ufs.mu2.RUnlock()
 			for _, m := range mounts {
-				fmt.Fprintf(w, "%s\n", m)
+				_, _ = fmt.Fprintf(w, "%s\n", m)
 			}
 			for i, sp := range srcs {
 				for _, dp := range dsts[i] {
-					fmt.Fprintf(w, "bind=%q to=%q\n", "/"+strings.TrimPrefix(dp, "/"), "/"+strings.TrimPrefix(sp, "/"))
+					_, _ = fmt.Fprintf(w, "bind=%q to=%q\n", "/"+strings.TrimPrefix(dp, "/"), "/"+strings.TrimPrefix(sp, "/"))
 				}
 			}
 		}()
 	}
 	if r != nil {
 		go func() {
-			defer r.Close()
+			defer func() { _ = r.Close() }()
 			scanner := bufio.NewScanner(r)
 			for scanner.Scan() {
 				line := scanner.Text()

@@ -166,7 +166,7 @@ walk:
 		n.m.RUnlock()
 		if child != nil {
 			if child.isFile {
-				return nil, fmt.Errorf("Cannot traverse file: %s", seg)
+				return nil, fmt.Errorf("cannot traverse file: %s", seg)
 			}
 			n = child
 			continue walk
@@ -229,7 +229,7 @@ func (m *Mem) CreateFile(ctx context.Context, path string, flag ninep.OpenMode, 
 
 	if n != nil {
 		if !n.isFile {
-			return nil, fmt.Errorf("Topen: Cannot create file where dir exists: %s", n.name)
+			return nil, fmt.Errorf("topen: cannot create file where dir exists: %s", n.name)
 		}
 	} else {
 		nc := &memNode{
@@ -257,7 +257,7 @@ func (m *Mem) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (n
 
 	if child := n.FindChild(parts[last]); child != nil {
 		if !child.isFile {
-			return nil, fmt.Errorf("Topen: Cannot open file: %s", parts[last])
+			return nil, fmt.Errorf("topen: cannot open file: %s", parts[last])
 		}
 		return m.openFile(child)
 	} else {
@@ -339,7 +339,7 @@ func (m *Mem) WriteStat(ctx context.Context, path string, s ninep.Stat) error {
 
 	if child := n.FindChild(filename); child != nil {
 		if !child.isFile {
-			err = fmt.Errorf("Wstat: Cannot open file: %s", filename)
+			err = fmt.Errorf("wstat: cannot open file: %s", filename)
 		}
 		// for restoring:
 		// "Either all the changes in wstat request happen, or none of them does:
@@ -351,7 +351,7 @@ func (m *Mem) WriteStat(ctx context.Context, path string, s ninep.Stat) error {
 		if !s.NameNoTouch() && path != s.Name() {
 			// TODO: check if already exists
 			if n.FindChild(s.Name()) != nil {
-				err = fmt.Errorf("Cannot rename to file that already exists: %s", s.Name())
+				err = fmt.Errorf("cannot rename to file that already exists: %s", s.Name())
 				return err
 			}
 			oldName := child.name
@@ -365,17 +365,8 @@ func (m *Mem) WriteStat(ctx context.Context, path string, s ninep.Stat) error {
 		}
 
 		if !s.ModeNoTouch() {
-			// TODO: implement me
-			// old := info.Mode()
-			// err = os.Chmod(fullPath, s.Mode().ToOsMode())
-			// if err != nil {
-			// 	return err
-			// }
-			// defer func() {
-			// 	if err != nil {
-			// 		os.Chmod(fullPath, old)
-			// 	}
-			// }()
+			// TODO: implement me - need to set mode on memNode
+			_ = s.Mode() // placeholder until implemented
 		}
 
 		changeGid := !s.GidNoTouch()
@@ -400,7 +391,8 @@ func (m *Mem) WriteStat(ctx context.Context, path string, s ninep.Stat) error {
 			}()
 		}
 		if !s.AtimeNoTouch() {
-			// TODO: implement
+			// TODO: implement - need to set access time on memNode
+			_ = s.Atime() // placeholder until implemented
 		}
 
 		// this should be last since it's really hard to undo this

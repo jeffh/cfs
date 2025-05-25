@@ -657,7 +657,7 @@ func (s Stat) fill(name, uid, gid, muid string) {
 	{
 		bo.PutUint16(b, uint16(len(muid)))
 		b = b[2:]
-		b = b[copy(b, muid):]
+		copy(b, muid)
 	}
 	// s.name().SetStringAndLen(name)
 	// s.uid().SetStringAndLen(uid)
@@ -941,7 +941,7 @@ type statFileInfo struct {
 
 var _ os.FileInfo = (*statFileInfo)(nil)
 
-func (s statFileInfo) Size() int64        { return int64(s.Stat.Length()) }
+func (s statFileInfo) Size() int64        { return int64(s.Length()) }
 func (s statFileInfo) Name() string       { return s.Stat.Name() }
 func (s statFileInfo) Mode() fs.FileMode  { return s.Stat.Mode().ToFsMode() }
 func (s statFileInfo) ModTime() time.Time { return time.Unix(int64(s.Mtime()), 0) }
@@ -1021,10 +1021,6 @@ func (r Tauth) Aname() string      { return r.aname().String() }
 
 type Rauth []byte
 
-func (r Rauth) fill(t Tag, aqid Qid) {
-	MsgBase(r).fill(msgRauth, t, uint32(msgOffset+QidSize))
-	copy(r[msgOffset:msgOffset+QidSize], aqid)
-}
 
 func (r Rauth) Bytes() []byte { return MsgBase(r).Bytes() }
 func (r Rauth) Size() uint32  { return MsgBase(r).Size() }

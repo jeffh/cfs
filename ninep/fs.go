@@ -557,7 +557,7 @@ func (h *ReaderFileHandle) ReadAt(p []byte, off int64) (n int, err error) {
 	if h.Reader == nil {
 		return 0, io.ErrClosedPipe
 	}
-	return h.Reader.Read(p)
+	return h.Read(p)
 }
 func (h *ReaderFileHandle) WriteAt(p []byte, off int64) (n int, err error) {
 	return 0, fs.ErrPermission
@@ -788,7 +788,7 @@ var _ fs.ReadDirFS = (*ioFS)(nil)
 var _ fs.StatFS = (*ioFS)(nil)
 
 func (f *ioFS) Open(name string) (fs.File, error) {
-	h, err := f.FileSystem.OpenFile(context.Background(), name, OREAD)
+	h, err := f.OpenFile(context.Background(), name, OREAD)
 	if err != nil {
 		return nil, err
 	}
@@ -806,7 +806,7 @@ func (f *ioFS) Stat(name string) (fs.FileInfo, error) {
 
 func (f *ioFS) ReadDir(name string) ([]fs.DirEntry, error) {
 	var result []fs.DirEntry
-	for info, err := range f.FileSystem.ListDir(context.Background(), name) {
+	for info, err := range f.ListDir(context.Background(), name) {
 		if err != nil {
 			return nil, err
 		} else {

@@ -189,7 +189,7 @@ func handleContainerCtlFile(f *Fs, containerID string, flag ninep.OpenMode) (nin
 	h, r := ninep.WriteOnlyDeviceHandle()
 
 	go func() {
-		defer r.Close()
+		defer func() { _ = r.Close() }()
 		scanner := bufio.NewScanner(r)
 		for scanner.Scan() {
 			line := scanner.Text()

@@ -1,7 +1,6 @@
 package fs
 
 import (
-	"bytes"
 	"context"
 	"io/fs"
 	"iter"
@@ -12,12 +11,6 @@ import (
 	ninep "github.com/jeffh/cfs/ninep"
 )
 
-type lineFileHandle struct {
-	info  fs.FileInfo
-	mode  ninep.OpenMode
-	buf   *bytes.Buffer
-	flush func(*bytes.Buffer) error
-}
 
 ////////////////////////////////////////////////
 

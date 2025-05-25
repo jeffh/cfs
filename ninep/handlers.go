@@ -229,7 +229,7 @@ type defaultHandler struct {
 // Invoked by the server when the server is shutting down.
 func (h *defaultHandler) Shutdown() {
 	if closer, ok := h.Fs.(io.Closer); ok {
-		closer.Close()
+		_ = closer.Close()
 	}
 }
 
@@ -342,8 +342,6 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 				}
 				w.Rerrorf("no authentication")
 				return
-			} else {
-				// we're ok
 			}
 		}
 
@@ -540,7 +538,7 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 				walkedQids = append(walkedQids, q)
 
 				if fil.H != nil {
-					fil.H.Close()
+					_ = fil.H.Close()
 				}
 				fil = serverFile{
 					Name: path,
@@ -594,7 +592,7 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 				walkedQids = append(walkedQids, q)
 
 				if fil.H != nil {
-					fil.H.Close()
+					_ = fil.H.Close()
 				}
 				fil = serverFile{
 					Name: path,
@@ -742,7 +740,7 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 		if ok {
 			if fil.H != nil {
 				// if fil.DecRef() {
-				fil.H.Close()
+				_ = fil.H.Close()
 				if q, ok := session.Qid(fil.Name); ok {
 					session.DeleteFileHandle(q)
 				}
@@ -756,10 +754,10 @@ func (h *defaultHandler) Handle9P(connCtx, ctx context.Context, m Message, w Rep
 						slog.String("file", fil.Name))
 				}
 				if fsd, ok := h.Fs.(DeleteWithModeFileSystem); ok {
-					fsd.DeleteWithMode(ctx, fil.Name, fil.Mode)
+					_ = fsd.DeleteWithMode(ctx, fil.Name, fil.Mode)
 				} else {
 					// delete the file
-					h.Fs.Delete(ctx, fil.Name)
+					_ = h.Fs.Delete(ctx, fil.Name)
 				}
 			}
 			session.MayDeleteQid(fil.Name) // not ideal, since there may be other active references! but this is better then leaking memory?

@@ -229,7 +229,7 @@ func (d Dir) WriteStat(ctx context.Context, path string, s ninep.Stat) error {
 func (d Dir) Delete(ctx context.Context, path string) error {
 	fullPath := filepath.Join(string(d), path)
 	if fullPath == string(d) {
-		return fmt.Errorf("Cannot delete root dir")
+		return fmt.Errorf("cannot delete root dir")
 	}
 	return os.RemoveAll(fullPath)
 }

@@ -20,7 +20,7 @@ func runServer(ctx context.Context, listen string, mnt proxy.FileSystemMount, mo
 	if err != nil {
 		return err
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 
 	mfs := memfs.NewMemFS()
 
@@ -28,14 +28,14 @@ func runServer(ctx context.Context, listen string, mnt proxy.FileSystemMount, mo
 	// If the file system would depend on SetCreds, make sure to generate a new fs.FS for each connection.
 	backend := backend.New(func() fs.FS { return mfs }, auth.Null)
 
-	mfs.MkdirAll("/mount", iofs.FileMode(0o755))
-	mfs.MkdirAll("/test", iofs.FileMode(0o755))
-	mfs.MkdirAll("/test2", iofs.FileMode(0o755))
-	mfs.MkdirAll("/many", iofs.FileMode(0o755))
+	_ = mfs.MkdirAll("/mount", iofs.FileMode(0o755))
+	_ = mfs.MkdirAll("/test", iofs.FileMode(0o755))
+	_ = mfs.MkdirAll("/test2", iofs.FileMode(0o755))
+	_ = mfs.MkdirAll("/many", iofs.FileMode(0o755))
 
 	perm := iofs.FileMode(0o755)
 	for i := 0; i < 256; i++ {
-		mfs.MkdirAll(fmt.Sprintf("/many/sub-%d", i+1), perm)
+		_ = mfs.MkdirAll(fmt.Sprintf("/many/sub-%d", i+1), perm)
 	}
 
 	svr, err := server.NewServer(c, backend)
@@ -44,9 +44,9 @@ func runServer(ctx context.Context, listen string, mnt proxy.FileSystemMount, mo
 		return err
 	}
 
-	go svr.Serve()
+	go func() { _ = svr.Serve() }()
 	// exec.Command("mount", "-t", "nfs", "-o", "vers=4.0,noacl,tcp", listen+":/", mountpoint).Run()
 	<-ctx.Done()
-	c.Close()
+	_ = c.Close()
 	return nil
 }

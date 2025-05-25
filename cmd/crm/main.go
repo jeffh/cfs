@@ -22,9 +22,9 @@ func main() {
 
 	flag.Usage = func() {
 		w := flag.CommandLine.Output()
-		fmt.Fprintf(w, "Usage: %s [OPTIONS] ADDR/PATH [MORE_PATHS...]\n\n", os.Args[0])
-		fmt.Fprintf(w, "rm for CFS - will delete directories\n\n")
-		fmt.Fprintf(w, "OPTIONS:\n")
+		_, _ = fmt.Fprintf(w, "Usage: %s [OPTIONS] ADDR/PATH [MORE_PATHS...]\n\n", os.Args[0])
+		_, _ = fmt.Fprintf(w, "rm for CFS - will delete directories\n\n")
+		_, _ = fmt.Fprintf(w, "OPTIONS:\n")
 		flag.PrintDefaults()
 	}
 
@@ -42,15 +42,15 @@ func main() {
 		for _, path := range files {
 			node, err := mnt.FS.Traverse(ctx, path)
 			if os.IsNotExist(err) {
-				return fmt.Errorf("Path does not exist: %s", filepath.Join(mnt.Addr, path))
+				return fmt.Errorf("path does not exist: %s", filepath.Join(mnt.Addr, path))
 			}
 			if err != nil {
 				return err
 			}
 
 			if node.Type().IsDir() && !recursive {
-				node.Close()
-				return errors.New("Use -r to delete directories")
+				_ = node.Close()
+				return errors.New("use -r to delete directories")
 			}
 
 			err = node.Delete()
