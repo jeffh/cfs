@@ -40,7 +40,7 @@ func (f *StdFlags) ReadFileConfig(filename string) error {
 	if err != nil {
 		return err
 	}
-	defer h.Close()
+	defer func() { _ = h.Close() }()
 
 	b, err := io.ReadAll(h)
 	if err != nil {
