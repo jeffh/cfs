@@ -1,3 +1,4 @@
+//go:build windows
 // +build windows
 
 package ninep
@@ -14,7 +15,7 @@ func GetBlockSize() (int64, error) {
 
 func Atime(info os.FileInfo) (t time.Time, ok bool) {
 
-        attr, ok := info.Sys().(*syscall.Win32FileAttributeData)
+	attr, ok := info.Sys().(*syscall.Win32FileAttributeData)
 
 	if ok {
 		t = time.Unix(0, attr.LastAccessTime.Nanoseconds())
