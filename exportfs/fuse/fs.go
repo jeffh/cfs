@@ -355,7 +355,11 @@ func (n *Dir) Create(ctx context.Context, name string, flags uint32, mode uint32
 
 		info, err := n.fs.Stat(ctx, path)
 		if err != nil {
-			h.Close()
+			if cerr := h.Close(); cerr != nil {
+				if n.config.L != nil {
+					n.config.L.WarnContext(ctx, "close handle", slog.String("err", cerr.Error()))
+				}
+			}
 			return nil, nil, 0, mapErr(err, syscall.EINVAL) // TODO: what's better to report here?
 		}
 
@@ -366,7 +370,11 @@ func (n *Dir) Create(ctx context.Context, name string, flags uint32, mode uint32
 		}
 
 		if errno := fillAttr(n.config, info, &out.Attr); errno != 0 {
-			h.Close()
+			if cerr := h.Close(); cerr != nil {
+				if n.config.L != nil {
+					n.config.L.WarnContext(ctx, "close handle", slog.String("err", cerr.Error()))
+				}
+			}
 			return nil, nil, 0, errno
 		}
 		if n.config.L != nil {
