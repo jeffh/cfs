@@ -1,7 +1,10 @@
 name: Go
-on: [push]
-jobs:
+on:
+  pull_request:
+    branches:
+      - main
 
+jobs:
   build:
     name: Test on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -10,26 +13,20 @@ jobs:
         # os: [ubuntu-latest, windows-latest, macOS-latest]
         os: [ubuntu-latest]
     steps:
-
-    - name: Set up Go 1.23
-      uses: actions/setup-go@v5
-      with:
-        go-version: 1.23
-      id: go
-
-    - name: Check out code into the Go module directory
-      uses: actions/checkout@v4
-
-    - name: Build
-      run: make all
-      env:
-        GOARGS: -v
-
-    - name: Test
-      run: make test
-
-    - name: Race
-      run: make all test
-      env:
-        GOARGS: -race
-
+      - name: Check out code into the Go module directory
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+        id: go
+      - name: Build
+        run: make all
+        env:
+          GOARGS: -v
+      - name: Test
+        run: make test
+      - name: Race
+        run: make all test
+        env:
+          GOARGS: -race
