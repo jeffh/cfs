@@ -680,10 +680,10 @@ func (h *RWFileHandle) WriteAt(p []byte, off int64) (n int, err error) {
 func (h *RWFileHandle) Sync() error { return nil }
 func (h *RWFileHandle) Close() error {
 	if rc, ok := h.R.(io.Closer); ok {
-		rc.Close()
+		_ = rc.Close()
 	}
 	if wc, ok := h.W.(io.Closer); ok {
-		wc.Close()
+		_ = wc.Close()
 	}
 	return nil
 }

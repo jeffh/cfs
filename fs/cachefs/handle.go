@@ -153,7 +153,7 @@ func (h *handle) Sync() error {
 	}
 	// we're making an educated guess that if it's read only, sync doesn't really matter much
 	if !h.isWriteable {
-		go h.h.Sync()
+		go func() { _ = h.h.Sync() }()
 		return nil
 	}
 	if h.fs.writesAsync && h.cancel != nil {
@@ -169,7 +169,7 @@ func (h *handle) Close() error {
 	}
 	// we're making an educated guess that if it's read only, close doesn't really matter much
 	if !h.isWriteable {
-		go h.h.Close()
+		go func() { _ = h.h.Close() }()
 		return nil
 	}
 	if h.fs.writesAsync && h.cancel != nil {

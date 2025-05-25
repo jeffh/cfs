@@ -136,7 +136,7 @@ func (fs *sftpFs) WriteStat(ctx context.Context, path string, s ninep.Stat) erro
 
 		defer func() {
 			if err != nil {
-				fs.conn.Rename(newPath, fullPath)
+				_ = fs.conn.Rename(newPath, fullPath)
 			}
 		}()
 
@@ -151,7 +151,7 @@ func (fs *sftpFs) WriteStat(ctx context.Context, path string, s ninep.Stat) erro
 		}
 		defer func() {
 			if err != nil {
-				fs.conn.Chmod(fullPath, old)
+				_ = fs.conn.Chmod(fullPath, old)
 			}
 		}()
 	}
@@ -180,7 +180,7 @@ func (fs *sftpFs) WriteStat(ctx context.Context, path string, s ninep.Stat) erro
 		}
 		defer func() {
 			if err != nil {
-				fs.conn.Chtimes(fullPath, oldAtime, oldMtime)
+				_ = fs.conn.Chtimes(fullPath, oldAtime, oldMtime)
 			}
 		}()
 	}

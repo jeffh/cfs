@@ -255,7 +255,6 @@ func (n *Ndb) byPredicate(allow func(rec []byte) bool) iter.Seq[Record] {
 								continue
 							}
 							if !yield(results) {
-								recBytes = recBytes[:0]
 								break loop
 							}
 						}
@@ -278,7 +277,6 @@ func (n *Ndb) byPredicate(allow func(rec []byte) bool) iter.Seq[Record] {
 					err := parseRecord(recBytes, &results)
 					if err == nil {
 						if !yield(results) {
-							recBytes = recBytes[:0]
 							break
 						}
 					} else {
@@ -358,7 +356,6 @@ func parseRecord(recBytes []byte, results *Record) error {
 	for len(r) > 0 {
 		ch, size := utf8.DecodeRune(r)
 		if ch == utf8.RuneError {
-			r = r[size:]
 			return fmt.Errorf("invalid utf8 rune")
 		}
 		if unicode.IsSpace(ch) {

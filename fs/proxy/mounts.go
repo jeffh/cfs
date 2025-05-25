@@ -32,7 +32,7 @@ func (fsm *FileSystemMount) Close() error {
 	if fsm.Clean != nil {
 		err := fsm.Clean()
 		if err != nil {
-			fsm.Client.Close()
+			_ = fsm.Client.Close()
 			return err
 		}
 	}
@@ -73,11 +73,11 @@ func ParseMounts(args []string) []FileSystemMountConfig {
 }
 
 func PrintMountsHelp(w io.Writer) {
-	fmt.Fprintf(w, "\nMounts refers to a 9p server and path and are represented like <SERVER>:<PORT><PATH> like 'localhost:6666/prefix/path'.\n")
-	fmt.Fprintf(w, "\nThere are a few special mount values that are recognized:\n")
-	fmt.Fprintf(w, "  - ':memory' indicates an in memory file system that gets discarded after the program exits.\n")
-	fmt.Fprintf(w, "  - ':tmp' indicates an on-disk temporarily directory that gets discarded after the program exits.\n")
-	fmt.Fprintf(w, "  -  starting with a '/' or '.' indicates an on-disk local path.\n")
+	_, _ = fmt.Fprintf(w, "\nMounts refers to a 9p server and path and are represented like <SERVER>:<PORT><PATH> like 'localhost:6666/prefix/path'.\n")
+	_, _ = fmt.Fprintf(w, "\nThere are a few special mount values that are recognized:\n")
+	_, _ = fmt.Fprintf(w, "  - ':memory' indicates an in memory file system that gets discarded after the program exits.\n")
+	_, _ = fmt.Fprintf(w, "  - ':tmp' indicates an on-disk temporarily directory that gets discarded after the program exits.\n")
+	_, _ = fmt.Fprintf(w, "  -  starting with a '/' or '.' indicates an on-disk local path.\n")
 }
 
 func (fsm *FileSystemMount) Join(elem ...string) string {

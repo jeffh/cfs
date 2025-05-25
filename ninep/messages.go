@@ -944,7 +944,7 @@ var _ os.FileInfo = (*statFileInfo)(nil)
 func (s statFileInfo) Size() int64        { return int64(s.Stat.Length()) }
 func (s statFileInfo) Name() string       { return s.Stat.Name() }
 func (s statFileInfo) Mode() fs.FileMode  { return s.Stat.Mode().ToFsMode() }
-func (s statFileInfo) ModTime() time.Time { return time.Unix(int64(s.Stat.Mtime()), 0) }
+func (s statFileInfo) ModTime() time.Time { return time.Unix(int64(s.Mtime()), 0) }
 func (s statFileInfo) IsDir() bool        { return s.Stat.Mode()&M_DIR != 0 }
 func (s statFileInfo) Sys() interface{}   { return s.Stat }
 
@@ -1546,12 +1546,12 @@ func PathSplit(path string) []string {
 	if len(path) > 0 && path[0] != '/' {
 		path = "/" + path
 	}
-	if path == "" {
+	switch path {
+	case "", "/":
 		return []string{""}
-	} else if path == "/" {
-		return []string{""}
+	default:
+		return strings.Split(path, "/")
 	}
-	return strings.Split(path, "/")
 }
 
 func IsSubpath(path, parentPath string) bool {
