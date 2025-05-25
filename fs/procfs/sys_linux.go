@@ -93,7 +93,9 @@ func pidFds(p Pid) ([]Fd, error) {
 				return nil, err
 			}
 			buf, err := io.ReadAll(f)
-			f.Close()
+			if cerr := f.Close(); cerr != nil && err == nil {
+				err = cerr
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -169,7 +171,9 @@ func pidEnv(p Pid) ([]string, error) {
 		return nil, err
 	}
 	buf, err := io.ReadAll(f)
-	f.Close()
+	if cerr := f.Close(); cerr != nil && err == nil {
+		err = cerr
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -200,7 +204,9 @@ func pidArgs(p Pid) ([]string, error) {
 		return nil, err
 	}
 	buf, err := io.ReadAll(f)
-	f.Close()
+	if cerr := f.Close(); cerr != nil && err == nil {
+		err = cerr
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -233,7 +239,9 @@ func pidInfo(p Pid) (ProcInfo, error) {
 		return pi, err
 	}
 	buf, err := io.ReadAll(f)
-	f.Close()
+	if cerr := f.Close(); cerr != nil && err == nil {
+		err = cerr
+	}
 	if err != nil {
 		return pi, err
 	}

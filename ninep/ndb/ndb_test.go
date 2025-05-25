@@ -4,7 +4,6 @@ import (
 	"embed"
 	"testing"
 
-	"github.com/jeffh/cfs/fs"
 	nfs "github.com/jeffh/cfs/fs"
 	"github.com/jeffh/cfs/ninep"
 )
@@ -13,7 +12,7 @@ import (
 var exampleFiles embed.FS
 
 func TestReadingFromEmbedFS(t *testing.T) {
-	m := fs.ReadOnlyFS(exampleFiles)
+	m := nfs.ReadOnlyFS(exampleFiles)
 	t.Run("Open properly opens recursively", func(t *testing.T) {
 		db := mustOpen(t, m, "example/start.ndb")
 		records := db.SearchSlice(HasAttrValue("givenName", "John"))

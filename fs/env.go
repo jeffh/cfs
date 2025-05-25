@@ -45,7 +45,7 @@ func (d envFs) CreateFile(ctx context.Context, path string, flag ninep.OpenMode,
 		contents = os.Getenv(key)
 	}
 	onFlush := func(p []byte) error {
-		os.Setenv(key, string(p))
+		_ = os.Setenv(key, string(p))
 		return nil
 	}
 	return ninep.NewMemoryFileHandle([]byte(contents), nil, onFlush), nil
@@ -59,7 +59,7 @@ func (d envFs) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (
 		contents = os.Getenv(key)
 	}
 	onFlush := func(p []byte) error {
-		os.Setenv(key, string(p))
+		_ = os.Setenv(key, string(p))
 		return nil
 	}
 	return ninep.NewMemoryFileHandle([]byte(contents), nil, onFlush), nil
@@ -110,9 +110,9 @@ func (d envFs) WriteStat(ctx context.Context, path string, s ninep.Stat) error {
 	}
 
 	if !s.NameNoTouch() && path != s.Name() {
-		os.Unsetenv(key)
+		_ = os.Unsetenv(key)
 		newKey := d.key(s.Name())
-		os.Setenv(newKey, value)
+		_ = os.Setenv(newKey, value)
 		key = newKey
 	}
 
@@ -121,7 +121,7 @@ func (d envFs) WriteStat(ctx context.Context, path string, s ninep.Stat) error {
 		if s.Length() < uint64(len(value)) {
 			value = value[:s.Length()]
 		}
-		os.Setenv(key, value)
+		_ = os.Setenv(key, value)
 	}
 	return nil
 }
@@ -134,7 +134,7 @@ func (d envFs) Delete(ctx context.Context, path string) error {
 	key := d.key(path)
 	_, found := os.LookupEnv(key)
 	if found {
-		os.Unsetenv(key)
+		_ = os.Unsetenv(key)
 		return nil
 	}
 	return fs.ErrNotExist

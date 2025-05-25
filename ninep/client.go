@@ -51,7 +51,7 @@ func (t *cltTransaction) clone() *cltTransaction {
 }
 
 func (t *cltTransaction) sendAndReceive(rw net.Conn) (Message, error) {
-	rw.SetDeadline(time.Time{})
+	_ = rw.SetDeadline(time.Time{})
 	err := t.req.writeRequest(rw)
 	if err != nil {
 		return nil, fmt.Errorf("failed to write %s: %w", t.req.requestType(), err)
@@ -188,7 +188,7 @@ func (f *FileProxy) WriteStat(st Stat) error {
 func (f *FileProxy) CreateDir(name string, mode Mode) (*FileProxy, error) {
 	fp, err := f.CreateFile(name, ORDWR, mode|M_DIR)
 	if err == nil {
-		fp.Close()
+		_ = fp.Close()
 	}
 	return fp, err
 }
@@ -213,7 +213,7 @@ func (f *FileProxy) CreateFile(name string, flag OpenMode, mode Mode) (*FileProx
 	if err == nil {
 		h = &FileProxy{fs, fid, qids[len(qids)-1], nil}
 	} else {
-		fs.c.Clunk(fid)
+		_ = fs.c.Clunk(fid)
 		fs.releaseFid(fid)
 	}
 	return h, err
@@ -408,7 +408,7 @@ func (fs *FileSystemProxy) walk(fid Fid, path string) (Qid, error) {
 	qids, err := fs.c.Walk(fs.rootF, fid, parts)
 	if err != nil {
 		// Best attempt to notify server that we're dropping this fid
-		fs.c.Clunk(fid)
+		_ = fs.c.Clunk(fid)
 		return nil, err
 	}
 	if len(qids) < len(parts) {
@@ -436,7 +436,7 @@ func (fs *FileSystemProxy) MakeDir(ctx context.Context, path string, mode Mode) 
 		return err
 	}
 	_, _, err := fs.c.Create(fid, filename, mode|M_DIR, ORDWR)
-	fs.c.Clunk(fid)
+	_ = fs.c.Clunk(fid)
 	fs.releaseFid(fid)
 	return err
 }
@@ -459,7 +459,7 @@ func (fs *FileSystemProxy) CreateFile(ctx context.Context, path string, flag Ope
 	if err == nil {
 		h = &FileProxy{fs, fid, qid, nil}
 	} else {
-		fs.c.Clunk(fid)
+		_ = fs.c.Clunk(fid)
 		fs.releaseFid(fid)
 	}
 	return h, err
@@ -474,14 +474,14 @@ func (fs *FileSystemProxy) OpenFile(ctx context.Context, path string, flag OpenM
 	qid, _, err := fs.c.Open(fid, flag)
 	if err == nil {
 		if qid.Type().IsDir() {
-			fs.c.Clunk(fid)
+			_ = fs.c.Clunk(fid)
 			fs.releaseFid(fid)
 			err = ErrOpenDirNotAllowed
 		} else {
 			h = &FileProxy{fs, fid, qid, nil}
 		}
 	} else {
-		fs.c.Clunk(fid)
+		_ = fs.c.Clunk(fid)
 		fs.releaseFid(fid)
 	}
 	return h, err
@@ -527,7 +527,7 @@ func (fs *FileSystemProxy) Stat(ctx context.Context, path string) (os.FileInfo, 
 		return nil, err
 	}
 	st, err := fs.c.Stat(fid)
-	fs.c.Clunk(fid)
+	_ = fs.c.Clunk(fid)
 	return st.FileInfo(), err
 }
 func (fs *FileSystemProxy) WriteStat(ctx context.Context, path string, s Stat) error {
@@ -537,7 +537,7 @@ func (fs *FileSystemProxy) WriteStat(ctx context.Context, path string, s Stat) e
 		return err
 	}
 	err := fs.c.WriteStat(fid, s)
-	fs.c.Clunk(fid)
+	_ = fs.c.Clunk(fid)
 	return err
 }
 func (fs *FileSystemProxy) Delete(ctx context.Context, path string) error {
@@ -729,7 +729,7 @@ func (t *BasicTraversableFile) Create(name string, flag OpenMode, mode Mode) (Tr
 
 	info, err := t.FS.Stat(ctx, fpath)
 	if err != nil {
-		h.Close()
+		_ = h.Close()
 		return nil, err
 	}
 
@@ -757,7 +757,7 @@ func (t *BasicTraversableFile) Open(flag OpenMode) error {
 	if t.Info == nil {
 		info, err = t.FS.Stat(ctx, t.Path)
 		if err != nil {
-			h.Close()
+			_ = h.Close()
 			return err
 		}
 		t.Info = info

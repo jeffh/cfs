@@ -38,7 +38,7 @@ func (h *chachaFileHandle) Sync() error { return h.Backed.Sync() }
 func (h *chachaFileHandle) Close() error {
 	if h.W != nil {
 		if err := h.W.Close(); err != nil {
-			h.Backed.Close()
+			_ = h.Backed.Close()
 			return err
 		}
 	}
@@ -93,8 +93,8 @@ func openEncryptedFile(
 
 	eh, err := writeFs.OpenFile(ctx, dataPath, ninep.OREAD)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		tmpFile.Close()
-		tmpFs.Delete(ctx, tmpPath)
+		_ = tmpFile.Close()
+		_ = tmpFs.Delete(ctx, tmpPath)
 		return nil, err
 	}
 	err = nil
@@ -105,9 +105,9 @@ func openEncryptedFile(
 			var buf [4096]byte
 			_, err := io.CopyBuffer(ninep.Writer(tmpFile), h, buf[:])
 			if err != nil {
-				eh.Close()
-				tmpFile.Close()
-				tmpFs.Delete(ctx, tmpPath)
+				_ = eh.Close()
+				_ = tmpFile.Close()
+				_ = tmpFs.Delete(ctx, tmpPath)
 				return nil, err
 			}
 		}
@@ -154,15 +154,15 @@ func (h *commitHandle) commit(ctx context.Context) error {
 
 		cipher, err := PublicKeyEncrypt(h.pubKey, buf)
 		if err != nil {
-			keyFile.Close()
-			h.keyFs.Delete(ctx, h.keyPath)
+			_ = keyFile.Close()
+			_ = h.keyFs.Delete(ctx, h.keyPath)
 			return err
 		}
 
 		_, err = keyFile.WriteAt([]byte(cipher), 0)
 		if err != nil {
-			keyFile.Close()
-			h.keyFs.Delete(ctx, h.keyPath)
+			_ = keyFile.Close()
+			_ = h.keyFs.Delete(ctx, h.keyPath)
 			return err
 		}
 	}
@@ -183,7 +183,7 @@ func (h *commitHandle) commit(ctx context.Context) error {
 }
 
 func (h *commitHandle) deleteTemp() error {
-	h.tmp.Close()
+	_ = h.tmp.Close()
 	h.tmp = nil
 	return h.tmpFs.Delete(context.Background(), h.tmpPath)
 }

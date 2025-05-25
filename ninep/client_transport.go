@@ -58,7 +58,7 @@ func (t *SerialClientTransport) Connect(d Dialer, network, addr, usr, mnt string
 	txn := createClientTransaction(NO_TAG, DEFAULT_MAX_MESSAGE_SIZE)
 	msgSize, err := acceptRversion(L, t.rwc, &txn, DEFAULT_MAX_MESSAGE_SIZE, 0)
 	if err != nil {
-		t.rwc.Close()
+		_ = t.rwc.Close()
 		return err
 	}
 
@@ -119,7 +119,7 @@ func (t *ParallelClientTransport) Connect(d Dialer, network, addr, usr, mnt stri
 	txn := createClientTransaction(NO_TAG, DEFAULT_MAX_MESSAGE_SIZE)
 	msgSize, err := acceptRversion(L, t.rwc, &txn, DEFAULT_MAX_MESSAGE_SIZE, 0)
 	if err != nil {
-		t.rwc.Close()
+		_ = t.rwc.Close()
 		return err
 	}
 
@@ -328,7 +328,7 @@ func (t *SerialRetryClientTransport) unsafeConnect() error {
 	txn := createClientTransaction(NO_TAG, DEFAULT_MAX_MESSAGE_SIZE)
 	msgSize, err := acceptRversion(t.Logger, t.rwc, &txn, DEFAULT_MAX_MESSAGE_SIZE, 0)
 	if err != nil {
-		t.rwc.Close()
+		_ = t.rwc.Close()
 		return err
 	}
 

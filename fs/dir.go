@@ -108,7 +108,7 @@ func (d Dir) WriteStat(ctx context.Context, path string, s ninep.Stat) error {
 
 		defer func() {
 			if err != nil {
-				os.Rename(newPath, fullPath)
+				_ = os.Rename(newPath, fullPath)
 			}
 		}()
 
@@ -123,7 +123,7 @@ func (d Dir) WriteStat(ctx context.Context, path string, s ninep.Stat) error {
 		}
 		defer func() {
 			if err != nil {
-				os.Chmod(fullPath, old)
+				_ = os.Chmod(fullPath, old)
 			}
 		}()
 	}
@@ -182,7 +182,7 @@ func (d Dir) WriteStat(ctx context.Context, path string, s ninep.Stat) error {
 		}
 		defer func() {
 			if err != nil {
-				os.Chown(fullPath, oldUID, oldGID)
+				_ = os.Chown(fullPath, oldUID, oldGID)
 			}
 		}()
 	}
@@ -210,7 +210,7 @@ func (d Dir) WriteStat(ctx context.Context, path string, s ninep.Stat) error {
 		}
 		defer func() {
 			if err != nil {
-				os.Chtimes(fullPath, oldAtime, oldMtime)
+				_ = os.Chtimes(fullPath, oldAtime, oldMtime)
 			}
 		}()
 	}
