@@ -40,9 +40,9 @@ func main() {
 	flag.BoolVar(&asyncWrites, "async-writes", false, "Asynchronously writes to source")
 	flag.Usage = func() {
 		w := flag.CommandLine.Output()
-		fmt.Fprintf(w, "Usage: %s [OPTIONS]\n\n", os.Args[0])
-		fmt.Fprintf(w, "Caches a 9p file system for faster access.\n\n")
-		fmt.Fprintf(w, "OPTIONS:\n")
+		_, _ = fmt.Fprintf(w, "Usage: %s [OPTIONS]\n\n", os.Args[0])
+		_, _ = fmt.Fprintf(w, "Caches a 9p file system for faster access.\n\n")
+		_, _ = fmt.Fprintf(w, "OPTIONS:\n")
 		flag.PrintDefaults()
 	}
 
@@ -51,17 +51,17 @@ func main() {
 	cltCfg.Logger = srvCfg.Logger
 
 	if fromAddr == "" {
-		fmt.Fprintf(os.Stderr, "Error: -fromfs is required\n")
+		_, _ = fmt.Fprintf(os.Stderr, "Error: -fromfs is required\n")
 		flag.Usage()
 		os.Exit(1)
 	}
 	client, fsy, err := cltCfg.CreateFs(fromAddr)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error connecting to source fs: %s\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "Error connecting to source fs: %s\n", err)
 		os.Exit(1)
 	}
 
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	createcfg := func(stdout, stderr io.Writer) cli.ServerConfig {
 		srvCfg.Stdout = stdout

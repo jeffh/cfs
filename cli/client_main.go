@@ -64,11 +64,11 @@ func (c *ClientConfig) FSMount(mnt *proxy.FileSystemMountConfig) (proxy.FileSyst
 	case ":tmp":
 		dir, err := os.MkdirTemp("", "*")
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to create temp directory: %s", err)
+			_, _ = fmt.Fprintf(os.Stderr, "Failed to create temp directory: %s", err)
 		}
 		clean := func() error {
 			if err := os.RemoveAll(dir); err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to clean temp directory: %s: %s", dir, err)
+				_, _ = fmt.Fprintf(os.Stderr, "Failed to clean temp directory: %s: %s", dir, err)
 				return err
 			}
 			return nil
@@ -104,7 +104,7 @@ func (c *ClientConfig) FSMountMany(cfgs []proxy.FileSystemMountConfig) ([]proxy.
 		m, err := c.FSMount(&cfg)
 		if err != nil {
 			for _, m := range mnts {
-				m.Close()
+				_ = m.Close()
 			}
 			return nil, err
 		}
@@ -153,7 +153,7 @@ func (c *ClientConfig) CreateFs(addr string) (ninep.Client, *ninep.FileSystemPro
 	}
 	fs, err := client.Fs()
 	if err != nil {
-		client.Close()
+		_ = client.Close()
 		return nil, nil, fmt.Errorf("failed to attach to 9p server: %w", err)
 	}
 	return client, fs, nil
@@ -192,23 +192,23 @@ func MainClient(fn func(cfg *ClientConfig, m proxy.FileSystemMount) error) {
 
 	mntCfg, ok := proxy.ParseMount(args[0])
 	if !ok {
-		fmt.Fprintf(os.Stderr, "Invalid path: %v\n", args[0])
-		fmt.Fprintf(os.Stderr, "Format should be IP:PORT/PATH format.\n")
+		_, _ = fmt.Fprintf(os.Stderr, "Invalid path: %v\n", args[0])
+		_, _ = fmt.Fprintf(os.Stderr, "Format should be IP:PORT/PATH format.\n")
 		exitCode = 1
 		runtime.Goexit()
 	}
 
 	mnt, err := cfg.FSMount(&mntCfg)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error connecting to destination fs: %s\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "Error connecting to destination fs: %s\n", err)
 		exitCode = 1
 		runtime.Goexit()
 	}
-	defer mnt.Close()
+	defer func() { _ = mnt.Close() }()
 
 	err = fn(&cfg, mnt)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed: %s\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "Failed: %s\n", err)
 		exitCode = 1
 		runtime.Goexit()
 	}

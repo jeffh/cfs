@@ -79,7 +79,7 @@ func (c *ServerConfig) CreateServer(createfs func(L *slog.Logger) ninep.FileSyst
 
 	c.Logger = ninep.CreateLogger(c.LogLevel, c.PrintPrefix, c.Logger)
 
-	var fsys ninep.FileSystem = createfs(c.Logger)
+	fsys := createfs(c.Logger)
 
 	if c.Logger.Enabled(context.Background(), slog.LevelDebug) {
 		fsys = fs.TraceFs(
@@ -97,7 +97,7 @@ func (c *ServerConfig) CreateServer(createfs func(L *slog.Logger) ninep.FileSyst
 func (c *ServerConfig) Close() {
 	if c.fCpuProfile != nil {
 		pprof.StopCPUProfile()
-		c.fCpuProfile.Close()
+		_ = c.fCpuProfile.Close()
 	}
 
 	if c.MemProfile != "" {
@@ -105,8 +105,8 @@ func (c *ServerConfig) Close() {
 		if err != nil {
 			log.Fatal("could not create memory profile: ", err)
 		}
-		defer f.Close() // error handling omitted for example
-		runtime.GC()    // get up-to-date statistics
+		defer func() { _ = f.Close() }()
+		runtime.GC() // get up-to-date statistics
 		if err := pprof.WriteHeapProfile(f); err != nil {
 			log.Fatal("could not write memory profile: ", err)
 		}
@@ -119,7 +119,7 @@ func (c *ServerConfig) ListenAndServe(srv *ninep.Server) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(c.Stderr, "Listening on %s\n", ln.Addr())
+	_, _ = fmt.Fprintf(c.Stderr, "Listening on %s\n", ln.Addr())
 	if c.CertFile != "" && c.KeyFile != "" {
 		return srv.ServeTLS(ln, c.CertFile, c.KeyFile)
 	} else {
@@ -152,7 +152,7 @@ func ServiceMainWithLogger(createfs func(L *slog.Logger) ninep.FileSystem) {
 
 	err := cfg.CreateServerAndListen(createfs)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "Error: %s\n", err)
 		os.Exit(1)
 	}
 }
@@ -170,6 +170,6 @@ func ServiceMainWithFactory(createcfg func(stdout, stderr io.Writer) ServerConfi
 	srv := conf.CreateServer(func(*slog.Logger) ninep.FileSystem { return createfs() })
 	err := conf.ListenAndServe(srv)
 	if err != nil {
-		fmt.Fprintf(conf.Stdout, "Error: %s\n", err)
+		_, _ = fmt.Fprintf(conf.Stdout, "Error: %s\n", err)
 	}
 }

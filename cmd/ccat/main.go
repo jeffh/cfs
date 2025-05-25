@@ -27,9 +27,9 @@ func main() {
 
 	flag.Usage = func() {
 		w := flag.CommandLine.Output()
-		fmt.Fprintf(w, "Usage: %s [OPTIONS] ADDR/PATH\n\n", os.Args[0])
-		fmt.Fprintf(w, "cat for CFS\n\n")
-		fmt.Fprintf(w, "OPTIONS:\n")
+		_, _ = fmt.Fprintf(w, "Usage: %s [OPTIONS] ADDR/PATH\n\n", os.Args[0])
+		_, _ = fmt.Fprintf(w, "cat for CFS\n\n")
+		_, _ = fmt.Fprintf(w, "OPTIONS:\n")
 		flag.PrintDefaults()
 	}
 
@@ -44,7 +44,7 @@ func main() {
 		if err != nil {
 			return err
 		}
-		defer h.Close()
+		defer func() { _ = h.Close() }()
 
 		if printFilename {
 			fmt.Printf("=== %s ===\n", mnt.Prefix)
@@ -54,19 +54,19 @@ func main() {
 			wr := ninep.Writer(h)
 			f, err := os.Open(writeFromFile)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "failed opening file: %s: %s\n", writeFromFile, err)
+				_, _ = fmt.Fprintf(os.Stderr, "failed opening file: %s: %s\n", writeFromFile, err)
 				return err
 			}
 			n, err := io.Copy(wr, f)
-			fmt.Fprintf(os.Stderr, "# wrote %d bytes\n", n)
-			f.Close()
+			_, _ = fmt.Fprintf(os.Stderr, "# wrote %d bytes\n", n)
+			_ = f.Close()
 			if err != nil {
 				return err
 			}
 		} else if writeFromStdin {
 			wr := ninep.Writer(h)
 			n, err := io.Copy(wr, os.Stdin)
-			fmt.Fprintf(os.Stderr, "# wrote %d bytes\n", n)
+			_, _ = fmt.Fprintf(os.Stderr, "# wrote %d bytes\n", n)
 			if err != nil {
 				return err
 			}
@@ -74,12 +74,19 @@ func main() {
 
 		rdr := ninep.Reader(h)
 		if numlines == 0 {
-			io.Copy(os.Stdout, rdr)
+			if _, err := io.Copy(os.Stdout, rdr); err != nil {
+				return err
+			}
 		} else {
 			buf := make([]byte, 128*1024)
 			line := 0
 			for {
-				_, err := io.ReadFull(rdr, buf)
+				if _, err := io.ReadFull(rdr, buf); err != nil {
+					if err == io.EOF || err == io.ErrUnexpectedEOF {
+						return nil
+					}
+					return err
+				}
 				b := buf
 				for i, r := range b {
 					if r == '\n' {
@@ -105,7 +112,9 @@ func main() {
 		}
 
 		if newline {
-			os.Stdout.Write([]byte("\n"))
+			if _, err := os.Stdout.Write([]byte("\n")); err != nil {
+				return err
+			}
 		}
 
 		return nil
