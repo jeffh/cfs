@@ -124,7 +124,7 @@ func (n *Ndb) readFile(fileToRead string, lastSeen time.Time) ([]byte, time.Time
 	}
 	slog.Debug("ndb: load", "file", fileToRead)
 	buf, err := io.ReadAll(ninep.Reader(f))
-	f.Close()
+	_ = f.Close()
 	if err != nil {
 		return nil, modTime, err
 	}
@@ -280,7 +280,8 @@ func (n *Ndb) byPredicate(allow func(rec []byte) bool) iter.Seq[Record] {
 							break
 						}
 					} else {
-						// fmt.Printf("parseRecord error: %v\n", err)
+						// TODO: handle parse error
+						_ = err // ignore parse errors for now
 					}
 				}
 			}
@@ -291,16 +292,10 @@ func (n *Ndb) byPredicate(allow func(rec []byte) bool) iter.Seq[Record] {
 
 func hasAttr(recBytes []byte, attr string) bool {
 	attrKey := []byte(" " + attr + "=")
-	off := 0
-	for off < len(recBytes) {
-		idx := bytes.Index(recBytes[off:], attrKey)
-		if idx == -1 {
-			return bytes.Index(recBytes, []byte(" "+attr+" ")) != -1
-		}
-
+	if bytes.Contains(recBytes, attrKey) {
 		return true
 	}
-	return false
+	return bytes.Contains(recBytes, []byte(" "+attr+" "))
 }
 
 func hasAttrVal(recBytes []byte, attr, value string) bool {
@@ -309,7 +304,7 @@ func hasAttrVal(recBytes []byte, attr, value string) bool {
 	for off < len(recBytes) {
 		idx := bytes.Index(recBytes[off:], attrKey)
 		if idx == -1 {
-			return len(value) == 0 && bytes.Index(recBytes, []byte(" "+attr+" ")) != -1
+			return len(value) == 0 && bytes.Contains(recBytes, []byte(" "+attr+" "))
 		}
 
 		valueStart := idx + len(attrKey)

@@ -27,10 +27,10 @@ func main() {
 
 	flag.Usage = func() {
 		w := flag.CommandLine.Output()
-		fmt.Fprintf(w, "mount for CFS\n")
-		fmt.Fprintf(w, "Usage: %s [OPTIONS] LOCAL_MOUNT\n", os.Args[0])
-		fmt.Fprintf(w, "Translate a 9p file server mount point into a locally mounted file system\n\n")
-		fmt.Fprintf(w, "OPTIONS:\n")
+		_, _ = fmt.Fprintf(w, "mount for CFS\n")
+		_, _ = fmt.Fprintf(w, "Usage: %s [OPTIONS] LOCAL_MOUNT\n", os.Args[0])
+		_, _ = fmt.Fprintf(w, "Translate a 9p file server mount point into a locally mounted file system\n\n")
+		_, _ = fmt.Fprintf(w, "OPTIONS:\n")
 		flag.PrintDefaults()
 	}
 

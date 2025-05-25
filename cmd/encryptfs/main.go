@@ -36,12 +36,12 @@ func main() {
 
 	flag.Usage = func() {
 		o := flag.CommandLine.Output()
-		fmt.Fprintf(o, "Usage: %s [OPTIONS] KEYS_MOUNT DIR_MOUNT [DECRYPT_MOUNT]\n\n", os.Args[0])
-		fmt.Fprintf(o, "Reads and stores encrypted data in DIR_MOUNT (note, file names are not encrypted).\n")
-		fmt.Fprintf(o, "\nUses with a unique symmetric key per file stored in KEYS_MOUNT to encrypt DIR_MOUNT. Every key in KEYS_MOUNT is are encrypted via public-private key.\n")
-		fmt.Fprintf(o, "DECRYPT_MOUNT is a temporary file location to hold decrypted files for reading and writing. If not provided, defaults to an in memory 9p file system.\n")
+		_, _ = fmt.Fprintf(o, "Usage: %s [OPTIONS] KEYS_MOUNT DIR_MOUNT [DECRYPT_MOUNT]\n\n", os.Args[0])
+		_, _ = fmt.Fprintf(o, "Reads and stores encrypted data in DIR_MOUNT (note, file names are not encrypted).\n")
+		_, _ = fmt.Fprintf(o, "\nUses with a unique symmetric key per file stored in KEYS_MOUNT to encrypt DIR_MOUNT. Every key in KEYS_MOUNT is are encrypted via public-private key.\n")
+		_, _ = fmt.Fprintf(o, "DECRYPT_MOUNT is a temporary file location to hold decrypted files for reading and writing. If not provided, defaults to an in memory 9p file system.\n")
 		proxy.PrintMountsHelp(o)
-		fmt.Fprintf(o, "\nOPTIONS:\n")
+		_, _ = fmt.Fprintf(o, "\nOPTIONS:\n")
 		flag.PrintDefaults()
 	}
 
@@ -81,7 +81,7 @@ func main() {
 	}
 	defer func() {
 		for _, m := range fsm {
-			m.Close()
+			_ = m.Close()
 		}
 	}()
 	keysMnt := fsm[0]

@@ -12,8 +12,8 @@ func TestStat(t *testing.T) {
 	if err != nil {
 		t.Error(err.Error())
 	}
-	defer os.Remove(f.Name())
-	defer f.Close()
+	defer func() { _ = os.Remove(f.Name()) }()
+	defer func() { _ = f.Close() }()
 
 	info, err := os.Stat(f.Name())
 	if err != nil {

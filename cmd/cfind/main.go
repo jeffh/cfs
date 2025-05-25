@@ -74,9 +74,9 @@ func main() {
 
 	flag.Usage = func() {
 		w := flag.CommandLine.Output()
-		fmt.Fprintf(w, "Usage: %s [OPTIONS] ADDR/PATH EXPRESSION\n\n", os.Args[0])
-		fmt.Fprintf(w, "find for CFS\n\n")
-		fmt.Fprintf(w, "OPTIONS:\n")
+		_, _ = fmt.Fprintf(w, "Usage: %s [OPTIONS] ADDR/PATH EXPRESSION\n\n", os.Args[0])
+		_, _ = fmt.Fprintf(w, "find for CFS\n\n")
+		_, _ = fmt.Fprintf(w, "OPTIONS:\n")
 		flag.PrintDefaults()
 	}
 
@@ -94,7 +94,7 @@ func main() {
 			kindPredicate = isAny
 		default:
 			exitCode = 1
-			return fmt.Errorf("Unknown -type filter: %#v", kind)
+			return fmt.Errorf("unknown -type filter: %#v", kind)
 		}
 
 		args := flag.Args()

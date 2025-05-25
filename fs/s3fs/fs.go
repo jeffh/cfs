@@ -269,7 +269,7 @@ func (f *fsys) CreateFile(ctx context.Context, path string, flag ninep.OpenMode,
 		if flag.IsReadable() {
 			r, w := io.Pipe()
 			go func() {
-				defer r.Close()
+				defer func() { _ = r.Close() }()
 				resp, err := f.s3c.Client.GetObject(ctx, &s3.GetObjectInput{
 					Bucket: aws.String(bucket),
 					Key:    aws.String(key),
@@ -288,7 +288,7 @@ func (f *fsys) CreateFile(ctx context.Context, path string, flag ninep.OpenMode,
 					}
 					w.CloseWithError(mapAwsErrToNinep(err))
 				} else {
-					defer resp.Body.Close()
+					defer func() { _ = resp.Body.Close() }()
 					_, err = io.Copy(w, resp.Body)
 					w.CloseWithError(mapAwsErrToNinep(err))
 				}
@@ -298,7 +298,7 @@ func (f *fsys) CreateFile(ctx context.Context, path string, flag ninep.OpenMode,
 		if flag.IsWriteable() {
 			r, w := io.Pipe()
 			go func() {
-				defer r.Close()
+				defer func() { _ = r.Close() }()
 				input := &s3.PutObjectInput{
 					Bucket: aws.String(bucket),
 					Key:    aws.String(key),
@@ -354,7 +354,7 @@ func (f *fsys) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (
 		if flag.IsReadable() {
 			r, w := io.Pipe()
 			go func() {
-				defer r.Close()
+				defer func() { _ = r.Close() }()
 				resp, err := f.s3c.Client.GetObject(ctx, &s3.GetObjectInput{
 					Bucket: aws.String(bucket),
 					Key:    aws.String(key),
@@ -373,7 +373,7 @@ func (f *fsys) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (
 					}
 					w.CloseWithError(mapAwsErrToNinep(err))
 				} else {
-					defer resp.Body.Close()
+					defer func() { _ = resp.Body.Close() }()
 					_, err = io.Copy(w, resp.Body)
 					w.CloseWithError(mapAwsErrToNinep(err))
 				}
@@ -383,7 +383,7 @@ func (f *fsys) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (
 		if flag.IsWriteable() {
 			r, w := io.Pipe()
 			go func() {
-				defer r.Close()
+				defer func() { _ = r.Close() }()
 				_, err := f.s3c.Client.PutObject(ctx, &s3.PutObjectInput{
 					Bucket: aws.String(bucket),
 					Key:    aws.String(key),
@@ -406,7 +406,7 @@ func (f *fsys) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (
 			r, w := io.Pipe()
 			err := f.writeMetadata(ctx, bucket, key, w)
 			if err != nil {
-				r.Close()
+				_ = r.Close()
 				return nil, err
 			}
 			h.R = r
@@ -468,7 +468,7 @@ func (f *fsys) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (
 		key := res.Vars[1]
 		h, r, w := ninep.DeviceHandle(flag)
 		if r != nil {
-			r.Close()
+			_ = r.Close()
 		}
 		if w != nil {
 			go func() {
@@ -553,7 +553,7 @@ func (f *fsys) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (
 		}
 		if w != nil {
 			go func() {
-				defer w.Close()
+				defer func() { _ = w.Close() }()
 				input := &s3.GetBucketCorsInput{
 					Bucket: aws.String(bucket),
 				}
@@ -600,7 +600,7 @@ func (f *fsys) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (
 						copy(headers, rule.ExposeHeaders)
 						pairs = append(pairs, [2]string{"expose_headers", strings.Join(headers, ",")})
 					}
-					fmt.Fprintf(w, "rule=%s\n", kvp.NonEmptyKeyPairs(pairs))
+					_, _ = fmt.Fprintf(w, "rule=%s\n", kvp.NonEmptyKeyPairs(pairs))
 				}
 			}()
 		}
@@ -1333,7 +1333,7 @@ func (f *fsys) writeMetadata(ctx context.Context, bucket, key string, w *io.Pipe
 			"delete-marker":                 resp.DeleteMarker,
 			"etag":                          resp.ETag,
 			"expiration":                    resp.Expiration,
-			"expires":                       resp.Expires,
+			"expires":                       resp.ExpiresString,
 			"last-modified":                 resp.LastModified,
 			"metadata":                      resp.Metadata,
 			"missing-meta":                  resp.MissingMeta,
@@ -1431,12 +1431,12 @@ func isNoSuchBucket(err error) bool {
 func (f *fsys) bucketCtlFile(ctx context.Context, bucket string, flag ninep.OpenMode) (ninep.FileHandle, error) {
 	h, r, w := ninep.DeviceHandle(flag)
 	if r == nil || w == nil {
-		r.Close()
-		w.Close()
+		_ = r.Close()
+		_ = w.Close()
 		return nil, fmt.Errorf("device handle must be read/write: %v", flag)
 	}
 	go func() {
-		defer r.Close()
+		defer func() { _ = r.Close() }()
 		scanner := bufio.NewScanner(r)
 		help := [][2]string{
 			{"help", "displays this help"},
@@ -1446,14 +1446,14 @@ func (f *fsys) bucketCtlFile(ctx context.Context, bucket string, flag ninep.Open
 			line := scanner.Text()
 			kv, err := kvp.ParseKeyValues(line)
 			if err != nil {
-				fmt.Fprintf(w, "ok=false error=parse_error reason=%q\n", err.Error())
+				_, _ = fmt.Fprintf(w, "ok=false error=parse_error reason=%q\n", err.Error())
 				continue
 			}
 			switch kv.GetOne("op") {
 			case "help", "":
-				fmt.Fprintf(w, "HELP\n\nOPERATIONS\n")
+				_, _ = fmt.Fprintf(w, "HELP\n\nOPERATIONS\n")
 				for _, cmd := range help {
-					fmt.Fprintf(w, "  %s: %s\n", cmd[0], cmd[1])
+					_, _ = fmt.Fprintf(w, "  %s: %s\n", cmd[0], cmd[1])
 				}
 			case "sign_upload_url":
 				if key := kv.GetOne("key"); key != "" {
@@ -1463,12 +1463,12 @@ func (f *fsys) bucketCtlFile(ctx context.Context, bucket string, flag ninep.Open
 					}
 					url, err := f.signedUploadURL(ctx, bucket, key, d)
 					if err != nil {
-						fmt.Fprintf(w, "ok=false error=s3_error reason=%q\n", err.Error())
+						_, _ = fmt.Fprintf(w, "ok=false error=s3_error reason=%q\n", err.Error())
 						continue
 					}
-					fmt.Fprintf(w, "url=%q\n", url)
+					_, _ = fmt.Fprintf(w, "url=%q\n", url)
 				} else {
-					fmt.Fprintf(w, "ok=false error=missing_key reason=%q\n", "key is required")
+					_, _ = fmt.Fprintf(w, "ok=false error=missing_key reason=%q\n", "key is required")
 				}
 			}
 		}
@@ -1524,13 +1524,13 @@ func (f *fsys) bucketAclFile(ctx context.Context, bucket string, flag ninep.Open
 	}
 	if w != nil {
 		go func() {
-			defer w.Close()
+			defer func() { _ = w.Close() }()
 			input := s3.GetBucketAclInput{
 				Bucket: aws.String(bucket),
 			}
 			out, err := f.s3c.Client.GetBucketAcl(ctx, &input)
 			if err != nil {
-				fmt.Fprintf(w, "ok=false error=s3_error reason=%q\n", err.Error())
+				_, _ = fmt.Fprintf(w, "ok=false error=s3_error reason=%q\n", err.Error())
 				return
 			}
 			for _, grant := range out.Grants {
@@ -1544,7 +1544,7 @@ func (f *fsys) bucketAclFile(ctx context.Context, bucket string, flag ninep.Open
 					pairs = append(pairs, [2]string{"type", string(g.Type)})
 					pairs = append(pairs, [2]string{"uri", aws.ToString(g.URI)})
 				}
-				fmt.Fprintf(w, "%s\n", kvp.NonEmptyKeyPairs(pairs))
+				_, _ = fmt.Fprintf(w, "%s\n", kvp.NonEmptyKeyPairs(pairs))
 			}
 		}()
 	}

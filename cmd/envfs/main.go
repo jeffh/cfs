@@ -18,14 +18,14 @@ func main() {
 
 	flag.Usage = func() {
 		w := flag.CommandLine.Output()
-		fmt.Fprintf(w, "Usage: %s [OPTIONS]\n\n", os.Args[0])
-		fmt.Fprintf(w, "Exposes environment variables as a 9p file server.\n\n")
-		fmt.Fprintf(w, "OPTIONS:\n")
+		_, _ = fmt.Fprintf(w, "Usage: %s [OPTIONS]\n\n", os.Args[0])
+		_, _ = fmt.Fprintf(w, "Exposes environment variables as a 9p file server.\n\n")
+		_, _ = fmt.Fprintf(w, "OPTIONS:\n")
 		flag.PrintDefaults()
 	}
 
 	cli.ServiceMain(func() ninep.FileSystem {
-		var fsys ninep.FileSystem = fs.Env()
+		fsys := fs.Env()
 		if readOnly {
 			fsys = fs.ReadOnly(fsys)
 			fmt.Fprintf(os.Stderr, "Serving in read-only mode\n")

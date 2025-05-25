@@ -20,9 +20,9 @@ func main() {
 
 	flag.Usage = func() {
 		w := flag.CommandLine.Output()
-		fmt.Fprintf(w, "Usage: %s [OPTIONS] FORWARD_ADDR\n\n", os.Args[0])
-		fmt.Fprintf(w, "Useful for proxying 9p file servers to a new network address\n\n")
-		fmt.Fprintf(w, "OPTIONS\n")
+		_, _ = fmt.Fprintf(w, "Usage: %s [OPTIONS] FORWARD_ADDR\n\n", os.Args[0])
+		_, _ = fmt.Fprintf(w, "Useful for proxying 9p file servers to a new network address\n\n")
+		_, _ = fmt.Fprintf(w, "OPTIONS\n")
 		flag.PrintDefaults()
 	}
 
@@ -41,7 +41,7 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
 	}
-	defer clt.Close()
+	defer func() { _ = clt.Close() }()
 
 	createcfg := func(stdout, stderr io.Writer) cli.ServerConfig {
 		srvCfg.Stdout = stdout

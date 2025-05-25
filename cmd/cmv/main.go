@@ -18,9 +18,9 @@ import (
 func main() {
 	flag.Usage = func() {
 		w := flag.CommandLine.Output()
-		fmt.Fprintf(w, "Usage: %s [OPTIONS] ADDR/PATH NEW_ADDR/NEW_PATH\n\n", os.Args[0])
-		fmt.Fprintf(w, "mv for CFS - move files and directories\n\n")
-		fmt.Fprintf(w, "OPTIONS:\n")
+		_, _ = fmt.Fprintf(w, "Usage: %s [OPTIONS] ADDR/PATH NEW_ADDR/NEW_PATH\n\n", os.Args[0])
+		_, _ = fmt.Fprintf(w, "mv for CFS - move files and directories\n\n")
+		_, _ = fmt.Fprintf(w, "OPTIONS:\n")
 		flag.PrintDefaults()
 	}
 
@@ -50,7 +50,7 @@ func main() {
 			// move in the same server
 			err := srcMnt.FS.WriteStat(ctx, srcMnt.Prefix, ninep.SyncStatWithName(dstMntCfg.Prefix))
 			if errors.Is(err, fs.ErrNotExist) {
-				return fmt.Errorf("Path does not exist: %s", srcMnt.String())
+				return fmt.Errorf("path does not exist: %s", srcMnt.String())
 			}
 			return err
 		} else {
@@ -68,7 +68,7 @@ func main() {
 				exitCode = 1
 				runtime.Goexit()
 			}
-			defer in.Close()
+			defer func() { _ = in.Close() }()
 
 			out, err := dstMnt.FS.OpenFile(ctx, dstMnt.Prefix, ninep.OWRITE|ninep.OTRUNC)
 			if err != nil {

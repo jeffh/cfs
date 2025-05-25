@@ -13,9 +13,9 @@ import (
 func main() {
 	flag.Usage = func() {
 		w := flag.CommandLine.Output()
-		fmt.Fprintf(w, "Usage: %s [OPTIONS] ADDR/PATH\n\n", os.Args[0])
-		fmt.Fprintf(w, "mkdir for CFS\n\n")
-		fmt.Fprintf(w, "OPTIONS:\n")
+		_, _ = fmt.Fprintf(w, "Usage: %s [OPTIONS] ADDR/PATH\n\n", os.Args[0])
+		_, _ = fmt.Fprintf(w, "mkdir for CFS\n\n")
+		_, _ = fmt.Fprintf(w, "OPTIONS:\n")
 		flag.PrintDefaults()
 	}
 

@@ -3,7 +3,6 @@ package encryptfs
 
 import (
 	"context"
-	"crypto/cipher"
 	"crypto/rsa"
 	"errors"
 	"fmt"
@@ -56,9 +55,6 @@ func (f *EncryptedFileSystem) Init(ctx context.Context) error {
 
 var _ ninep.FileSystem = (*EncryptedFileSystem)(nil)
 
-func (f *EncryptedFileSystem) loadSharedSecret(k []byte) (cipher.AEAD, error) {
-	return chacha20poly1305.NewX(k)
-}
 
 func (f *EncryptedFileSystem) ensureRoots(ctx context.Context) error {
 	ensureDir := func(ctx context.Context, fsm *proxy.FileSystemMount, mode ninep.Mode) error {
@@ -78,7 +74,7 @@ func (f *EncryptedFileSystem) ensureRoots(ctx context.Context) error {
 						return err
 					}
 				} else if !info.IsDir() {
-					return fmt.Errorf("Expected %v to be a directory, but was not", path)
+					return fmt.Errorf("expected %v to be a directory, but was not", path)
 				}
 			}
 			if err := fsm.FS.MakeDir(ctx, fsm.Prefix, mode); err != nil {
@@ -91,13 +87,13 @@ func (f *EncryptedFileSystem) ensureRoots(ctx context.Context) error {
 		return err
 	}
 	if err := ensureDir(ctx, &f.DecryptMount, 0700); err != nil {
-		return fmt.Errorf("Failed to initialize decrypt root: %v %w", f.DecryptMount.Prefix, err)
+		return fmt.Errorf("failed to initialize decrypt root: %v %w", f.DecryptMount.Prefix, err)
 	}
 	if err := ensureDir(ctx, &f.KeysMount, 0700); err != nil {
-		return fmt.Errorf("Failed to initialize keys root: %v %w", f.KeysMount.Prefix, err)
+		return fmt.Errorf("failed to initialize keys root: %v %w", f.KeysMount.Prefix, err)
 	}
 	if err := ensureDir(ctx, &f.DataMount, 0700); err != nil {
-		return fmt.Errorf("Failed to initialize data root: %v %w", f.DataMount.Prefix, err)
+		return fmt.Errorf("failed to initialize data root: %v %w", f.DataMount.Prefix, err)
 	}
 	return nil
 }
@@ -113,7 +109,7 @@ func (f *EncryptedFileSystem) MakeDir(ctx context.Context, path string, mode nin
 func (f *EncryptedFileSystem) CreateFile(ctx context.Context, path string, flag ninep.OpenMode, mode ninep.Mode) (ninep.FileHandle, error) {
 	key, err := generateChachaKey()
 	if err != nil {
-		return nil, fmt.Errorf("Failed to generate key: %w", err)
+		return nil, fmt.Errorf("failed to generate key: %w", err)
 	}
 	stream, err := sio.XChaCha20Poly1305.Stream(key)
 	if err != nil {
@@ -130,7 +126,7 @@ func (f *EncryptedFileSystem) CreateFile(ctx context.Context, path string, flag 
 	if err != nil {
 		return nil, err
 	}
-	dataFile.Close()
+	_ = dataFile.Close()
 
 	commitHandle, err := openEncryptedFile(
 		ctx,
@@ -159,13 +155,13 @@ func (f *EncryptedFileSystem) OpenFile(ctx context.Context, path string, flag ni
 		if errors.Is(err, os.ErrNotExist) {
 			keyFile, err = f.KeysMount.FS.CreateFile(ctx, keyPath, ninep.ORDWR|ninep.OTRUNC, 0600)
 		} else {
-			return nil, fmt.Errorf("Failed to open key: %w", err)
+			return nil, fmt.Errorf("failed to open key: %w", err)
 		}
 		if err != nil {
-			return nil, fmt.Errorf("Failed to open/create key: %w", err)
+			return nil, fmt.Errorf("failed to open/create key: %w", err)
 		}
 	}
-	defer keyFile.Close()
+	defer func() { _ = keyFile.Close() }()
 
 	info, err := f.KeysMount.FS.Stat(ctx, keyPath)
 	if err != nil {

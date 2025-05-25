@@ -29,7 +29,7 @@ func DefaultSSHConfig(sshUser, sshKeyPath string) (*ssh.ClientConfig, error) {
 	if username == "" {
 		user, err := user.Current()
 		if err != nil {
-			return nil, fmt.Errorf("Failed to determine current user: %w", err)
+			return nil, fmt.Errorf("failed to determine current user: %w", err)
 		}
 		username = user.Username
 	}

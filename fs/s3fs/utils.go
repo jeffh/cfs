@@ -48,7 +48,7 @@ func writeDuration(w io.Writer, d time.Duration) error {
 
 func stringDuration(d time.Duration) string {
 	var buf bytes.Buffer
-	writeDuration(&buf, d)
+	_ = writeDuration(&buf, d)
 	return buf.String()
 }
 
@@ -75,15 +75,3 @@ func timePtrIfNotEmpty(s string) *time.Time {
 	return &t
 }
 
-func mapPtrIfNotEmpty(m kvp.Map) map[string]*string {
-	if len(m) != 0 {
-		res := make(map[string]*string)
-		for k, v := range m {
-			if len(v) > 0 {
-				res[k] = &v[0]
-			}
-		}
-		return res
-	}
-	return nil
-}

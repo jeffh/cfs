@@ -282,14 +282,14 @@ func (s *serverConn) errorf(f string, values ...interface{}) {
 func (s *serverConn) prepareDeadlines() {
 	now := time.Now()
 	if s.srv.ReadTimeout > 0 {
-		s.rwc.SetReadDeadline(now.Add(s.srv.ReadTimeout))
+		_ = s.rwc.SetReadDeadline(now.Add(s.srv.ReadTimeout))
 	} else {
-		s.rwc.SetReadDeadline(time.Time{})
+		_ = s.rwc.SetReadDeadline(time.Time{})
 	}
 	if s.srv.WriteTimeout > 0 {
-		s.rwc.SetWriteDeadline(now.Add(s.srv.WriteTimeout))
+		_ = s.rwc.SetWriteDeadline(now.Add(s.srv.WriteTimeout))
 	} else {
-		s.rwc.SetWriteDeadline(time.Time{})
+		_ = s.rwc.SetWriteDeadline(time.Time{})
 	}
 }
 
@@ -297,8 +297,8 @@ func (s *serverConn) acceptTversion(txn *srvTransaction) bool {
 	preferredSize := s.maxMsgSize
 
 	now := time.Now()
-	s.rwc.SetReadDeadline(now.Add(s.srv.InitialTimeout))
-	s.rwc.SetWriteDeadline(now.Add(s.srv.InitialTimeout))
+	_ = s.rwc.SetReadDeadline(now.Add(s.srv.InitialTimeout))
+	_ = s.rwc.SetWriteDeadline(now.Add(s.srv.InitialTimeout))
 	for {
 		err := txn.readRequest(s.rwc)
 		if err != nil {
@@ -391,7 +391,7 @@ func (s *serverConn) dissocTag(t Tag) bool {
 
 // this runs in a new goroutine
 func (s *serverConn) serve() {
-	defer s.rwc.Close()
+	defer func() { _ = s.rwc.Close() }()
 
 	// here's our pool of transactions we can write
 	{
@@ -438,7 +438,7 @@ func (s *serverConn) serve() {
 			case <-ctx.Done():
 				s.tracef("closing connection, erroring request from %s", s.rwc.RemoteAddr())
 				txn.Rerrorf("closing connection")
-				txn.writeReply(s.rwc) // we don't care, we're going away
+				_ = txn.writeReply(s.rwc) // we don't care, we're going away
 				txn.reset()
 				s.txns <- txn
 				break loop
@@ -605,7 +605,7 @@ func (s *Session) DeleteFileHandle(q Qid) {
 func (s *Session) Close() {
 	s.m.Lock()
 	for _, h := range s.qidsToHandle {
-		h.Close()
+		_ = h.Close()
 	}
 	s.m.Unlock()
 }

@@ -11,7 +11,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
-	"golang.org/x/crypto/ssh/terminal"
+	"golang.org/x/term"
 )
 
 func publicKeyFile(file string) ssh.AuthMethod {
@@ -29,7 +29,7 @@ func publicKeyFile(file string) ssh.AuthMethod {
 	if err != nil {
 		if _, ok := err.(*ssh.PassphraseMissingError); ok {
 			fmt.Printf("Please enter passphrase for %v: ", file)
-			password, _ := terminal.ReadPassword(0)
+			password, _ := term.ReadPassword(0)
 			key, err = ssh.ParsePrivateKeyWithPassphrase(buffer, password)
 			println("")
 		}

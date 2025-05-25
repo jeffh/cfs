@@ -21,8 +21,8 @@ func main() {
 
 	flag.Usage = func() {
 		out := flag.CommandLine.Output()
-		fmt.Fprintf(out, "Usage: %s [options]\n", os.Args[0])
-		fmt.Fprintf(out, "Serves a temporary directory over 9p.\n")
+		_, _ = fmt.Fprintf(out, "Usage: %s [options]\n", os.Args[0])
+		_, _ = fmt.Fprintf(out, "Serves a temporary directory over 9p.\n")
 		flag.PrintDefaults()
 	}
 

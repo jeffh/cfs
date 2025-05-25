@@ -115,7 +115,7 @@ func pidFds(p Pid) ([]Fd, error) {
 					} else if rport > 0 {
 						postfix = fmt.Sprintf("*->%s", remAddr)
 					} else {
-						postfix = fmt.Sprintf("%s", srcAddr)
+						postfix = srcAddr
 					}
 				case C.SOCKINFO_UN:
 					kind = "unix"
@@ -187,7 +187,6 @@ func pidFds(p Pid) ([]Fd, error) {
 		case C.PROX_FDTYPE_KQUEUE, C.PROX_FDTYPE_FSEVENTS, C.PROX_FDTYPE_NETPOLICY:
 			fallthrough
 		default:
-			break
 		}
 	}
 	return items, nil

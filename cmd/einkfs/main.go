@@ -33,20 +33,20 @@ func main() {
 
 	flag.Usage = func() {
 		w := flag.CommandLine.Output()
-		fmt.Fprintf(w, "Usage: %s [OPTIONS]\n\n", os.Args[0])
-		fmt.Fprintf(w, "Exposes an eink display as a 9p file server on a raspberry pi with waveshare 2in13v2 display.\n\n")
-		fmt.Fprintf(w, "The layout of the filesystem is:\n")
-		fmt.Fprintf(w, "\t/display   a gif image file of the current display that can be read or written to. Zeros /text on write.\n")
-		fmt.Fprintf(w, "\t/text      a string file that is displayed on the display. Can be written to to change the text.\n")
-		fmt.Fprintf(w, "\t/metadata  a file with metadata about the display\n")
-		fmt.Fprintf(w, "\t/rotate    a file with the current rotation of the display; can be written to to change the rotation\n")
-		fmt.Fprintf(w, "\t/ctl       a device file to control settings of the display\n")
-		fmt.Fprintf(w, "\n/ctl commands:\n")
-		fmt.Fprintf(w, "\tclear       clear the display\n")
-		fmt.Fprintf(w, "\trotate=n    set the rotation of the display to n (0, 1, 2, 3); only applies to text rendering\n")
-		fmt.Fprintf(w, "\tfont_size=n set the font size to n\n")
-		fmt.Fprintf(w, "\n")
-		fmt.Fprintf(w, "OPTIONS:\n")
+		_, _ = fmt.Fprintf(w, "Usage: %s [OPTIONS]\n\n", os.Args[0])
+		_, _ = fmt.Fprintf(w, "Exposes an eink display as a 9p file server on a raspberry pi with waveshare 2in13v2 display.\n\n")
+		_, _ = fmt.Fprintf(w, "The layout of the filesystem is:\n")
+		_, _ = fmt.Fprintf(w, "\t/display   a gif image file of the current display that can be read or written to. Zeros /text on write.\n")
+		_, _ = fmt.Fprintf(w, "\t/text      a string file that is displayed on the display. Can be written to to change the text.\n")
+		_, _ = fmt.Fprintf(w, "\t/metadata  a file with metadata about the display\n")
+		_, _ = fmt.Fprintf(w, "\t/rotate    a file with the current rotation of the display; can be written to to change the rotation\n")
+		_, _ = fmt.Fprintf(w, "\t/ctl       a device file to control settings of the display\n")
+		_, _ = fmt.Fprintf(w, "\n/ctl commands:\n")
+		_, _ = fmt.Fprintf(w, "\tclear       clear the display\n")
+		_, _ = fmt.Fprintf(w, "\trotate=n    set the rotation of the display to n (0, 1, 2, 3); only applies to text rendering\n")
+		_, _ = fmt.Fprintf(w, "\tfont_size=n set the font size to n\n")
+		_, _ = fmt.Fprintf(w, "\n")
+		_, _ = fmt.Fprintf(w, "OPTIONS:\n")
 		flag.PrintDefaults()
 	}
 	cli.ServiceMain(func() ninep.FileSystem {
@@ -67,8 +67,8 @@ func main() {
 				log.Fatal(err)
 			}
 			opts := &gif.Options{NumColors: 4}
-			gif.Encode(f, img, opts)
-			f.Close()
+			_ = gif.Encode(f, img, opts)
+			_ = f.Close()
 			log.Fatal("dump image")
 		}
 

@@ -11,9 +11,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strconv"
-	"sync"
 	"syscall"
-	"unsafe"
 
 	iofs "io/fs"
 
@@ -73,23 +71,7 @@ type FsConfig struct {
 	doNotMapIds bool
 	prefix      string
 
-	m    sync.Mutex
-	inos map[string]uint64
-
 	L *slog.Logger
-}
-
-func (c *FsConfig) putIno(path string, value *interface{}) {
-	c.m.Lock()
-	defer c.m.Unlock()
-	c.inos[path] = uint64(uintptr(unsafe.Pointer(value)))
-}
-
-func (c *FsConfig) getIno(path string) (uint64, bool) {
-	c.m.Lock()
-	defer c.m.Unlock()
-	v, ok := c.inos[path]
-	return v, ok
 }
 
 func (c *FsConfig) path(p string) string {
@@ -243,8 +225,7 @@ func (n *Dir) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 func (n *Dir) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	*out = fuse.EntryOut{}
 
-	path := n.config.path(n.path)
-	path = filepath.Join(n.path, name)
+	path := filepath.Join(n.path, name)
 	if n.config.L != nil {
 		n.config.L.DebugContext(ctx, "Dir.Lookup.begin", slog.String("path", path), slog.String("name", name))
 	}
@@ -355,7 +336,7 @@ func (n *Dir) Create(ctx context.Context, name string, flags uint32, mode uint32
 
 		info, err := n.fs.Stat(ctx, path)
 		if err != nil {
-			h.Close()
+			_ = h.Close()
 			return nil, nil, 0, mapErr(err, syscall.EINVAL) // TODO: what's better to report here?
 		}
 
@@ -366,7 +347,7 @@ func (n *Dir) Create(ctx context.Context, name string, flags uint32, mode uint32
 		}
 
 		if errno := fillAttr(n.config, info, &out.Attr); errno != 0 {
-			h.Close()
+			_ = h.Close()
 			return nil, nil, 0, errno
 		}
 		if n.config.L != nil {

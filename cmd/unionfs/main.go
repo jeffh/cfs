@@ -30,10 +30,10 @@ func main() {
 
 	flag.Usage = func() {
 		o := flag.CommandLine.Output()
-		fmt.Fprintf(o, "Usage: %s [OPTIONS] MOUNTS...\n", os.Args[0])
-		fmt.Fprintf(o, "Combines two or more separate 9p file systems into one 9p file system overlay.\n")
+		_, _ = fmt.Fprintf(o, "Usage: %s [OPTIONS] MOUNTS...\n", os.Args[0])
+		_, _ = fmt.Fprintf(o, "Combines two or more separate 9p file systems into one 9p file system overlay.\n")
 		proxy.PrintMountsHelp(o)
-		fmt.Fprintf(o, "\nOPTIONS:\n")
+		_, _ = fmt.Fprintf(o, "\nOPTIONS:\n")
 		flag.PrintDefaults()
 	}
 
@@ -60,7 +60,7 @@ func main() {
 				runtime.Goexit()
 			}
 			m.Lock()
-			closers = append(closers, func() { clt.Close() })
+			closers = append(closers, func() { _ = clt.Close() })
 			m.Unlock()
 			fsm = append(fsm, proxy.FileSystemMount{
 				FS:     fs,
@@ -78,7 +78,7 @@ func main() {
 				runtime.Goexit()
 			}
 			m.Lock()
-			closers = append(closers, func() { clt.Close() })
+			closers = append(closers, func() { _ = clt.Close() })
 			m.Unlock()
 			return proxy.FileSystemMount{
 				FS:     fs,

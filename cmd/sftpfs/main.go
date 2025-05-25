@@ -35,8 +35,8 @@ func main() {
 	flag.StringVar(&prefix, "prefix", "", "SFTP directory prefix")
 
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "sftp for CFS\n")
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [OPTIONS] SFTP_ADDR\n", os.Args[0])
+		_, _ = fmt.Fprintf(flag.CommandLine.Output(), "sftp for CFS\n")
+		_, _ = fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [OPTIONS] SFTP_ADDR\n", os.Args[0])
 		flag.PrintDefaults()
 	}
 
@@ -53,7 +53,7 @@ func main() {
 		}
 
 		sshAddr := flag.Arg(0)
-		if strings.Index(sshAddr, ":") == -1 {
+		if !strings.Contains(sshAddr, ":") {
 			sshAddr += ":22"
 		}
 
@@ -65,7 +65,7 @@ func main() {
 
 		fs, err := sftpfs.New(conn, prefix)
 		if err != nil {
-			defer conn.Close()
+			defer func() { _ = conn.Close() }()
 			log.Fatalf("Failed to create sftp connection: %s\n", err)
 		}
 		return fs

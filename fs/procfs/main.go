@@ -77,12 +77,12 @@ type ProcInfo struct {
 type FDType string
 
 const (
-	FDTypeFile    FDType = "file"
-	FDTypeSocket         = "socket"
-	FDTypePSEM           = "psem"
-	FDTypePSHM           = "pshm"
-	FDTypePipe           = "pipe"
-	FDTypeUnknown        = "unknown"
+	FDTypeFile   FDType = "file"
+	FDTypeSocket FDType = "socket"
+	FDTypePSEM   FDType = "psem"
+	FDTypePSHM    FDType = "pshm"
+	FDTypePipe    FDType = "pipe"
+	FDTypeUnknown FDType = "unknown"
 )
 
 type Fd struct {
