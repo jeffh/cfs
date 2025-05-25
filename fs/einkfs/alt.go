@@ -85,7 +85,9 @@ func (f *internalState) unsafeBlit(img image.Image) {
 	zero := image.Point{}
 	draw.Draw(f.display, f.display.Bounds(), img, zero, draw.Src)
 	if time.Since(f.lastUpdated) >= 24*time.Hour {
-		f.dev.Clear(image.White)
+		if err := f.dev.Clear(image.White); err != nil {
+			log.Printf("clear display: %v", err)
+		}
 		f.lastUpdated = time.Now()
 	}
 	err := f.dev.Draw(f.dev.Bounds(), f.display, zero)

@@ -69,9 +69,9 @@ func main() {
 
 	flag.Usage = func() {
 		o := flag.CommandLine.Output()
-		fmt.Fprintf(o, "Usage: %s [OPTIONS] CMD [ARGS]\n\n", os.Args[0])
-		fmt.Fprintf(o, "exec for a remote system\n")
-		fmt.Fprintf(o, "\n")
+		_, _ = fmt.Fprintf(o, "Usage: %s [OPTIONS] CMD [ARGS]\n\n", os.Args[0])
+		_, _ = fmt.Fprintf(o, "exec for a remote system\n")
+		_, _ = fmt.Fprintf(o, "\n")
 		fmt.Fprintf(o, "Executes a command. There's several modes of operation:\n")
 		fmt.Fprintf(o, " - executing commands on the current machine\n")
 		fmt.Fprintf(o, " - executing commands on a remote machine using ssh\n")
@@ -132,7 +132,11 @@ func runRequest() {
 	}
 	if stat.Mode()&fs.ModeCharDevice == 0 {
 		stdin = os.Stdin
-		defer os.Stdin.Close()
+		defer func() {
+			if err := os.Stdin.Close(); err != nil {
+				log.Printf("closing stdin: %v", err)
+			}
+		}()
 	}
 
 	var con net.Conn
@@ -158,7 +162,11 @@ func runRequest() {
 			if err != nil {
 				log.Fatalf("Failed to upload file: %s\n", err)
 			}
-			defer sftpConn.Close()
+			defer func() {
+				if err := sftpConn.Close(); err != nil {
+					log.Printf("closing sftp connection: %v", err)
+				}
+			}()
 			for _, upload := range uploads {
 				out, err := os.Open(upload)
 				if err != nil {
@@ -167,12 +175,18 @@ func runRequest() {
 				name := filepath.Base(upload)
 				in, err := sftpConn.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
 				if err != nil {
-					out.Close()
+					if cerr := out.Close(); cerr != nil {
+						log.Printf("closing local file: %v", cerr)
+					}
 					log.Fatalf("Failed to upload executable: %s\n", err)
 				}
 				_, err = io.Copy(in, out)
-				out.Close()
-				in.Close()
+				if cerr := out.Close(); cerr != nil {
+					log.Printf("closing local file: %v", cerr)
+				}
+				if cerr := in.Close(); cerr != nil {
+					log.Printf("closing remote file: %v", cerr)
+				}
 				if err != nil {
 					log.Fatalf("Failed to upload executable: %s\n", err)
 				}
@@ -182,7 +196,9 @@ func runRequest() {
 				for _, upload := range uploads {
 					name := filepath.Base(upload)
 					if name != "" {
-						sftpConn.Remove(name)
+						if err := sftpConn.Remove(name); err != nil {
+							log.Printf("removing remote file %s: %v", name, err)
+						}
 					}
 				}
 			}()
@@ -193,7 +209,11 @@ func runRequest() {
 			log.Fatalf("Failed to connect to remote: %s\n", err)
 		}
 
-		defer sess.Close()
+		defer func() {
+			if err := sess.Close(); err != nil {
+				log.Printf("closing ssh session: %v", err)
+			}
+		}()
 
 		for _, stmt := range env {
 			i := strings.Index(stmt, "=")
@@ -226,7 +246,11 @@ func runRequest() {
 			log.Fatalf("Failed to connect to server: %s: %s", addr, err)
 		}
 	}
-	defer con.Close()
+	defer func() {
+		if err := con.Close(); err != nil {
+			log.Printf("closing connection: %v", err)
+		}
+	}()
 
 	e := gob.NewEncoder(con)
 	req := ReqCmd{
@@ -243,7 +267,9 @@ func runRequest() {
 			log.Fatalf("Failed to open binary to upload: %s", err)
 		}
 		data, err := io.ReadAll(f)
-		f.Close()
+		if cerr := f.Close(); cerr != nil {
+			log.Printf("closing file: %v", cerr)
+		}
 		if err != nil {
 			log.Fatalf("Failed to read binary to upload: %s", err)
 		}
@@ -299,15 +325,23 @@ func runRequest() {
 
 		switch m.Kind {
 		case MessageTypeStdout:
-			os.Stdout.Write(m.Text)
+			if _, err := os.Stdout.Write(m.Text); err != nil {
+				log.Printf("writing stdout: %v", err)
+			}
 		case MessageTypeStderr:
-			os.Stderr.Write(m.Text)
+			if _, err := os.Stderr.Write(m.Text); err != nil {
+				log.Printf("writing stderr: %v", err)
+			}
 		case MessageTypeError:
-			os.Stderr.Write(m.Text)
+			if _, err := os.Stderr.Write(m.Text); err != nil {
+				log.Printf("writing stderr: %v", err)
+			}
 			exitCode = m.ExitCode
 			break
 		case MessageTypeExited:
-			os.Stderr.Write(m.Text)
+			if _, err := os.Stderr.Write(m.Text); err != nil {
+				log.Printf("writing stderr: %v", err)
+			}
 			exitCode = m.ExitCode
 			break
 		}
@@ -334,7 +368,11 @@ func runServer() {
 		log.Fatalf("error: %s\n", err)
 	}
 	log.Printf("Listening on %s\n", ln.Addr())
-	defer ln.Close()
+	defer func() {
+		if err := ln.Close(); err != nil {
+			log.Printf("closing listener: %v", err)
+		}
+	}()
 
 	for {
 		conn, err := ln.Accept()
@@ -401,7 +439,11 @@ func runRemoteProgram() {
 			if err != nil {
 				log.Fatalf("Failed to upload file: %s\n", err)
 			}
-			defer sftpConn.Close()
+			defer func() {
+				if err := sftpConn.Close(); err != nil {
+					log.Printf("closing sftp connection: %v", err)
+				}
+			}()
 			for _, upload := range uploads {
 				out, err := os.Open(upload)
 				if err != nil {
@@ -410,12 +452,18 @@ func runRemoteProgram() {
 				name := filepath.Base(upload)
 				in, err := sftpConn.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
 				if err != nil {
-					out.Close()
+					if cerr := out.Close(); cerr != nil {
+						log.Printf("closing local file: %v", cerr)
+					}
 					log.Fatalf("Failed to upload executable: %s\n", err)
 				}
 				_, err = io.Copy(in, out)
-				out.Close()
-				in.Close()
+				if cerr := out.Close(); cerr != nil {
+					log.Printf("closing local file: %v", cerr)
+				}
+				if cerr := in.Close(); cerr != nil {
+					log.Printf("closing remote file: %v", cerr)
+				}
 				if err != nil {
 					log.Fatalf("Failed to upload executable: %s\n", err)
 				}
@@ -425,7 +473,9 @@ func runRemoteProgram() {
 				for _, upload := range uploads {
 					name := filepath.Base(upload)
 					if name != "" {
-						sftpConn.Remove(name)
+						if err := sftpConn.Remove(name); err != nil {
+							log.Printf("removing remote file %s: %v", name, err)
+						}
 					}
 				}
 			}()
@@ -436,7 +486,11 @@ func runRemoteProgram() {
 			log.Fatalf("Failed to connect to remote: %s\n", err)
 		}
 
-		defer sess.Close()
+		defer func() {
+			if err := sess.Close(); err != nil {
+				log.Printf("closing ssh session: %v", err)
+			}
+		}()
 
 		for _, stmt := range env {
 			i := strings.Index(stmt, "=")
@@ -467,7 +521,9 @@ func runRemoteProgram() {
 		}
 	} else {
 		if uploadCmd != "" {
-			env.Set(fmt.Sprintf("CEXE_FILE=%#v", uploadCmd))
+			if err := env.Set(fmt.Sprintf("CEXE_FILE=%#v", uploadCmd)); err != nil {
+				log.Printf("setting env: %v", err)
+			}
 		}
 		cmd := cexec.Cmd{
 			Cmd:    progname,
@@ -518,7 +574,11 @@ func (w *messageWriter) Write(p []byte) (int, error) {
 }
 
 func handleConnection(rwc net.Conn, executor cexec.Executor) {
-	defer rwc.Close()
+	defer func() {
+		if err := rwc.Close(); err != nil {
+			log.Printf("closing connection: %v", err)
+		}
+	}()
 
 	var req ReqCmd
 	d := gob.NewDecoder(rwc)
@@ -566,7 +626,11 @@ func handleConnection(rwc net.Conn, executor cexec.Executor) {
 
 	if req.Stdin {
 		r, w := io.Pipe()
-		defer r.Close()
+		defer func() {
+			if err := r.Close(); err != nil {
+				log.Printf("closing pipe reader: %v", err)
+			}
+		}()
 		stdin = r
 
 		go func() {
@@ -578,14 +642,22 @@ func handleConnection(rwc net.Conn, executor cexec.Executor) {
 
 				switch req.Kind {
 				case ReqMessageTypeStdin:
-					w.Write(req.Text)
+					if _, err := w.Write(req.Text); err != nil {
+						log.Printf("pipe write: %v", err)
+					}
 				case ReqMessageTypeWait:
-					w.Write(req.Text)
-					w.Close()
+					if _, err := w.Write(req.Text); err != nil {
+						log.Printf("pipe write: %v", err)
+					}
+					if err := w.Close(); err != nil {
+						log.Printf("pipe close: %v", err)
+					}
 					break
 				case ReqMessageTypeSignal:
 					// TODO: handle signal
-					w.Close()
+					if err := w.Close(); err != nil {
+						log.Printf("pipe close: %v", err)
+					}
 					break
 				}
 			}
