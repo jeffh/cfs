@@ -141,8 +141,8 @@ github.com/secure-io/sio-go v0.3.1 h1:dNvY9awjabXTYGsTF1PiCySl9Ltofk9GA3VdWlo7rR
 github.com/secure-io/sio-go v0.3.1/go.mod h1:+xbkjDzPjwh4Axd07pRKSNriS9SCiYksWnZqdnfpQxs=
 github.com/sirupsen/logrus v1.9.3 h1:dueUQJ1C2q9oE3F7wvmSGAaVtTmUizReu6fjN8uqzbQ=
 github.com/sirupsen/logrus v1.9.3/go.mod h1:naHLuLoDiP4jHNo9R0sCBMtWGeIprob74mVsIT4qYEQ=
-github.com/smallfz/libnfs-go v0.0.6 h1:YgcPfhVSTnFhCHIj4/9RSmyKt8BfZ4qYdteHGarWPjo=
-github.com/smallfz/libnfs-go v0.0.6/go.mod h1:OtfrJ0akgDga0KIhtub2YJoDMnzHBntTAVwXdfNZZTU=
+github.com/smallfz/libnfs-go v0.0.7 h1:7uS1ADMrJqihbQEtXfo8865+gEMl7bHKsDAY7ialKws=
+github.com/smallfz/libnfs-go v0.0.7/go.mod h1:OtfrJ0akgDga0KIhtub2YJoDMnzHBntTAVwXdfNZZTU=
 github.com/spf13/pflag v1.0.3/go.mod h1:DYY7MBk1bdzusC3SYhjObp+wFpr4gzcvqqNjLnInEg4=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/objx v0.4.0/go.mod h1:YvHI0jy2hoMjB+UWwv71VJQ9isScKT/TqJzVSSt89Yw=

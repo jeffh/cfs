@@ -21,7 +21,7 @@ require (
 	github.com/mmcdole/gofeed v1.3.0
 	github.com/pkg/sftp v1.13.7
 	github.com/secure-io/sio-go v0.3.1
-	github.com/smallfz/libnfs-go v0.0.6
+	github.com/smallfz/libnfs-go v0.0.7
 	go.uber.org/automaxprocs v1.6.0
 	golang.org/x/crypto v0.38.0
 	golang.org/x/image v0.22.0
