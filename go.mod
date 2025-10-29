@@ -15,7 +15,7 @@ require (
 	github.com/flopp/go-findfont v0.1.0
 	github.com/go-git/go-billy/v5 v5.6.2
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
-	github.com/hanwen/go-fuse/v2 v2.7.0
+	github.com/hanwen/go-fuse/v2 v2.9.0
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/mattn/go-isatty v0.0.20
 	github.com/mmcdole/gofeed v1.3.0
@@ -61,7 +61,6 @@ require (
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/kr/fs v0.1.0 // indirect
-	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mmcdole/goxpp v1.1.1 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
