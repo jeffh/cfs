@@ -26,7 +26,7 @@ require (
 	golang.org/x/crypto v0.43.0
 	golang.org/x/image v0.32.0
 	golang.org/x/sys v0.38.0
-	golang.org/x/term v0.36.0
+	golang.org/x/term v0.37.0
 	periph.io/x/conn/v3 v3.7.2
 	periph.io/x/devices/v3 v3.7.4
 	periph.io/x/host/v3 v3.8.5
