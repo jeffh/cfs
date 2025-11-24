@@ -11,6 +11,11 @@ updates:
       - "dependencies"
       - "go"
     open-pull-requests-limit: 10
+    groups:
+      dependencies:
+        applies-to: version-updates
+        cooldown:
+          duration: 7
 
   # Monitor GitHub Actions
   - package-ecosystem: "github-actions"
@@ -23,3 +28,8 @@ updates:
       - "dependencies"
       - "github-actions"
     open-pull-requests-limit: 5
+    groups:
+      dependencies:
+        applies-to: version-updates
+        cooldown:
+          duration: 7
