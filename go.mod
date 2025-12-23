@@ -24,7 +24,7 @@ require (
 	github.com/smallfz/libnfs-go v0.0.7
 	go.uber.org/automaxprocs v1.6.0
 	golang.org/x/crypto v0.46.0
-	golang.org/x/image v0.33.0
+	golang.org/x/image v0.34.0
 	golang.org/x/sys v0.39.0
 	golang.org/x/term v0.38.0
 	periph.io/x/conn/v3 v3.7.2
