@@ -7,9 +7,8 @@ updates:
       interval: "weekly"
     commit-message:
       prefix: "build(deps)"
-    labels:
-      - "dependencies"
-      - "go"
+    reviewers:
+      - "jeffh"
     open-pull-requests-limit: 10
     groups:
       dependencies:
@@ -24,9 +23,8 @@ updates:
       interval: "weekly"
     commit-message:
       prefix: "ci"
-    labels:
-      - "dependencies"
-      - "github-actions"
+    reviewers:
+      - "jeffh"
     open-pull-requests-limit: 5
     groups:
       dependencies:
