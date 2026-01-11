@@ -13,6 +13,8 @@ updates:
     groups:
       dependencies:
         applies-to: version-updates
+        patterns:
+          - "*"
 
   # Monitor GitHub Actions
   - package-ecosystem: "github-actions"
@@ -27,3 +29,5 @@ updates:
     groups:
       dependencies:
         applies-to: version-updates
+        patterns:
+          - "*"
