@@ -13,8 +13,6 @@ updates:
     groups:
       dependencies:
         applies-to: version-updates
-        cooldown:
-          duration: 7
 
   # Monitor GitHub Actions
   - package-ecosystem: "github-actions"
@@ -29,5 +27,3 @@ updates:
     groups:
       dependencies:
         applies-to: version-updates
-        cooldown:
-          duration: 7
