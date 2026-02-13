@@ -23,10 +23,10 @@ require (
 	github.com/secure-io/sio-go v0.3.1
 	github.com/smallfz/libnfs-go v0.0.7
 	go.uber.org/automaxprocs v1.6.0
-	golang.org/x/crypto v0.47.0
-	golang.org/x/image v0.35.0
-	golang.org/x/sys v0.40.0
-	golang.org/x/term v0.39.0
+	golang.org/x/crypto v0.48.0
+	golang.org/x/image v0.36.0
+	golang.org/x/sys v0.41.0
+	golang.org/x/term v0.40.0
 	periph.io/x/conn/v3 v3.7.2
 	periph.io/x/devices/v3 v3.7.4
 	periph.io/x/host/v3 v3.8.5
@@ -80,8 +80,8 @@ require (
 	go.opentelemetry.io/otel/metric v1.32.0 // indirect
 	go.opentelemetry.io/otel/sdk v1.32.0 // indirect
 	go.opentelemetry.io/otel/trace v1.32.0 // indirect
-	golang.org/x/net v0.48.0 // indirect
-	golang.org/x/text v0.33.0 // indirect
+	golang.org/x/net v0.49.0 // indirect
+	golang.org/x/text v0.34.0 // indirect
 	golang.org/x/time v0.8.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20241118233622-e639e219e697 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20241118233622-e639e219e697 // indirect
