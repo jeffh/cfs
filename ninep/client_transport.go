@@ -86,7 +86,7 @@ func (t *SerialClientTransport) Request(txn *cltTransaction) (Message, error) {
 // concurrent socket read & write, no retry on failures
 
 type ParallelClientTransport struct {
-	mut       sync.Mutex
+	mut       sync.RWMutex
 	tagToTxns map[Tag]cltTransaction
 
 	m                       sync.Mutex
@@ -164,9 +164,9 @@ func (t *ParallelClientTransport) abortTransactions(err error) {
 }
 
 func (c *ParallelClientTransport) getTransaction(t Tag) (cltTransaction, bool) {
-	c.mut.Lock()
+	c.mut.RLock()
 	txn, ok := c.tagToTxns[t]
-	c.mut.Unlock()
+	c.mut.RUnlock()
 	return txn, ok
 }
 
