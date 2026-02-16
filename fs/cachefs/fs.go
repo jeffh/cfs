@@ -220,7 +220,6 @@ func (f *fsys) WriteStat(ctx context.Context, path string, s ninep.Stat) error {
 
 func (f *fsys) Delete(ctx context.Context, path string) error {
 	err := f.underlying.Delete(ctx, path)
-	fmt.Println("CacheFS.Delete", path, err)
 	if err == nil || os.IsNotExist(err) {
 		for _, k := range f.dataCache.Keys() {
 			if k.path == path {
