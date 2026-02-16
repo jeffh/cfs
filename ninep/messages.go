@@ -226,24 +226,33 @@ func (m OpenMode) RequestsMutation() bool {
 }
 
 func (m OpenMode) String() string {
-	res := []string{}
+	var b strings.Builder
 	if m.IsReadOnly() {
-		res = append(res, "OREAD")
+		b.WriteString("OREAD")
 	} else if m.IsWriteOnly() {
-		res = append(res, "OWRITE")
+		b.WriteString("OWRITE")
 	} else if m.IsReadWrite() {
-		res = append(res, "ORDWR")
+		b.WriteString("ORDWR")
 	}
 	if m&OTRUNC != 0 {
-		res = append(res, "OTRUNC")
+		if b.Len() > 0 {
+			b.WriteByte('|')
+		}
+		b.WriteString("OTRUNC")
 	}
 	if m&OCEXEC != 0 {
-		res = append(res, "OCEXEC")
+		if b.Len() > 0 {
+			b.WriteByte('|')
+		}
+		b.WriteString("OCEXEC")
 	}
 	if m&ORCLOSE != 0 {
-		res = append(res, "ORCLOSE")
+		if b.Len() > 0 {
+			b.WriteByte('|')
+		}
+		b.WriteString("ORCLOSE")
 	}
-	return strings.Join(res, "|")
+	return b.String()
 }
 
 func (m OpenMode) ToOsFlag() int {
@@ -301,31 +310,31 @@ const (
 	M_PERM = 0777
 )
 
-func (m Mode) IsDir() bool { return m&M_DIR != 1 }
+func (m Mode) IsDir() bool { return m&M_DIR != 0 }
 
 func (m Mode) String() string {
-	res := []string{}
+	var b strings.Builder
 	perm := fs.FileMode(m & M_PERM)
-	res = append(res, perm.String())
+	b.WriteString(perm.String())
 	if m&M_DIR != 0 {
-		res = append(res, "M_DIR")
+		b.WriteString("|M_DIR")
 	}
 	if m&M_APPEND != 0 {
-		res = append(res, "M_APPEND")
+		b.WriteString("|M_APPEND")
 	}
 	if m&M_EXCL != 0 {
-		res = append(res, "M_EXCL")
+		b.WriteString("|M_EXCL")
 	}
 	if m&M_MOUNT != 0 {
-		res = append(res, "M_MOUNT")
+		b.WriteString("|M_MOUNT")
 	}
 	if m&M_AUTH != 0 {
-		res = append(res, "M_AUTH")
+		b.WriteString("|M_AUTH")
 	}
 	if m&M_TMP != 0 {
-		res = append(res, "M_TMP")
+		b.WriteString("|M_TMP")
 	}
-	return strings.Join(res, "|")
+	return b.String()
 }
 
 // Convert to OS file flag with given OpenMode ORed in.
@@ -487,32 +496,50 @@ func (qt QidType) IsExclusive() bool { return qt&QT_EXCL != 0 }    // Returns tr
 func (qt QidType) IsTemporary() bool { return qt&QT_TMP != 0 }     // Returns true if FD is a temporary file or dir
 
 func (qt QidType) String() string {
-	parts := []string{}
+	var b strings.Builder
 	if qt == QT_FILE {
-		parts = append(parts, "QT_FILE")
+		return "QT_FILE"
 	}
 	if qt&QT_LINK != 0 {
-		parts = append(parts, "QT_LINK")
+		b.WriteString("QT_LINK")
 	}
 	if qt&QT_SYMLINK != 0 {
-		parts = append(parts, "QT_SYMLINK")
+		if b.Len() > 0 {
+			b.WriteByte('|')
+		}
+		b.WriteString("QT_SYMLINK")
 	}
 	if qt&QT_TMP != 0 {
-		parts = append(parts, "QT_TMP")
+		if b.Len() > 0 {
+			b.WriteByte('|')
+		}
+		b.WriteString("QT_TMP")
 	}
 	if qt&QT_AUTH != 0 {
-		parts = append(parts, "QT_AUTH")
+		if b.Len() > 0 {
+			b.WriteByte('|')
+		}
+		b.WriteString("QT_AUTH")
 	}
 	if qt&QT_MOUNT != 0 {
-		parts = append(parts, "QT_MOUNT")
+		if b.Len() > 0 {
+			b.WriteByte('|')
+		}
+		b.WriteString("QT_MOUNT")
 	}
 	if qt&QT_EXCL != 0 {
-		parts = append(parts, "QT_EXCL")
+		if b.Len() > 0 {
+			b.WriteByte('|')
+		}
+		b.WriteString("QT_EXCL")
 	}
 	if qt&QT_DIR != 0 {
-		parts = append(parts, "QT_DIR")
+		if b.Len() > 0 {
+			b.WriteByte('|')
+		}
+		b.WriteString("QT_DIR")
 	}
-	return strings.Join(parts, "|")
+	return b.String()
 }
 
 const QidSize = 13 // The number of bytes a Qid takes
@@ -1167,9 +1194,9 @@ func (r Twalk) wname(i int) msgString {
 }
 func (r Twalk) Wname(i int) string { return r.wname(i).String() }
 func (r Twalk) Wnames() []string {
-	names := make([]string, 0, 16)
-	off := msgOffset + 10
 	size := int(r.NumWname())
+	names := make([]string, 0, size)
+	off := msgOffset + 10
 	for j := 0; j < size; j++ {
 		mstr := msgString(r[off:])
 		names = append(names, mstr.String())
