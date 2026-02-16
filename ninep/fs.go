@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"iter"
 	"path/filepath"
-	"runtime/debug"
 	"sync"
 	"time"
 )
@@ -58,13 +57,6 @@ type FileInfoGid interface{ Gid() string }
 
 // if this file info supports plan9 usernames names for last modified
 type FileInfoMuid interface{ Muid() string }
-
-// TODO: support this feature
-// return fs.FileInfo from FileSystem can implement this if they want more
-// precisely control the Qid path, which represents the same internal file
-// in the file system (aka - rm foo.txt; touch foo.txt operate on two different
-// paths)
-// type FileInfoPath interface{ Path() uint32 }
 
 // Interface for a server to verify a client.
 // Return (nil, nil) to indicate no authentication needed
@@ -144,21 +136,6 @@ func FileInfoSliceIteratorWithUsers(fi []fs.FileInfo, uid, gid, muid string) ite
 	}
 }
 
-func DebugIterator[X any](msg string, itr iter.Seq2[X, error]) iter.Seq2[X, error] {
-	return func(yield func(X, error) bool) {
-		defer func() {
-			if r := recover(); r != nil {
-				fmt.Printf("DEBUG: %s: %#v\n", msg, r)
-				debug.PrintStack()
-				panic(r)
-			}
-		}()
-		itr(func(x X, err error) bool {
-			return yield(x, err)
-		})
-	}
-}
-
 // Consumes an iterator to produce a slice of fs.FileInfos
 // max < 0 means to fetch all items
 func TakeErr[X any](itr iter.Seq2[X, error], n int) ([]X, error) {
@@ -175,13 +152,6 @@ func TakeErr[X any](itr iter.Seq2[X, error], n int) ([]X, error) {
 		}
 	}
 	return out, nil
-}
-
-// TODO: inline to Take
-// Consumes an iterator to produce a slice of fs.FileInfos
-// max < 0 means to fetch all items
-func FileInfoSliceFromIterator(itr iter.Seq2[fs.FileInfo, error], max int) ([]fs.FileInfo, error) {
-	return TakeErr(itr, max)
 }
 
 ///////////////////////////////////////////////////////////////
@@ -293,7 +263,7 @@ func NaiveWalk(ctx context.Context, f FileSystem, parts []string) ([]fs.FileInfo
 
 // file info helper wrappers
 type fileInfoWithName struct {
-	fi   fs.FileInfo
+	fs.FileInfo
 	name string
 }
 
@@ -302,12 +272,7 @@ func FileInfoWithName(fi fs.FileInfo, name string) fs.FileInfo {
 	return &fileInfoWithName{fi, name}
 }
 
-func (f *fileInfoWithName) Name() string       { return f.name }
-func (f *fileInfoWithName) Size() int64        { return f.fi.Size() }
-func (f *fileInfoWithName) Mode() fs.FileMode  { return f.fi.Mode() }
-func (f *fileInfoWithName) ModTime() time.Time { return f.fi.ModTime() }
-func (f *fileInfoWithName) IsDir() bool        { return f.fi.IsDir() }
-func (f *fileInfoWithName) Sys() interface{}   { return f.fi.Sys() }
+func (f *fileInfoWithName) Name() string { return f.name }
 
 type fileInfoWithMode struct {
 	fs.FileInfo
@@ -322,7 +287,7 @@ func FileInfoWithMode(fi fs.FileInfo, mode fs.FileMode) fs.FileInfo {
 
 // file info unix to plan9 wrappers
 type fileInfoWithUsers struct {
-	fi             fs.FileInfo
+	fs.FileInfo
 	uid, gid, muid string
 }
 
@@ -343,30 +308,9 @@ func FileInfoWithUsers(fi fs.FileInfo, uid, gid, muid string) FileInfoUsers {
 	return &fileInfoWithUsers{fi, uid, gid, muid}
 }
 
-func (f *fileInfoWithUsers) Name() string       { return f.fi.Name() }
-func (f *fileInfoWithUsers) Size() int64        { return f.fi.Size() }
-func (f *fileInfoWithUsers) Mode() fs.FileMode  { return f.fi.Mode() }
-func (f *fileInfoWithUsers) ModTime() time.Time { return f.fi.ModTime() }
-func (f *fileInfoWithUsers) IsDir() bool        { return f.fi.IsDir() }
-func (f *fileInfoWithUsers) Sys() interface{}   { return f.fi.Sys() }
-func (f *fileInfoWithUsers) Uid() string        { return f.uid }
-func (f *fileInfoWithUsers) Gid() string        { return f.gid }
-func (f *fileInfoWithUsers) Muid() string       { return f.muid }
-
-type fileInfoWithSize struct {
-	fs.FileInfo
-	newSize int64
-}
-
-func (f *fileInfoWithSize) Size() int64 { return f.newSize }
-
-// Wraps an fs.FileInfo with an override of the file size
-func FileInfoWithSize(fi fs.FileInfo, size int64) fs.FileInfo {
-	return &fileInfoWithSize{
-		FileInfo: fi,
-		newSize:  size,
-	}
-}
+func (f *fileInfoWithUsers) Uid() string  { return f.uid }
+func (f *fileInfoWithUsers) Gid() string  { return f.gid }
+func (f *fileInfoWithUsers) Muid() string { return f.muid }
 
 /////////////////////////////////////////////////
 
@@ -489,58 +433,6 @@ func WriteDevFileInfo(name string) *SimpleFileInfo {
 
 func TempFileInfo(name string) *SimpleFileInfo {
 	return MakeFileInfo(name, fs.ModeTemporary|Readable|Writeable, time.Now())
-}
-
-////////////////////////////////////////////////
-
-// Simple file implements fs.FileInfo and FileHandle operations
-type SimpleFile struct {
-	fs.FileInfo
-	OpenFn func(mode OpenMode) (FileHandle, error)
-}
-
-func NewReadOnlySimpleFile(name string, mode fs.FileMode, modTime time.Time, contents []byte) *SimpleFile {
-	return &SimpleFile{
-		&SimpleFileInfo{
-			FIName:    name,
-			FISize:    int64(len(contents)),
-			FIMode:    mode | 0444,
-			FIModTime: modTime,
-			FISys:     nil,
-		},
-		func(m OpenMode) (FileHandle, error) {
-			if m.IsReadable() {
-				return &ReadOnlyMemoryFileHandle{contents}, nil
-			} else {
-				return nil, ErrWriteNotAllowed
-			}
-		},
-	}
-}
-
-func NewSimpleFile(name string, mode fs.FileMode, modTime time.Time, open func(m OpenMode) (FileHandle, error)) *SimpleFile {
-	if mode == 0 {
-		mode = 0444
-	}
-	return &SimpleFile{
-		&SimpleFileInfo{
-			FIName:    name,
-			FISize:    0,
-			FIMode:    mode,
-			FIModTime: modTime,
-			FISys:     nil,
-		},
-		open,
-	}
-}
-
-func (f *SimpleFile) WriteInfo(in fs.FileInfo) error { return ErrUnsupported }
-func (f *SimpleFile) Info() (fs.FileInfo, error)     { return f, nil }
-func (f *SimpleFile) Open(m OpenMode) (FileHandle, error) {
-	if f.OpenFn == nil {
-		return nil, ErrUnsupported
-	}
-	return f.OpenFn(m)
 }
 
 ////////////////////////////////////////////////
