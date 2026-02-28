@@ -61,10 +61,11 @@ func (h *directoryHandle) ReadAt(p []byte, offset int64) (int, error) {
 			return 0, io.EOF
 		}
 		// TODO: is this a good idea to clear qids to avoid a memory leak?
+		// Pre-compute path prefix to avoid repeated filepath.Join allocations
+		pathPrefix := h.path + string(filepath.Separator)
 		for _, info := range h.buffer {
 			if info != nil {
-				subpath := filepath.Join(h.path, info.Name())
-				h.session.MayDeleteQid(subpath)
+				h.session.MayDeleteQid(pathPrefix + info.Name())
 			}
 		}
 
@@ -73,7 +74,7 @@ func (h *directoryHandle) ReadAt(p []byte, offset int64) (int, error) {
 			info, err, ok := h.next()
 			if ok {
 				if info != nil {
-					subpath := filepath.Join(h.path, info.Name())
+					subpath := pathPrefix + info.Name()
 					q := h.session.PutQidInfo(subpath, info)
 					st := fileInfoToStat(q, info)
 					h.rem = append(h.rem, st)
@@ -114,10 +115,12 @@ func (h *directoryHandle) Sync() error {
 
 func (h *directoryHandle) Close() error {
 	// TODO: is this a good idea to clear qids to avoid a memory leak?
-	for _, info := range h.buffer {
-		if info != nil {
-			subpath := filepath.Join(h.path, info.Name())
-			h.session.MayDeleteQid(subpath)
+	if len(h.buffer) > 0 {
+		pathPrefix := h.path + string(filepath.Separator)
+		for _, info := range h.buffer {
+			if info != nil {
+				h.session.MayDeleteQid(pathPrefix + info.Name())
+			}
 		}
 	}
 	// reset
