@@ -61,8 +61,12 @@ func (h *directoryHandle) ReadAt(p []byte, offset int64) (int, error) {
 			return 0, io.EOF
 		}
 		// TODO: is this a good idea to clear qids to avoid a memory leak?
-		// Pre-compute path prefix to avoid repeated filepath.Join allocations
-		pathPrefix := h.path + string(filepath.Separator)
+		// Pre-compute path prefix to avoid repeated filepath.Join allocations.
+		// Avoid double separator when h.path is "/" (root directory).
+		pathPrefix := h.path
+		if !strings.HasSuffix(pathPrefix, string(filepath.Separator)) {
+			pathPrefix += string(filepath.Separator)
+		}
 		for _, info := range h.buffer {
 			if info != nil {
 				h.session.MayDeleteQid(pathPrefix + info.Name())
@@ -116,7 +120,10 @@ func (h *directoryHandle) Sync() error {
 func (h *directoryHandle) Close() error {
 	// TODO: is this a good idea to clear qids to avoid a memory leak?
 	if len(h.buffer) > 0 {
-		pathPrefix := h.path + string(filepath.Separator)
+		pathPrefix := h.path
+		if !strings.HasSuffix(pathPrefix, string(filepath.Separator)) {
+			pathPrefix += string(filepath.Separator)
+		}
 		for _, info := range h.buffer {
 			if info != nil {
 				h.session.MayDeleteQid(pathPrefix + info.Name())
