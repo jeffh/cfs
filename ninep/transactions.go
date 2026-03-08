@@ -5,12 +5,6 @@ import (
 	"io"
 )
 
-func zero(b []byte) {
-	for i := range b {
-		b[i] = 0
-	}
-}
-
 type srvTransaction struct {
 	inMsg  []byte
 	outMsg []byte
@@ -86,8 +80,19 @@ func (t *srvTransaction) writeReply(wr io.Writer) error {
 }
 
 func (t *srvTransaction) reset() {
-	zero(t.inMsg)
-	zero(t.outMsg)
+	// Only zero the portion of the buffer that was used (indicated by the
+	// message size in the first 4 bytes) rather than the entire buffer.
+	// For large max message sizes this avoids zeroing megabytes of unused data.
+	if inSize := MsgBase(t.inMsg).Size(); inSize >= 4 && inSize <= uint32(len(t.inMsg)) {
+		clear(t.inMsg[:inSize])
+	} else {
+		clear(t.inMsg[:min(7, len(t.inMsg))]) // at least clear the header
+	}
+	if outSize := MsgBase(t.outMsg).Size(); outSize >= 4 && outSize <= uint32(len(t.outMsg)) {
+		clear(t.outMsg[:outSize])
+	} else {
+		clear(t.outMsg[:min(7, len(t.outMsg))])
+	}
 	t.handled = false
 	t.disconnect = false
 }
@@ -325,8 +330,20 @@ func (t *cltRequest) writeRequest(wr io.Writer) error {
 	return nil
 }
 
-func (t *cltRequest) reset()  { zero(t.outMsg) }
-func (t *cltResponse) reset() { zero(t.inMsg) }
+func (t *cltRequest) reset() {
+	if size := MsgBase(t.outMsg).Size(); size >= 4 && size <= uint32(len(t.outMsg)) {
+		clear(t.outMsg[:size])
+	} else {
+		clear(t.outMsg[:min(7, len(t.outMsg))])
+	}
+}
+func (t *cltResponse) reset() {
+	if size := MsgBase(t.inMsg).Size(); size >= 4 && size <= uint32(len(t.inMsg)) {
+		clear(t.inMsg[:size])
+	} else {
+		clear(t.inMsg[:min(7, len(t.inMsg))])
+	}
+}
 
 func (t *cltRequest) requestType() msgType {
 	mb := MsgBase(t.outMsg)
