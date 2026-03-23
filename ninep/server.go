@@ -553,7 +553,7 @@ type Session struct {
 	fids FidTracker
 	qids *QidPool
 
-	m            sync.Mutex
+	m            sync.RWMutex
 	qidsToHandle map[uint64]FileHandle
 }
 
@@ -584,9 +584,9 @@ func (s *Session) TouchQid(name string, t QidType) Qid {
 func (s *Session) PutFileHandle(q Qid, h FileHandle) { s.qidsToHandle[q.Path()] = h }
 func (s *Session) Qid(name string) (Qid, bool)       { return s.qids.Get(name) }
 func (s *Session) FileHandle(q Qid) (FileHandle, bool) {
-	s.m.Lock()
+	s.m.RLock()
 	h, ok := s.qidsToHandle[q.Path()]
-	s.m.Unlock()
+	s.m.RUnlock()
 	return h, ok
 }
 
@@ -667,14 +667,14 @@ func (st *SessionTracker) Remove(addr string) {
 ///////////////////////////////////////////////////////
 
 type FidTracker struct {
-	m    sync.Mutex
+	m    sync.RWMutex
 	fids map[Fid]serverFile
 }
 
 func (t *FidTracker) Get(f Fid) (h serverFile, found bool) {
-	t.m.Lock()
+	t.m.RLock()
 	h, found = t.fids[f]
-	t.m.Unlock()
+	t.m.RUnlock()
 	return
 }
 
@@ -702,20 +702,22 @@ func (t *FidTracker) Clear() {
 ///////////////////////////////////////////////////////
 
 type QidPool struct {
-	m        sync.Mutex
+	m        sync.RWMutex
 	pool     map[string]Qid
 	nextPath uint64
 }
 
 func (p *QidPool) Get(name string) (q Qid, found bool) {
-	p.m.Lock()
+	p.m.RLock()
 	q, found = p.pool[name]
-	p.m.Unlock()
+	p.m.RUnlock()
 	return
 }
 
 func (p *QidPool) Touch(name string, t QidType, verDelta uint32) Qid {
 	var qid Qid
+	// Pre-allocate outside lock in case we need a new Qid
+	newQid := NewQid()
 	p.m.Lock()
 	if existing, ok := p.pool[name]; ok {
 		qid = existing
@@ -724,7 +726,7 @@ func (p *QidPool) Touch(name string, t QidType, verDelta uint32) Qid {
 			p.pool[name] = qid
 		}
 	} else {
-		qid = NewQid().Fill(t, 0, p.nextPath)
+		qid = newQid.Fill(t, 0, p.nextPath)
 		p.nextPath++
 		p.pool[name] = qid
 	}
@@ -734,6 +736,8 @@ func (p *QidPool) Touch(name string, t QidType, verDelta uint32) Qid {
 
 func (p *QidPool) Put(name string, t QidType, version uint32) Qid {
 	var qid Qid
+	// Pre-allocate outside lock in case we need a new Qid
+	newQid := NewQid()
 	p.m.Lock()
 	if existing, ok := p.pool[name]; ok {
 		qid = existing
@@ -749,7 +753,7 @@ func (p *QidPool) Put(name string, t QidType, version uint32) Qid {
 		if version == NoQidVersion {
 			version = 0
 		}
-		qid = NewQid().Fill(t, version, p.nextPath)
+		qid = newQid.Fill(t, version, p.nextPath)
 		p.nextPath++
 		p.pool[name] = qid
 	}
@@ -759,6 +763,8 @@ func (p *QidPool) Put(name string, t QidType, version uint32) Qid {
 
 func (p *QidPool) PutDirect(name string, path uint64, t QidType, version uint32) Qid {
 	var qid Qid
+	// Pre-allocate outside lock in case we need a new Qid
+	newQid := NewQid()
 	p.m.Lock()
 	if existing, ok := p.pool[name]; ok {
 		qid = existing
@@ -771,7 +777,7 @@ func (p *QidPool) PutDirect(name string, path uint64, t QidType, version uint32)
 		if version == NoQidVersion {
 			version = 0
 		}
-		qid = NewQid().Fill(t, version, path)
+		qid = newQid.Fill(t, version, path)
 		p.pool[name] = qid
 	}
 	p.m.Unlock()
