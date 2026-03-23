@@ -17,23 +17,6 @@ import (
 	ninep "github.com/jeffh/cfs/ninep"
 )
 
-// Provides an easy struct to conform to os.FileInfo.
-// Note: can "leak" memory because truncate only slices and doesn't free.
-type memFileInfo struct {
-	FIName    string
-	FISize    int64
-	FIMode    fs.FileMode
-	FIModTime time.Time
-	FISys     interface{}
-}
-
-func (f *memFileInfo) Name() string       { return f.FIName }
-func (f *memFileInfo) Size() int64        { return f.FISize }
-func (f *memFileInfo) Mode() fs.FileMode  { return f.FIMode }
-func (f *memFileInfo) ModTime() time.Time { return f.FIModTime }
-func (f *memFileInfo) IsDir() bool        { return f.FIMode&fs.ModeDir != 0 }
-func (f *memFileInfo) Sys() interface{}   { return f.FISys }
-
 ////////////////////////////////////////////////
 
 // Implements a basic file system in memory only.
@@ -265,7 +248,7 @@ func (m *Mem) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (n
 	}
 }
 
-func (m *Mem) stat(n *memNode) *memFileInfo {
+func (m *Mem) stat(n *memNode) *ninep.SimpleFileInfo {
 	n.mut.RLock()
 	size := int64(len(n.contents))
 	modTime := n.modTime
@@ -276,7 +259,7 @@ func (m *Mem) stat(n *memNode) *memFileInfo {
 		mode |= fs.ModeDir
 	}
 
-	return &memFileInfo{
+	return &ninep.SimpleFileInfo{
 		FIName:    n.name,
 		FISize:    size,
 		FIMode:    mode,

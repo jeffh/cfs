@@ -3,7 +3,6 @@ package muxfs
 
 import (
 	"context"
-	"fmt"
 	"io/fs"
 	"iter"
 
@@ -81,17 +80,6 @@ func (f *FS) CreateFile(ctx context.Context, path string, flag ninep.OpenMode, m
 	return res.Value.Create(ctx, res, flag, mode)
 }
 
-func (f *FS) Remove(ctx context.Context, path string) error {
-	var res ninep.MatchWith[Node]
-	if !f.m.Match(path, &res) || res.Value.Delete == nil {
-		return fs.ErrNotExist
-	}
-	if res.Value.Delete == nil {
-		return fs.ErrPermission
-	}
-	return res.Value.Delete(ctx, res)
-}
-
 func (f *FS) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (ninep.FileHandle, error) {
 	var res ninep.MatchWith[Node]
 	if !f.m.Match(path, &res) {
@@ -104,10 +92,8 @@ func (f *FS) OpenFile(ctx context.Context, path string, flag ninep.OpenMode) (ni
 }
 
 func (f *FS) ListDir(ctx context.Context, path string) iter.Seq2[fs.FileInfo, error] {
-	fmt.Printf("listdir %v\n", path)
 	var res ninep.MatchWith[Node]
 	if !f.m.Match(path, &res) {
-		fmt.Printf("not match %v\n", path)
 		return ninep.FileInfoErrorIterator(fs.ErrNotExist)
 	}
 	if res.Value.ListDir == nil {
