@@ -5,13 +5,13 @@ go 1.25.0
 require (
 	github.com/aws/aws-sdk-go-v2 v1.41.7
 	github.com/aws/aws-sdk-go-v2/config v1.32.17
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.100.1
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.101.0
 	github.com/aws/smithy-go v1.25.1
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/docker/go-connections v0.7.0
 	github.com/fatih/color v1.19.0
 	github.com/flopp/go-findfont v0.1.0
-	github.com/go-git/go-billy/v5 v5.8.0
+	github.com/go-git/go-billy/v5 v5.9.0
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/hanwen/go-fuse/v2 v2.10.1
 	github.com/hashicorp/golang-lru/v2 v2.0.7
@@ -21,10 +21,10 @@ require (
 	github.com/secure-io/sio-go v0.3.1
 	github.com/smallfz/libnfs-go v0.0.7
 	go.uber.org/automaxprocs v1.6.0
-	golang.org/x/crypto v0.50.0
-	golang.org/x/image v0.39.0
-	golang.org/x/sys v0.43.0
-	golang.org/x/term v0.42.0
+	golang.org/x/crypto v0.51.0
+	golang.org/x/image v0.40.0
+	golang.org/x/sys v0.44.0
+	golang.org/x/term v0.43.0
 	periph.io/x/conn/v3 v3.7.3
 	periph.io/x/devices/v3 v3.7.4
 	periph.io/x/host/v3 v3.8.5
@@ -78,8 +78,8 @@ require (
 	go.opentelemetry.io/otel/metric v1.43.0 // indirect
 	go.opentelemetry.io/otel/sdk v1.43.0 // indirect
 	go.opentelemetry.io/otel/trace v1.43.0 // indirect
-	golang.org/x/net v0.52.0 // indirect
-	golang.org/x/text v0.36.0 // indirect
+	golang.org/x/net v0.53.0 // indirect
+	golang.org/x/text v0.37.0 // indirect
 	golang.org/x/time v0.8.0 // indirect
 	gotest.tools/v3 v3.0.3 // indirect
 )
