@@ -15,6 +15,11 @@ updates:
         applies-to: version-updates
         patterns:
           - "*"
+    cooldown:
+      default-days: 7
+      semver-major-days: 7
+      semver-minor-days: 7
+      semver-patch-days: 7
 
   # Monitor GitHub Actions
   - package-ecosystem: "github-actions"
@@ -31,3 +36,8 @@ updates:
         applies-to: version-updates
         patterns:
           - "*"
+    cooldown:
+      default-days: 7
+      semver-major-days: 7
+      semver-minor-days: 7
+      semver-patch-days: 7
