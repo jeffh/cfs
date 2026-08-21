@@ -16,7 +16,7 @@ require (
 	github.com/hanwen/go-fuse/v2 v2.11.0
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/mattn/go-isatty v0.0.24
-	github.com/mmcdole/gofeed v1.4.0
+	github.com/mmcdole/gofeed v1.4.1
 	github.com/pkg/sftp v1.13.11
 	github.com/secure-io/sio-go v0.3.1
 	github.com/smallfz/libnfs-go v0.0.7
