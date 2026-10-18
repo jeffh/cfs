@@ -13,7 +13,7 @@ require (
 	github.com/flopp/go-findfont v0.1.0
 	github.com/go-git/go-billy/v5 v5.9.2
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
-	github.com/hanwen/go-fuse/v2 v2.12.0
+	github.com/hanwen/go-fuse/v2 v2.11.0
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/mattn/go-isatty v0.0.24
 	github.com/mmcdole/gofeed v1.5.0
